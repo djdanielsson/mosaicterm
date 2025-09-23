@@ -4,11 +4,9 @@
 //! command history and a permanently pinned input prompt.
 
 mod app;
-mod config;
-mod error;
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use tracing::{debug, error, info, warn};
@@ -16,10 +14,12 @@ use tracing_subscriber;
 use egui;
 use eframe;
 
+// Import from the library
+use mosaicterm::config::RuntimeConfig;
+use mosaicterm::error::Result;
+
 // Import app from the local module (binary-specific)
 use app::MosaicTermApp;
-use crate::config::RuntimeConfig;
-use crate::error::Result;
 
 /// Application configuration
 #[derive(Debug)]
@@ -179,6 +179,16 @@ fn main() -> Result<()> {
 
     // Run the application
     info!("🎨 Initializing GUI...");
+    println!("🚀 MOSAIC TERM GUI WINDOW SHOULD OPEN NOW!");
+    println!("   LOOK FOR A WINDOW TITLED 'MosaicTerm'");
+    println!("   You should see BRIGHT COLORED AREAS:");
+    println!("   - BLUE status bar at the top");
+    println!("   - GREEN command history area in the middle");
+    println!("   - RED command input area at the bottom");
+    println!("   - Large welcome message in the center");
+    println!("   - Bright colored rectangles around everything");
+    println!("   If you don't see these, the GUI window might be hidden!");
+
     if let Err(e) = eframe::run_native(
         "MosaicTerm",
         native_options,
@@ -236,15 +246,11 @@ fn load_configuration(args: &AppArgs) -> Result<RuntimeConfig> {
 }
 
 /// Create the MosaicTerm application instance
-fn create_application(_args: &AppArgs, _runtime_config: RuntimeConfig) -> Result<MosaicTermApp> {
+fn create_application(_args: &AppArgs, runtime_config: RuntimeConfig) -> Result<MosaicTermApp> {
     info!("🏗️  Creating application...");
 
     // Create the app with configuration
-    let app = MosaicTermApp::default();
-
-    // Apply runtime configuration
-    debug!("Applying runtime configuration");
-    // TODO: Integrate runtime_config with app
+    let mut app = MosaicTermApp::with_config(runtime_config);
 
     debug!("Application created successfully");
     Ok(app)
@@ -259,7 +265,7 @@ fn create_native_options(args: &AppArgs) -> Result<eframe::NativeOptions> {
         viewport: egui::ViewportBuilder::default()
             .with_title("MosaicTerm")
             .with_app_id("mosaicterm")
-            .with_icon(std::sync::Arc::new(create_window_icon()))
+            .with_icon(std::sync::Arc::new(load_or_create_window_icon()))
             .with_min_inner_size([400.0, 300.0]), // Minimum window size
         ..Default::default()
     };
@@ -334,6 +340,33 @@ fn create_window_icon() -> egui::IconData {
         width: 32,
         height: 32,
     }
+}
+
+/// Try loading `icon.png` from project root or current working directory; fallback to generated icon
+fn load_or_create_window_icon() -> egui::IconData {
+    // Candidate paths: workspace root, binary crate dir, current dir
+    let candidates: [&Path; 3] = [
+        Path::new("icon.png"),
+        Path::new("bin/mosaicterm/icon.png"),
+        Path::new("../icon.png"),
+    ];
+
+    for path in candidates.iter() {
+        if path.exists() {
+            if let Ok(img) = image::open(path) {
+                let rgba = img.to_rgba8();
+                let (width, height) = rgba.dimensions();
+                return egui::IconData {
+                    rgba: rgba.into_raw(),
+                    width: width as u32,
+                    height: height as u32,
+                };
+            }
+        }
+    }
+
+    // Fallback
+    create_window_icon()
 }
 
 

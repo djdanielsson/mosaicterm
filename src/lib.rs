@@ -4,6 +4,8 @@
 //! including PTY management, terminal emulation, UI components,
 //! configuration management, and event-driven architecture.
 
+#![allow(unexpected_cfgs)]
+
 #[macro_use]
 extern crate tracing;
 
@@ -15,8 +17,9 @@ pub mod state;
 // Core modules
 pub mod pty;
 pub mod terminal;
-pub use terminal::{Terminal, TerminalFactory, TerminalState, ShellType};
+pub use terminal::{Terminal, TerminalFactory, TerminalState};
 pub mod commands;
+pub mod execution;
 pub mod ansi;
 
 // UI modules
@@ -25,6 +28,7 @@ pub mod ui;
 // Model modules
 pub mod models;
 
+
 // Re-exports for core functionality
 pub use config::{Config, RuntimeConfig};
 pub use error::{Error, Result};
@@ -32,7 +36,7 @@ pub use events::{EventBus, EventProcessor, EventBuilder};
 pub use state::{ApplicationState, StateManager, AppState};
 
 // Convenience re-exports for common types
-pub use terminal::ShellType as TerminalShellType;
+pub use models::ShellType as TerminalShellType;
 pub use config::theme::ThemeManager;
 pub use config::shell::ShellManager;
 pub use config::loader::ConfigLoader;
@@ -586,9 +590,9 @@ mod tests {
     #[test]
     fn test_app_info() {
         let info = app_info();
-        assert!(!info.name.is_empty());
-        assert!(!info.version.is_empty());
-        assert!(!info.description.is_empty());
+        assert!(info.get("name").unwrap().is_empty() == false);
+        assert!(info.get("version").unwrap().is_empty() == false);
+        assert!(info.get("description").unwrap().is_empty() == false);
     }
 
     #[test]

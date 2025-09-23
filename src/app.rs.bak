@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use tracing::{info, error, debug, warn};
 use futures::executor;
 use mosaicterm::pty::PtyManager;
-use mosaicterm::terminal::{Terminal, TerminalFactory};
+use mosaicterm::terminal::{Terminal, TerminalFactory, ShellType as SessionShellType};
 use mosaicterm::execution::DirectExecutor;
 use mosaicterm::models::{TerminalSession, ShellType as ModelShellType};
 use mosaicterm::ui::{CommandBlocks, InputPrompt, ScrollableHistory};
@@ -56,7 +56,7 @@ pub struct AppState {
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     /// Default shell type
-    default_shell: ModelShellType,
+    default_shell: SessionShellType,
     /// Initial terminal dimensions
     initial_dimensions: (usize, usize),
     /// Maximum scrollback lines
@@ -67,6 +67,8 @@ pub struct AppConfig {
 
 #[derive(Debug, Clone)]
 pub enum AppTheme {
+    Dark,
+    Light,
     Auto,
 }
 
@@ -85,7 +87,7 @@ impl Default for AppState {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            default_shell: ModelShellType::Bash,
+            default_shell: SessionShellType::Bash,
             initial_dimensions: (120, 30),
             max_scrollback: 1000,
             font_size: 12.0,
@@ -202,17 +204,17 @@ impl MosaicTermApp {
 
         // Convert config shell type to model shell type
         let shell_type = match self.runtime_config.config().terminal.shell_type {
-            ModelShellType::Bash => ModelShellType::Bash,
-            ModelShellType::Zsh => ModelShellType::Zsh,
-            ModelShellType::Fish => ModelShellType::Fish,
+            mosaicterm::config::shell::ShellType::Bash => ModelShellType::Bash,
+            mosaicterm::config::shell::ShellType::Zsh => ModelShellType::Zsh,
+            mosaicterm::config::shell::ShellType::Fish => ModelShellType::Fish,
             // Map other shell types to supported ones or use Other variant
-            ModelShellType::Ksh |
-            ModelShellType::Csh |
-            ModelShellType::Tcsh |
-            ModelShellType::Dash |
-            ModelShellType::PowerShell |
-            ModelShellType::Cmd => ModelShellType::Bash, // Default to bash
-            ModelShellType::Other => ModelShellType::Bash, // Default to bash for unknown shells
+            mosaicterm::config::shell::ShellType::Ksh |
+            mosaicterm::config::shell::ShellType::Csh |
+            mosaicterm::config::shell::ShellType::Tcsh |
+            mosaicterm::config::shell::ShellType::Dash |
+            mosaicterm::config::shell::ShellType::PowerShell |
+            mosaicterm::config::shell::ShellType::Cmd => ModelShellType::Bash, // Default to bash
+            mosaicterm::config::shell::ShellType::Other => ModelShellType::Bash, // Default to bash for unknown shells
         };
 
         // Create terminal session configuration
@@ -237,28 +239,7 @@ impl MosaicTermApp {
                 environment.insert("fish_prompt".to_string(), "".to_string());
                 environment.insert("TERM".to_string(), "dumb".to_string());
             },
-            ModelShellType::Ksh => {
-                environment.insert("PS1".to_string(), "".to_string());
-                environment.insert("TERM".to_string(), "dumb".to_string());
-            },
-            ModelShellType::Csh | ModelShellType::Tcsh => {
-                environment.insert("prompt".to_string(), "".to_string());
-                environment.insert("TERM".to_string(), "dumb".to_string());
-            },
-            ModelShellType::Dash => {
-                environment.insert("PS1".to_string(), "".to_string());
-                environment.insert("TERM".to_string(), "dumb".to_string());
-            },
-            ModelShellType::PowerShell => {
-                // PowerShell doesn't have PS1, but we can set a minimal prompt
-                environment.insert("PROMPT".to_string(), "".to_string());
-                environment.insert("TERM".to_string(), "dumb".to_string());
-            },
-            ModelShellType::Cmd => {
-                // Windows CMD doesn't have environment-based prompt suppression
-                environment.insert("TERM".to_string(), "dumb".to_string());
-            },
-            ModelShellType::Other => {
+            ModelShellType::Other(_) => {
                 // For unknown shells, try PS1 suppression as fallback
                 environment.insert("PS1".to_string(), "".to_string());
                 environment.insert("PS2".to_string(), "".to_string());
@@ -898,7 +879,7 @@ impl MosaicTermApp {
                                     if !trimmed_text.is_empty() && 
                                        trimmed_text != last_block.command.trim() {
                                         // Add partial data as a line immediately
-                                        let partial_line = mosaicterm::models::OutputLine {
+                                        let partial_line = crate::models::OutputLine {
                                             text: trimmed_text.to_string(),
                                             ansi_codes: vec![],
                                             line_number: 0,

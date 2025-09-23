@@ -1,11 +1,16 @@
-[workspace]
-members = [
-    "mosaicterm-lib",
-    "bin/mosaicterm"
-]
-resolver = "2"
+[package]
+name = "mosaicterm"
+version = "0.1.0"
+edition = "2021"
+authors = ["MosaicTerm Team"]
+description = "A Rust GUI terminal emulator inspired by Warp with block-based command history"
+license = "MIT OR Apache-2.0"
+keywords = ["terminal", "emulator", "gui", "rust", "cli"]
+categories = ["command-line-utilities", "gui"]
+repository = "https://github.com/your-repo/mosaicterm"
+homepage = "https://github.com/your-repo/mosaicterm"
 
-[workspace.dependencies]
+[dependencies]
 # GUI Framework
 egui = "0.24"
 eframe = { version = "0.24", features = ["persistence"] }
@@ -35,11 +40,17 @@ uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 nix = { version = "0.27", features = ["signal"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 
+[dev-dependencies]
 # Testing
 tokio-test = "0.4"
 tempfile = "3.0"
 criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "performance"
+harness = false
 
 [profile.dev]
 opt-level = 1

@@ -8,7 +8,7 @@ use eframe::egui;
 use crate::error::{Error, Result};
 
 /// Theme manager for MosaicTerm
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ThemeManager {
     /// Available themes
     themes: HashMap<String, Theme>,
