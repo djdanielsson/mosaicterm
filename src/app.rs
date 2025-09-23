@@ -782,10 +782,10 @@ impl MosaicTermApp {
                             debug!("Got {} ready lines from terminal", ready_lines.len());
                             if let Some(last_block) = self.command_history.last_mut() {
                                 let has_ready_lines = !ready_lines.is_empty();
-                                for line in ready_lines {
+                                for line in &ready_lines {
                                     // Only skip exact command echo
                                     if line.text.trim() != last_block.command.trim() {
-                                        last_block.add_output_line(line);
+                                        last_block.add_output_line(line.clone());
                                     }
                                 }
                                 
@@ -812,11 +812,55 @@ impl MosaicTermApp {
                                     }
                                 }
                                 
-                                // Simple timeout-based completion (1 second)
+                                // Intelligent completion detection
                                 if let Some(start_time) = self.last_command_time {
-                                    if start_time.elapsed().as_millis() > 1000 {
-                                        last_block.mark_completed(std::time::Duration::from_millis(100));
-                                        self.last_command_time = None;
+                                    let elapsed_ms = start_time.elapsed().as_millis();
+
+                                    // Check if command might be interactive/long-running
+                                    let is_interactive_command = last_block.command.contains("top") ||
+                                                                 last_block.command.contains("htop") ||
+                                                                 last_block.command.contains("vim") ||
+                                                                 last_block.command.contains("nano") ||
+                                                                 last_block.command.contains("less") ||
+                                                                 last_block.command.contains("man") ||
+                                                                 last_block.command.starts_with("ssh ") ||
+                                                                 last_block.command.contains(" | ") ||
+                                                                 last_block.command.contains(" > ") ||
+                                                                 last_block.command.contains(" >> ");
+
+                                    if is_interactive_command {
+                                        // For interactive commands, use a longer timeout (10 seconds)
+                                        // or wait for explicit interruption
+                                        if elapsed_ms > 10000 {
+                                            // Mark as completed after 10 seconds for safety
+                                            last_block.mark_completed(std::time::Duration::from_millis(
+                                                elapsed_ms.try_into().unwrap_or(10000)
+                                            ));
+                                            self.last_command_time = None;
+                                        }
+                                        // Don't mark as completed - let it run
+                                    } else {
+                                        // For regular commands, complete quickly if they produce output
+                                        // Since we suppressed prompts, check for common completion indicators
+                                        let has_completion_indicators = ready_lines.iter().any(|line| {
+                                            line.text.contains("exit code") ||
+                                            line.text.contains("finished") ||
+                                            line.text.contains("completed") ||
+                                            line.text.trim().is_empty() && ready_lines.len() > 1
+                                        });
+
+                                        // Most commands complete immediately after producing output
+                                        // Only keep them running if they explicitly need to be long-running
+                                        let should_complete = has_completion_indicators ||
+                                                             elapsed_ms > 100 ||  // Safety timeout
+                                                             (!last_block.output.is_empty() && elapsed_ms > 10); // Fast completion for commands with output
+
+                                        if should_complete {
+                                            last_block.mark_completed(std::time::Duration::from_millis(
+                                                elapsed_ms.try_into().unwrap_or(100)
+                                            ));
+                                            self.last_command_time = None;
+                                        }
                                     }
                                 }
                             }
