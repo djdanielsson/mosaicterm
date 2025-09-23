@@ -33,10 +33,6 @@ pub struct ScrollableHistory {
     scrollbar_config: ScrollbarConfig,
     /// Cached block heights for performance
     block_heights: HashMap<String, f32>,
-    /// Previous mouse position for drag scrolling
-    last_mouse_pos: Option<egui::Pos2>,
-    /// Whether the user is currently dragging
-    is_dragging: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -93,8 +89,6 @@ impl ScrollableHistory {
             animation_time: 0.0,
             scrollbar_config: ScrollbarConfig::default(),
             block_heights: HashMap::new(),
-            last_mouse_pos: None,
-            is_dragging: false,
         }
     }
 

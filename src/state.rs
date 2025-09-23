@@ -45,8 +45,6 @@ pub struct TerminalInstance {
     command_history: Vec<CommandBlock>,
     /// Terminal title
     title: String,
-    /// Creation timestamp
-    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Application settings
@@ -285,7 +283,6 @@ impl TerminalInstance {
             session,
             command_history: Vec::new(),
             title: "Terminal".to_string(),
-            created_at: chrono::Utc::now(),
         }
     }
 

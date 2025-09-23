@@ -23,8 +23,6 @@ struct PromptPattern {
     shell_type: ShellType,
     /// Regex pattern for prompt detection
     pattern: Regex,
-    /// Example prompt strings
-    examples: Vec<String>,
 }
 
 
@@ -51,35 +49,34 @@ impl PromptDetector {
     /// Initialize default prompt patterns for common shells
     fn initialize_patterns(&mut self) {
         // Bash patterns
-        self.add_pattern(ShellType::Bash, r"^\$ $", vec!["$ "]);
-        self.add_pattern(ShellType::Bash, r"^bash-\d+\.\d+\$ $", vec!["bash-5.1$ "]);
-        self.add_pattern(ShellType::Bash, r"^\[.*\]\$ $", vec!["[user@host]$ "]);
+        self.add_pattern(ShellType::Bash, r"^\$ $");
+        self.add_pattern(ShellType::Bash, r"^bash-\d+\.\d+\$ $");
+        self.add_pattern(ShellType::Bash, r"^\[.*\]\$ $");
 
         // Zsh patterns
-        self.add_pattern(ShellType::Zsh, r"^% $", vec!["% "]);
-        self.add_pattern(ShellType::Zsh, r"^zsh-\d+\.\d+% $", vec!["zsh-5.8% "]);
-        self.add_pattern(ShellType::Zsh, r"^\[.*\]% $", vec!["[user@host]% "]);
+        self.add_pattern(ShellType::Zsh, r"^% $");
+        self.add_pattern(ShellType::Zsh, r"^zsh-\d+\.\d+% $");
+        self.add_pattern(ShellType::Zsh, r"^\[.*\]% $");
 
         // Fish patterns
-        self.add_pattern(ShellType::Fish, r"^> $", vec!["> "]);
-        self.add_pattern(ShellType::Fish, r"^\[.*\]> $", vec!["[user@host]> "]);
+        self.add_pattern(ShellType::Fish, r"^> $");
+        self.add_pattern(ShellType::Fish, r"^\[.*\]> $");
 
         // PowerShell patterns
-        self.add_pattern(ShellType::PowerShell, r"^PS .*> $", vec!["PS C:\\> "]);
-        self.add_pattern(ShellType::PowerShell, r"^PS .*>$", vec!["PS C:\\>"]);
+        self.add_pattern(ShellType::PowerShell, r"^PS .*> $");
+        self.add_pattern(ShellType::PowerShell, r"^PS .*>$");
 
         // Cmd patterns
-        self.add_pattern(ShellType::Cmd, r"^[A-Z]:\\.*> $", vec!["C:\\> "]);
+        self.add_pattern(ShellType::Cmd, r"^[A-Z]:\\.*> $");
     }
 
     /// Add a prompt pattern
-    fn add_pattern(&mut self, shell_type: ShellType, pattern: &str, examples: Vec<&str>) {
+    fn add_pattern(&mut self, shell_type: ShellType, pattern: &str) {
         match Regex::new(pattern) {
             Ok(regex) => {
                 self.prompt_patterns.push(PromptPattern {
                     shell_type,
                     pattern: regex,
-                    examples: examples.into_iter().map(|s| s.to_string()).collect(),
                 });
             }
             Err(e) => {

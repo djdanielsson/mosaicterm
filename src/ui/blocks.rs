@@ -7,7 +7,6 @@ use eframe::egui;
 use std::collections::HashMap;
 use crate::error::Result;
 use crate::models::{CommandBlock, ExecutionStatus};
-use crate::models::output_line::AnsiCode;
 use crate::terminal::ansi_parser::AnsiParser;
 
 /// Command block renderer
@@ -60,8 +59,6 @@ pub struct RenderedBlock {
 pub struct RenderArea {
     /// Text content
     text: String,
-    /// ANSI codes for formatting
-    ansi_codes: Vec<AnsiCode>,
     /// Dimensions of the area
     dimensions: egui::Vec2,
 }
@@ -329,7 +326,6 @@ impl CommandBlocks {
         // Create command area
         let command_area = RenderArea {
             text: command_parsed.clean_text,
-            ansi_codes: command_parsed.ansi_codes,
             dimensions: egui::Vec2::new(400.0, 20.0), // Placeholder dimensions
         };
 
@@ -343,7 +339,6 @@ impl CommandBlocks {
         let output_parsed = self.ansi_parser.parse(&output_text)?;
         let output_area = RenderArea {
             text: output_parsed.clean_text,
-            ansi_codes: output_parsed.ansi_codes,
             dimensions: egui::Vec2::new(400.0, 100.0), // Placeholder dimensions
         };
 
@@ -686,13 +681,10 @@ mod tests {
     fn test_render_area() {
         let area = RenderArea {
             text: "test".to_string(),
-            ansi_codes: Vec::new(),
             dimensions: egui::Vec2::new(100.0, 20.0),
         };
 
         assert_eq!(area.text, "test");
-        assert!(area.ansi_codes.is_empty());
-        assert_eq!(area.dimensions.x, 100.0);
     }
 
     #[test]
@@ -701,12 +693,10 @@ mod tests {
             id: "test".to_string(),
             command_area: RenderArea {
                 text: "echo hello".to_string(),
-                ansi_codes: Vec::new(),
                 dimensions: egui::Vec2::new(100.0, 20.0),
             },
             output_area: RenderArea {
                 text: "hello".to_string(),
-                ansi_codes: Vec::new(),
                 dimensions: egui::Vec2::new(100.0, 20.0),
             },
             status_indicator: StatusIcon::Success,
@@ -728,12 +718,10 @@ mod tests {
             id: "test".to_string(),
             command_area: RenderArea {
                 text: "test".to_string(),
-                ansi_codes: Vec::new(),
                 dimensions: egui::Vec2::new(50.0, 20.0),
             },
             output_area: RenderArea {
                 text: "output".to_string(),
-                ansi_codes: Vec::new(),
                 dimensions: egui::Vec2::new(50.0, 20.0),
             },
             status_indicator: StatusIcon::Success,

@@ -9,7 +9,7 @@ use mosaicterm::pty::PtyManager;
 use mosaicterm::terminal::{Terminal, TerminalFactory};
 use mosaicterm::execution::DirectExecutor;
 use mosaicterm::models::{TerminalSession, ShellType as ModelShellType};
-use mosaicterm::ui::{CommandBlocks, InputPrompt, ScrollableHistory};
+use mosaicterm::ui::{InputPrompt, ScrollableHistory};
 use mosaicterm::models::{CommandBlock, ExecutionStatus};
 use mosaicterm::config::RuntimeConfig;
 use mosaicterm::error::Result;
@@ -23,7 +23,6 @@ pub struct MosaicTermApp {
     /// Terminal factory for creating terminals
     terminal_factory: TerminalFactory,
     /// UI components
-    command_blocks: CommandBlocks,
     input_prompt: InputPrompt,
     scrollable_history: ScrollableHistory,
     /// Command history
@@ -35,8 +34,6 @@ pub struct MosaicTermApp {
     /// Accumulates partial output (no newline yet) for the latest command
     /// Last time a command was executed (for timeout detection)
     last_command_time: Option<std::time::Instant>,
-    /// Direct command executor (alternative to PTY+regex)
-    direct_executor: DirectExecutor,
 }
 
 #[derive(Debug, Clone)]
@@ -45,25 +42,12 @@ pub struct AppState {
     terminal_ready: bool,
     /// Whether terminal initialization has been attempted
     initialization_attempted: bool,
-    /// Current theme
-    theme: AppTheme,
     /// Window title
     title: String,
     /// Status message
     status_message: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct AppConfig {
-    /// Default shell type
-    default_shell: ModelShellType,
-    /// Initial terminal dimensions
-    initial_dimensions: (usize, usize),
-    /// Maximum scrollback lines
-    max_scrollback: usize,
-    /// Font size
-    font_size: f32,
-}
 
 #[derive(Debug, Clone)]
 pub enum AppTheme {
@@ -75,23 +59,12 @@ impl Default for AppState {
         Self {
             terminal_ready: false,
             initialization_attempted: false,
-            theme: AppTheme::Auto,
             title: "MosaicTerm".to_string(),
             status_message: None,
         }
     }
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            default_shell: ModelShellType::Bash,
-            initial_dimensions: (120, 30),
-            max_scrollback: 1000,
-            font_size: 12.0,
-        }
-    }
-}
 
 impl Default for MosaicTermApp {
     fn default() -> Self {
@@ -111,7 +84,6 @@ impl MosaicTermApp {
         let terminal_factory = TerminalFactory::new(pty_manager.clone());
 
         // Create UI components
-        let command_blocks = CommandBlocks::new();
         let input_prompt = InputPrompt::new();
         let scrollable_history = ScrollableHistory::new();
 
@@ -130,7 +102,7 @@ impl MosaicTermApp {
             ("echo 'Hello from MosaicTerm!'", "Print a greeting message"),
         ];
 
-        for (cmd, description) in demo_commands {
+        for (cmd, _description) in demo_commands {
             let mut block = mosaicterm::models::CommandBlock::new(
                 cmd.to_string(),
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")),
@@ -167,14 +139,12 @@ impl MosaicTermApp {
             terminal: None,
             pty_manager,
             terminal_factory,
-            command_blocks,
             input_prompt,
             scrollable_history,
             command_history,
             state: AppState::default(),
             runtime_config,
             last_command_time: None,
-            direct_executor: DirectExecutor::new(),
         }
     }
 
@@ -185,16 +155,6 @@ impl MosaicTermApp {
         app
     }
 
-    /// Initialize the application (called after creation)
-    pub async fn initialize(&mut self) -> Result<()> {
-        info!("Initializing application components...");
-
-        // Initialize terminal session
-        self.initialize_terminal().await?;
-
-        info!("Application initialization complete");
-        Ok(())
-    }
 
     /// Initialize the terminal session
     pub async fn initialize_terminal(&mut self) -> Result<()> {
@@ -313,9 +273,9 @@ impl MosaicTermApp {
 
         // UI will be updated automatically on the next frame
 
-        if let Some(terminal) = &mut self.terminal {
+        if let Some(_terminal) = &mut self.terminal {
             // Send command directly to PTY with newline so the shell executes it
-            if let Some(handle) = terminal.pty_handle() {
+            if let Some(handle) = _terminal.pty_handle() {
                 let mut pty_manager = self.pty_manager.lock().await;
                 let cmd = format!("{}\n", command);
                 if let Err(e) = pty_manager.send_input(handle, cmd.as_bytes()).await {
@@ -350,25 +310,6 @@ impl MosaicTermApp {
         debug!("UI components updated");
     }
 
-    /// Get current application state
-    pub fn state(&self) -> &AppState {
-        &self.state
-    }
-
-    /// Get current runtime configuration
-    pub fn runtime_config(&self) -> &RuntimeConfig {
-        &self.runtime_config
-    }
-
-    /// Get terminal instance (for testing)
-    pub fn terminal(&self) -> Option<&Terminal> {
-        self.terminal.as_ref()
-    }
-
-    /// Get terminal instance mutably (for testing)
-    pub fn terminal_mut(&mut self) -> Option<&mut Terminal> {
-        self.terminal.as_mut()
-    }
 
     /// Set status message
     pub fn set_status_message(&mut self, message: Option<String>) {
@@ -501,7 +442,7 @@ impl MosaicTermApp {
     }
 
     /// Handle keyboard shortcuts and navigation
-    fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Only handle shortcuts when no text input is focused
         if ctx.memory(|mem| mem.focus().is_none()) {
             // Application shortcuts
@@ -561,10 +502,10 @@ impl MosaicTermApp {
 
     /// Handle command interruption (Ctrl+C)
     fn handle_interrupt_command(&mut self) {
-        if let Some(terminal) = &mut self.terminal {
+        if let Some(_terminal) = &mut self.terminal {
             // Send interrupt signal to current process
             if let Err(e) = executor::block_on(async {
-                let pty_manager = self.pty_manager.lock().await;
+                let _pty_manager = self.pty_manager.lock().await;
                 // In a real implementation, this would send SIGINT
                 // For now, just log and update status
                 Ok::<(), mosaicterm::error::Error>(())
@@ -581,8 +522,8 @@ impl MosaicTermApp {
         // Clear command history
         self.command_history.clear();
         // Clear terminal screen (would send clear command to shell)
-        if let Some(terminal) = &mut self.terminal {
-            let _ = terminal.process_input("clear");
+        if let Some(_terminal) = &mut self.terminal {
+            let _ = _terminal.process_input("clear");
         }
         info!("Clear screen requested (Ctrl+L)");
         self.set_status_message(Some("Screen cleared".to_string()));
@@ -591,8 +532,8 @@ impl MosaicTermApp {
     /// Handle exit (Ctrl+D)
     fn handle_exit(&mut self) {
         // Send EOF to shell (Ctrl+D)
-        if let Some(terminal) = &mut self.terminal {
-            let _ = terminal.process_input("\x04"); // EOF character
+        if let Some(_terminal) = &mut self.terminal {
+            let _ = _terminal.process_input("\x04"); // EOF character
         }
         info!("Exit requested (Ctrl+D)");
         self.set_status_message(Some("EOF sent".to_string()));
@@ -642,42 +583,6 @@ impl MosaicTermApp {
     }
 
     /// Render the status bar
-    fn render_status_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label("🖥️ MosaicTerm");
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Terminal status
-                if self.state.terminal_ready {
-                    ui.colored_label(egui::Color32::GREEN, "● Ready");
-                } else {
-                    ui.colored_label(egui::Color32::YELLOW, "● Initializing...");
-                }
-
-                // Status message
-                if let Some(message) = &self.state.status_message {
-                    ui.separator();
-                    ui.label(message);
-                }
-            });
-        });
-        ui.separator();
-    }
-
-    /// Render the scrollable history area
-    fn render_history_area(&mut self, ui: &mut egui::Ui) {
-        ui.vertical(|ui| {
-            if self.state.terminal_ready {
-                // Render command history using the command blocks component
-                self.command_blocks.render_command_history(ui, &self.command_history);
-            } else {
-                ui.centered_and_justified(|ui| {
-                    ui.heading("Initializing MosaicTerm...");
-                    ui.label("Setting up terminal session...");
-                });
-            }
-        });
-    }
 
     /// Render the fixed input area at the bottom
     fn render_fixed_input_area(&mut self, ui: &mut egui::Ui) {
@@ -863,19 +768,19 @@ impl MosaicTermApp {
     /// Handle async operations (called from update) - SIMPLIFIED VERSION
     fn handle_async_operations(&mut self, _ctx: &egui::Context) {
         // SIMPLIFIED: Poll PTY output and add to current command (no complex prompt detection)
-        if let Some(terminal) = &mut self.terminal {
-            if let Some(handle) = terminal.pty_handle() {
+        if let Some(_terminal) = &mut self.terminal {
+            if let Some(handle) = _terminal.pty_handle() {
                 if let Ok(mut pty_manager) = self.pty_manager.try_lock() {
                     if let Ok(data) = pty_manager.try_read_output_now(handle) {
                         if !data.is_empty() {
                             // Process output
                             debug!("PTY read {} bytes: {:?}", data.len(), String::from_utf8_lossy(&data));
                             let _ = futures::executor::block_on(async {
-                                terminal.process_output(&data, mosaicterm::terminal::StreamType::Stdout).await
+                                _terminal.process_output(&data, mosaicterm::terminal::StreamType::Stdout).await
                             });
 
                             // Add output to current command block
-                            let ready_lines = terminal.take_ready_output_lines();
+                            let ready_lines = _terminal.take_ready_output_lines();
                             debug!("Got {} ready lines from terminal", ready_lines.len());
                             if let Some(last_block) = self.command_history.last_mut() {
                                 let has_ready_lines = !ready_lines.is_empty();
@@ -936,12 +841,6 @@ mod tests {
         assert!(!app.state().terminal_ready);
     }
 
-    #[test]
-    fn test_app_config() {
-        let config = AppConfig::default();
-        assert_eq!(config.initial_dimensions, (120, 30));
-        assert_eq!(config.font_size, 12.0);
-    }
 
     #[test]
     fn test_app_state() {
@@ -950,19 +849,6 @@ mod tests {
         assert!(!state.terminal_ready);
     }
 
-    #[test]
-    fn test_app_with_config() {
-        let config = AppConfig {
-            default_shell: "zsh".to_string(),
-            initial_dimensions: (80, 25),
-            max_scrollback: 500,
-            font_size: 14.0,
-        };
-
-        let app = MosaicTermApp::with_config(config);
-        assert_eq!(app.config().initial_dimensions, (80, 25));
-        assert_eq!(app.config().font_size, 14.0);
-    }
 
     #[test]
     fn test_status_message() {

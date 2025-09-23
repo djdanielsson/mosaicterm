@@ -2,7 +2,6 @@
 //!
 //! Handles command input, validation, and sending commands to the PTY process.
 
-use regex::Regex;
 use crate::error::Result;
 use crate::pty::{PtyHandle, PtyManager};
 use crate::models::CommandBlock;
@@ -22,8 +21,6 @@ pub struct CommandInputProcessor {
     multi_line_buffer: Vec<String>,
     /// Whether we're in multi-line input mode
     multi_line_mode: bool,
-    /// Shell prompt pattern for completion detection
-    prompt_pattern: Regex,
 }
 
 impl CommandInputProcessor {
@@ -36,17 +33,13 @@ impl CommandInputProcessor {
             cursor_position: 0,
             multi_line_buffer: Vec::new(),
             multi_line_mode: false,
-            prompt_pattern: Regex::new(r"(^\$|^\#|^\>|bash-\d+\.\d+\$|\$)").unwrap(),
         }
     }
 
-    /// Create processor with custom prompt pattern
-    pub fn with_prompt_pattern(pattern: &str) -> Result<Self> {
-        let prompt_pattern = Regex::new(pattern)?;
-        Ok(Self {
-            prompt_pattern,
-            ..Self::new()
-        })
+    /// Create processor with custom prompt pattern (deprecated - pattern no longer used)
+    pub fn with_prompt_pattern(_pattern: &str) -> Result<Self> {
+        // Pattern is no longer used, just return default instance
+        Ok(Self::new())
     }
 
     /// Process a single character input

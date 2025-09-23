@@ -4,7 +4,7 @@
 //! components through message passing and event-driven architecture.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::{mpsc, broadcast};
 use tracing::{debug, info};
 
@@ -24,8 +24,6 @@ pub struct EventBus {
 pub struct EventChannel {
     /// Sender for this event type
     sender: mpsc::UnboundedSender<EventEnvelope>,
-    /// Receiver for this event type
-    receiver: Mutex<Option<mpsc::UnboundedReceiver<EventEnvelope>>>,
 }
 
 /// Event envelope with metadata
@@ -180,13 +178,6 @@ pub struct EventProcessor {
     processing_task: Option<tokio::task::JoinHandle<()>>,
 }
 
-/// Event subscription for receiving events
-pub struct EventSubscription {
-    /// Event type
-    event_type: String,
-    /// Receiver channel
-    receiver: mpsc::UnboundedReceiver<EventEnvelope>,
-}
 
 impl EventBus {
     /// Create new event bus
@@ -222,22 +213,6 @@ impl EventBus {
         Ok(())
     }
 
-    /// Subscribe to an event type
-    pub fn subscribe(&mut self, event_type: &str) -> Result<EventSubscription> {
-        let (sender, receiver) = mpsc::unbounded_channel();
-
-        let channel = EventChannel {
-            sender,
-            receiver: Mutex::new(Some(receiver)),
-        };
-
-        self.channels.insert(event_type.to_string(), channel);
-
-        Ok(EventSubscription {
-            event_type: event_type.to_string(),
-            receiver: mpsc::unbounded_channel().1, // We'll need to fix this
-        })
-    }
 
     /// Get broadcast receiver for system events
     pub fn subscribe_broadcast(&self) -> broadcast::Receiver<SystemEvent> {
@@ -352,18 +327,6 @@ impl EventProcessor {
     }
 }
 
-impl EventSubscription {
-    /// Receive next event
-    pub async fn recv(&mut self) -> Option<EventEnvelope> {
-        // This would need to be implemented with proper channel handling
-        None
-    }
-
-    /// Try to receive next event
-    pub fn try_recv(&mut self) -> Option<EventEnvelope> {
-        None
-    }
-}
 
 /// Generate unique event ID
 fn generate_event_id() -> String {
