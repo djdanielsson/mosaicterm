@@ -741,15 +741,10 @@ impl MosaicTermApp {
                         .inner_margin(egui::Margin::symmetric(8.0, 6.0));
 
                     output_frame.show(ui, |ui| {
-                        for line in block.output.iter().take(10) { // Limit output lines
+                        for line in block.output.iter() { // Show all output lines
                             ui.label(egui::RichText::new(&line.text)
                                 .font(egui::FontId::monospace(12.0))
                                 .color(egui::Color32::from_rgb(180, 180, 200)));
-                        }
-                        if block.output.len() > 10 {
-                            ui.label(egui::RichText::new(&format!("... and {} more lines", block.output.len() - 10))
-                                .font(egui::FontId::monospace(10.0))
-                                .color(egui::Color32::from_rgb(120, 120, 140)));
                         }
                     });
                 }

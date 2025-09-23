@@ -74,7 +74,7 @@ impl Default for UiConfig {
         Self {
             font_family: "JetBrains Mono".to_string(),
             font_size: 12,
-            scrollback_lines: 1000,
+            scrollback_lines: 100000, // Increased for unlimited output
             theme_name: "default-dark".to_string(),
             smooth_scrolling: true,
             animation_duration_ms: 200,
@@ -121,7 +121,7 @@ impl Default for TerminalConfig {
             working_directory: None,
             dimensions: (120, 30),
             mouse_support: true,
-            scrollback_buffer: 10000,
+            scrollback_buffer: 1000000, // Increased to 1M for unlimited output
             bell_style: BellStyle::Sound,
         }
     }
@@ -151,7 +151,7 @@ impl Default for PtyConfig {
         Self {
             environment: std::collections::HashMap::new(),
             inherit_env: true,
-            buffer_size: 8192,
+            buffer_size: 1024 * 1024, // 1MB for long output
             raw_mode: true,
             timeout_ms: 100,
         }

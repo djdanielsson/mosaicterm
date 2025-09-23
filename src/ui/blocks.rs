@@ -27,7 +27,7 @@ pub struct BlockConfig {
     show_timestamps: bool,
     /// Show execution status
     show_status: bool,
-    /// Maximum output lines to display
+    /// Maximum output lines to display (0 = unlimited)
     max_output_lines: usize,
     /// Block padding
     padding: egui::Vec2,
@@ -104,7 +104,7 @@ impl Default for BlockConfig {
         Self {
             show_timestamps: true,
             show_status: true,
-            max_output_lines: 100,
+            max_output_lines: 0, // 0 = unlimited
             padding: egui::Vec2::new(8.0, 6.0),
             spacing: 4.0,
             font_size: 12.0,
@@ -272,9 +272,15 @@ impl CommandBlocks {
 
         output_frame.show(ui, |ui| {
             ui.vertical(|ui| {
-                // Limit output lines for performance
+                // Display output lines (unlimited if max_output_lines is 0)
+                let display_limit = if self.config.max_output_lines == 0 {
+                    block.output.len()
+                } else {
+                    self.config.max_output_lines
+                };
+
                 let display_lines = block.output.iter()
-                    .take(self.config.max_output_lines)
+                    .take(display_limit)
                     .enumerate();
 
                 for (i, line) in display_lines {
@@ -284,13 +290,13 @@ impl CommandBlocks {
                         .color(egui::Color32::from_rgb(180, 180, 200)));
 
                     // Add subtle line spacing
-                    if i < block.output.len().min(self.config.max_output_lines) - 1 {
+                    if i < block.output.len().min(display_limit) - 1 {
                         ui.add_space(1.0);
                     }
                 }
 
                 // Show truncation indicator if needed
-                if block.output.len() > self.config.max_output_lines {
+                if self.config.max_output_lines > 0 && block.output.len() > self.config.max_output_lines {
                     let remaining = block.output.len() - self.config.max_output_lines;
                     ui.label(egui::RichText::new(format!("... and {} more lines", remaining))
                         .font(egui::FontId::monospace(9.0))
@@ -330,8 +336,14 @@ impl CommandBlocks {
         };
 
         // Create output area (simplified)
+        let output_limit = if self.config.max_output_lines == 0 {
+            block.output.len()
+        } else {
+            self.config.max_output_lines
+        };
+
         let output_text = block.output.iter()
-            .take(self.config.max_output_lines)
+            .take(output_limit)
             .map(|line| line.text.clone())
             .collect::<Vec<_>>()
             .join("\n");
@@ -657,7 +669,7 @@ mod tests {
         let config = BlockConfig::default();
         assert!(config.show_timestamps);
         assert!(config.show_status);
-        assert_eq!(config.max_output_lines, 100);
+        assert_eq!(config.max_output_lines, 0); // 0 = unlimited
         assert_eq!(config.font_size, 12.0);
     }
 

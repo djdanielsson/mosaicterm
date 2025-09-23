@@ -159,7 +159,7 @@ impl ScreenBuffer {
 
 impl Default for ScreenBuffer {
     fn default() -> Self {
-        Self::new(1000) // Default 1000 lines of scrollback
+        Self::new(100000) // Default 100k lines of scrollback for unlimited output
     }
 }
 

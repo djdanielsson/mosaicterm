@@ -89,7 +89,7 @@ pub struct StreamConfig {
 impl Default for StreamConfig {
     fn default() -> Self {
         Self {
-            read_buffer_size: 8192,
+            read_buffer_size: 1024 * 1024, // 1MB for long output
             write_buffer_size: 4096,
             read_timeout_ms: 100,
             non_blocking: true,
