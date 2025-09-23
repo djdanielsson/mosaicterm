@@ -219,10 +219,40 @@ impl MosaicTermApp {
 
         // Create terminal session configuration
         let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+        
+        // Create environment with prompt suppression
+        let mut environment: std::collections::HashMap<String, String> = std::env::vars().collect();
+        
+        // Suppress shell prompts by setting PS1 to empty for bash/zsh
+        // This prevents prompts from appearing in output at all
+        match shell_type {
+            ModelShellType::Bash | ModelShellType::Zsh => {
+                environment.insert("PS1".to_string(), "".to_string());
+                environment.insert("PS2".to_string(), "".to_string()); // Also suppress continuation prompt
+                environment.insert("PS3".to_string(), "".to_string()); // Suppress select prompt
+                environment.insert("PS4".to_string(), "".to_string()); // Suppress debug prompt
+                // Prevent shells from being 'interactive' which can trigger config loading
+                environment.insert("TERM".to_string(), "dumb".to_string());
+            },
+            ModelShellType::Fish => {
+                // For fish shell, we can disable the prompt via function
+                environment.insert("fish_prompt".to_string(), "".to_string());
+                environment.insert("TERM".to_string(), "dumb".to_string());
+            },
+            ModelShellType::Other(_) => {
+                // For unknown shells, try PS1 suppression as fallback
+                environment.insert("PS1".to_string(), "".to_string());
+                environment.insert("PS2".to_string(), "".to_string());
+                environment.insert("PS3".to_string(), "".to_string());
+                environment.insert("PS4".to_string(), "".to_string());
+                environment.insert("TERM".to_string(), "dumb".to_string());
+            }
+        }
+        
         let session = TerminalSession::with_environment(
             shell_type,
             working_dir,
-            std::env::vars().collect()
+            environment
         );
 
         // Create and initialize terminal
@@ -842,18 +872,12 @@ impl MosaicTermApp {
                                     let text = String::from_utf8_lossy(&data);
                                     debug!("Processing partial data: '{}'", text.trim());
                                     
-                                    // Simple prompt detection - just check for common shell prompts
                                     let trimmed_text = text.trim();
-                                    let is_shell_prompt = trimmed_text.ends_with("$ ") || 
-                                                          trimmed_text.ends_with("% ") || 
-                                                          trimmed_text.ends_with("> ") ||
-                                                          trimmed_text.ends_with("# ") ||
-                                                          trimmed_text.matches("bash-").count() > 0 ||
-                                                          trimmed_text.matches("zsh-").count() > 0;
                                     
+                                    // Since we've suppressed prompts at the source, we can add any non-empty text
+                                    // that's not the command echo
                                     if !trimmed_text.is_empty() && 
-                                       trimmed_text != last_block.command.trim() && 
-                                       !is_shell_prompt {
+                                       trimmed_text != last_block.command.trim() {
                                         // Add partial data as a line immediately
                                         let partial_line = mosaicterm::models::OutputLine {
                                             text: trimmed_text.to_string(),
@@ -863,12 +887,6 @@ impl MosaicTermApp {
                                         };
                                         last_block.add_output_line(partial_line);
                                         debug!("Added partial data as output line: '{}'", trimmed_text);
-                                    } else if is_shell_prompt {
-                                        debug!("Filtered out shell prompt: '{}'", trimmed_text);
-                                        // Mark command as completed when we see a prompt
-                                        last_block.mark_completed(std::time::Duration::from_millis(100));
-                                        self.last_command_time = None;
-                                        debug!("Command completed due to prompt detection");
                                     }
                                 }
                                 

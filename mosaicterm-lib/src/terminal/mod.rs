@@ -70,17 +70,18 @@ impl Terminal {
         // Create PTY process for the terminal session
         let session = &self.state.session;
 
-        // Determine shell command based on shell type
-        let shell_command = match session.shell_type {
-            crate::models::ShellType::Bash => "bash".to_string(),
-            crate::models::ShellType::Zsh => "zsh".to_string(),
-            crate::models::ShellType::Fish => "fish".to_string(),
-            crate::models::ShellType::Other(ref cmd) => cmd.clone(),
+        // Determine shell command and args based on shell type
+        // Use arguments that prevent config file loading to ensure PS1 suppression works
+        let (shell_command, shell_args) = match session.shell_type {
+            crate::models::ShellType::Bash => ("bash".to_string(), vec!["--norc".to_string(), "--noprofile".to_string()]),
+            crate::models::ShellType::Zsh => ("zsh".to_string(), vec!["-f".to_string()]), // -f = no .zshrc
+            crate::models::ShellType::Fish => ("fish".to_string(), vec!["--no-config".to_string()]),
+            crate::models::ShellType::Other(ref cmd) => (cmd.clone(), vec![]),
         };
 
         let handle = pty_manager.create_pty(
             &shell_command,
-            &[],
+            &shell_args,
             &session.environment,
             Some(session.working_directory.as_path()),
         ).await?;
