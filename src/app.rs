@@ -389,6 +389,9 @@ impl eframe::App for MosaicTermApp {
 
         // Handle async operations
         self.handle_async_operations(ctx);
+
+        // Force frequent repaints for responsive terminal output
+        ctx.request_repaint();
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

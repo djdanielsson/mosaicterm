@@ -91,7 +91,7 @@ impl Default for StreamConfig {
         Self {
             read_buffer_size: 1024 * 1024, // 1MB for long output
             write_buffer_size: 4096,
-            read_timeout_ms: 100,
+            read_timeout_ms: 10, // Reduced for faster response
             non_blocking: true,
         }
     }

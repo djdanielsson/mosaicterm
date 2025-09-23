@@ -153,7 +153,7 @@ impl Default for PtyConfig {
             inherit_env: true,
             buffer_size: 1024 * 1024, // 1MB for long output
             raw_mode: true,
-            timeout_ms: 100,
+            timeout_ms: 10, // Reduced for faster response
         }
     }
 }
