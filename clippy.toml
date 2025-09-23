@@ -1,0 +1,48 @@
+# Clippy configuration for MosaicTerm
+msrv = "1.70.0"
+allow-dirty = false
+allow-staged = false
+check-private-items = true
+
+# Warning levels
+warn-on-all-wildcard-imports = true
+disallowed-methods = []
+disallowed-types = []
+disallowed-macros = []
+
+# Style preferences
+enum-variant-name-threshold = 10
+enum-variant-size-threshold = 200
+too-many-arguments-threshold = 7
+type-complexity-threshold = 250
+cognitive-complexity-threshold = 25
+
+# Performance settings
+large-error-threshold = 128
+trivial-copy-size-limit = 32
+
+# Documentation
+check-doc-valid-idents = ["MosaicTerm", "PTY", "ANSI"]
+doc-valid-idents = ["MosaicTerm", "PTY", "ANSI"]
+
+# Allow some pedantic lints that are too strict for this project
+allow = [
+    "module-name-repetitions",
+    "option-if-let-else",
+    "redundant-else",
+    "single-match-else",
+    "uninlined-format-args",
+    "unnecessary-wraps",
+]
+
+# Deny these lints as they indicate real problems
+deny = [
+    "dbg-macro",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "panic",
+    "print-stdout",
+    "unwrap-used",
+    "expect-used",
+]

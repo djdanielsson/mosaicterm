@@ -1,50 +1,86 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# MosaicTerm Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. TDD Methodology (NON-NEGOTIABLE)
+All development MUST follow Test-Driven Development principles:
+- Tests written FIRST → User approved → Tests fail → Then implement
+- Red-Green-Refactor cycle strictly enforced
+- Unit tests for all business logic, integration tests for system components
+- High test coverage (minimum 80%) required for all features
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. Integration-First Approach
+Don't reinvent the wheel - leverage existing CLI ecosystem:
+- Integrate with proven tools: zsh, fzf, bat, rg, fd, eza, jq, Oh My Zsh
+- Respect and preserve user's existing configurations and workflows
+- Focus on custom UI and block system rather than reimplementing functionality
+- PTY integration must be transparent to underlying shell experience
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Block-Based UI Architecture
+Custom interface design centered around command blocks:
+- Commands and outputs grouped into discrete, scrollable blocks
+- Permanently pinned input prompt at bottom of window
+- Native feel with proper fonts, scrolling, and macOS integration
+- Support for ANSI colors, escape codes, and rich terminal output
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Cross-Platform Foundation
+Design for multi-platform support from the start:
+- Abstract PTY handling into platform modules
+- Linux: native shell integration
+- Windows: PowerShell/WSL support
+- macOS: primary MVP target with native polish
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. Latest Versions Policy
+Use the latest stable versions of all dependencies and tools when possible:
+- **Dependency Updates**: Regular review and updates of all crates and tools
+- **Security Priority**: Immediate updates for security vulnerabilities
+- **Breaking Changes**: Evaluate impact before major version updates
+- **Testing Required**: Full test suite must pass after any version updates
+- **Documentation**: Update version requirements in documentation when changed
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+## Technology Constraints
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### Core Dependencies
+- **GUI Framework**: egui with eframe for native window management
+- **PTY Handling**: portable-pty for cross-platform pseudoterminal support
+- **ANSI Processing**: vte crate for escape code parsing and rendering
+- **Configuration**: serde + toml for settings management
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+### Required CLI Tools
+- **Shell**: zsh with Oh My Zsh support (primary target)
+- **Search Tools**: fzf, rg, fd for interactive search and filtering
+- **Display Tools**: bat, eza, jq for enhanced output formatting
+- **Platform**: macOS 14+ for MVP, with cross-platform expansion planned
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+## Development Standards
+
+### Code Quality Gates
+- All new code MUST have corresponding tests written first
+- PRs require review and must pass all tests before merge
+- Integration tests required for PTY, UI, and CLI tool interactions
+- Performance benchmarks for scrolling and rendering operations
+
+### Architecture Guidelines
+- Clear separation between UI layer, PTY management, and command processing
+- Modular design allowing for easy platform-specific implementations
+- Focus on composability and reusability of components
+- Documentation required for all public APIs and complex logic
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+### Constitutional Authority
+This constitution supersedes all other development practices and guidelines:
+- All PRs and code reviews MUST verify compliance with these principles
+- TDD methodology is NON-NEGOTIABLE and cannot be bypassed
+- Integration-first approach must be maintained - no reinventing existing CLI tools
+- Block-based UI architecture must guide all interface decisions
+- Latest versions policy must be followed for all dependencies and tools
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+### Amendment Process
+Constitutional changes require:
+- Clear justification and documentation of the change
+- Impact assessment on existing principles and architecture
+- Review and approval by project stakeholders
+- Migration plan for existing code if needed
+
+**Version**: 1.1.0 | **Ratified**: 2025-09-17 | **Last Amended**: 2025-09-17

@@ -1,0 +1,64 @@
+[workspace]
+members = [
+    "mosaicterm-lib",
+    "bin/mosaicterm"
+]
+resolver = "2"
+
+[workspace.dependencies]
+# GUI Framework
+egui = "0.24"
+eframe = { version = "0.24", features = ["persistence"] }
+
+# PTY and Terminal
+portable-pty = "0.8"
+vte = "0.13"
+
+# Serialization and Configuration
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Async Runtime
+tokio = { version = "1.0", features = ["full"] }
+futures = "0.3"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utility
+anyhow = "1.0"
+thiserror = "1.0"
+regex = "1.10"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+nix = { version = "0.27", features = ["signal"] }
+
+# Testing
+tokio-test = "0.4"
+tempfile = "3.0"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[profile.dev]
+opt-level = 1
+debug = true
+overflow-checks = true
+incremental = true
+
+[profile.dev-release]
+inherits = "release"
+opt-level = 2
+debug = true
+lto = false
+codegen-units = 4
+panic = "unwind"
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
