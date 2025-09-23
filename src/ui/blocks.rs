@@ -88,15 +88,15 @@ pub enum ContextMenuAction {
 }
 
 #[derive(Debug, Clone)]
-struct InteractionState {
+pub struct InteractionState {
     /// Currently hovered block ID
-    hovered_block: Option<String>,
+    pub hovered_block: Option<String>,
     /// Currently selected block ID
-    selected_block: Option<String>,
+    pub selected_block: Option<String>,
     /// Block showing context menu
-    context_menu_block: Option<String>,
+    pub context_menu_block: Option<String>,
     /// Context menu position
-    context_menu_pos: Option<egui::Pos2>,
+    pub context_menu_pos: Option<egui::Pos2>,
 }
 
 impl Default for BlockConfig {
@@ -536,6 +536,11 @@ impl CommandBlocks {
     /// Get interaction state
     pub fn interaction_state(&self) -> &InteractionState {
         &self.interaction_state
+    }
+
+    /// Get mutable interaction state
+    pub fn interaction_state_mut(&mut self) -> &mut InteractionState {
+        &mut self.interaction_state
     }
 
     /// Set configuration

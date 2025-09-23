@@ -41,6 +41,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 nix = { version = "0.27", features = ["signal"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+arboard = "3.4"
 
 [dev-dependencies]
 # Testing

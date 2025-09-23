@@ -5,11 +5,12 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{info, error, debug, warn};
 use futures::executor;
+use arboard::Clipboard;
 use mosaicterm::pty::PtyManager;
 use mosaicterm::terminal::{Terminal, TerminalFactory};
 use mosaicterm::execution::DirectExecutor;
 use mosaicterm::models::{TerminalSession, ShellType as ModelShellType};
-use mosaicterm::ui::{InputPrompt, ScrollableHistory};
+use mosaicterm::ui::{InputPrompt, ScrollableHistory, CommandBlocks};
 use mosaicterm::models::{CommandBlock, ExecutionStatus};
 use mosaicterm::config::RuntimeConfig;
 use mosaicterm::error::Result;
@@ -23,6 +24,7 @@ pub struct MosaicTermApp {
     /// Terminal factory for creating terminals
     terminal_factory: TerminalFactory,
     /// UI components
+    command_blocks: CommandBlocks,
     input_prompt: InputPrompt,
     scrollable_history: ScrollableHistory,
     /// Command history
@@ -84,6 +86,7 @@ impl MosaicTermApp {
         let terminal_factory = TerminalFactory::new(pty_manager.clone());
 
         // Create UI components
+        let command_blocks = CommandBlocks::new();
         let input_prompt = InputPrompt::new();
         let scrollable_history = ScrollableHistory::new();
 
@@ -139,6 +142,7 @@ impl MosaicTermApp {
             terminal: None,
             pty_manager,
             terminal_factory,
+            command_blocks,
             input_prompt,
             scrollable_history,
             command_history,
@@ -315,6 +319,96 @@ impl MosaicTermApp {
     pub fn set_status_message(&mut self, message: Option<String>) {
         self.state.status_message = message;
     }
+
+    /// Render context menu for command blocks
+    fn render_context_menu(&mut self, ctx: &egui::Context) {
+        // Check if we have an active context menu
+        if let Some(block_id) = &self.command_blocks.interaction_state().context_menu_block.clone() {
+            if let Some(menu_pos) = self.command_blocks.interaction_state().context_menu_pos {
+                // Find the command block and extract data we need
+                if let Some(block) = self.command_history.iter().find(|b| &b.id == block_id) {
+                    let command = block.command.clone();
+                    let status = block.status;
+                    let output_lines: Vec<String> = block.output.iter()
+                        .map(|line| line.text.clone())
+                        .collect();
+
+                    // Create context menu
+                    let mut menu_open = true;
+                    egui::Window::new("Context Menu")
+                        .fixed_pos(menu_pos)
+                        .resizable(false)
+                        .collapsible(false)
+                        .title_bar(false)
+                        .show(ctx, |ui| {
+                            ui.set_min_width(150.0);
+
+                            // Rerun command
+                            if ui.button("🔄 Rerun Command").clicked() {
+                                // Execute the same command again
+                                let _ = futures::executor::block_on(self.handle_command_input(command.clone()));
+                                menu_open = false;
+                            }
+
+                            // Kill running command (only if still running)
+                            if status == ExecutionStatus::Running {
+                                if ui.button("❌ Kill Command").clicked() {
+                                    self.handle_interrupt_command();
+                                    menu_open = false;
+                                }
+                            }
+
+                            ui.separator();
+
+                            // Copy command
+                            if ui.button("📋 Copy Command").clicked() {
+                                if let Ok(mut clipboard) = Clipboard::new() {
+                                    let _ = clipboard.set_text(&command);
+                                }
+                                menu_open = false;
+                            }
+
+                            // Copy output
+                            if ui.button("📄 Copy Output").clicked() {
+                                let output_text = output_lines.join("\n");
+                                if let Ok(mut clipboard) = Clipboard::new() {
+                                    let _ = clipboard.set_text(&output_text);
+                                }
+                                menu_open = false;
+                            }
+
+                            // Copy both
+                            if ui.button("📋📄 Copy Both").clicked() {
+                                let output_text = output_lines.join("\n");
+                                let both_text = format!("{}\n{}", command, output_text);
+                                if let Ok(mut clipboard) = Clipboard::new() {
+                                    let _ = clipboard.set_text(&both_text);
+                                }
+                                menu_open = false;
+                            }
+                        });
+
+                    // Close menu if clicked outside or if an action was taken
+                    if !menu_open {
+                        self.command_blocks.interaction_state_mut().context_menu_block = None;
+                        self.command_blocks.interaction_state_mut().context_menu_pos = None;
+                    }
+
+                    // Close menu on any click outside
+                    if ctx.input(|i| i.pointer.any_click()) {
+                        if let Some(mouse_pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                            // Check if click is outside the menu area (rough approximation)
+                            let menu_rect = egui::Rect::from_min_size(menu_pos, egui::vec2(150.0, 120.0));
+                            if !menu_rect.contains(mouse_pos) {
+                                self.command_blocks.interaction_state_mut().context_menu_block = None;
+                                self.command_blocks.interaction_state_mut().context_menu_pos = None;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl eframe::App for MosaicTermApp {
@@ -386,6 +480,9 @@ impl eframe::App for MosaicTermApp {
                 );
             });
         });
+
+        // Render context menu if active
+        self.render_context_menu(ctx);
 
         // Handle async operations
         self.handle_async_operations(ctx);
@@ -505,19 +602,83 @@ impl MosaicTermApp {
 
     /// Handle command interruption (Ctrl+C)
     fn handle_interrupt_command(&mut self) {
-        if let Some(_terminal) = &mut self.terminal {
-            // Send interrupt signal to current process
-            if let Err(e) = executor::block_on(async {
-                let _pty_manager = self.pty_manager.lock().await;
-                // In a real implementation, this would send SIGINT
-                // For now, just log and update status
-                Ok::<(), mosaicterm::error::Error>(())
-            }) {
-                error!("Failed to interrupt command: {}", e);
+        if let Some(terminal) = &mut self.terminal {
+            // Get the current PTY handle from the terminal
+            if let Some(pty_handle) = terminal.pty_handle() {
+                let handle_id = pty_handle.id.clone();
+
+                // Send interrupt signal to the PTY process
+                let result = executor::block_on(async {
+                    let mut pty_manager = self.pty_manager.lock().await;
+
+                    // Get the process PID
+                    if let Ok(info) = pty_manager.get_info(pty_handle) {
+                        if let Some(pid) = info.pid {
+                            // Send SIGINT to the process
+                            #[cfg(unix)]
+                            {
+                                use nix::sys::signal::{kill, Signal as NixSignal};
+                                use nix::unistd::Pid;
+
+                                match kill(Pid::from_raw(pid as i32), NixSignal::SIGINT) {
+                                    Ok(_) => {
+                                        info!("Sent SIGINT to process {} (PID: {})", handle_id, pid);
+                                        Ok(())
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to send SIGINT to process {}: {}", handle_id, e);
+                                        Err(mosaicterm::error::Error::Other(format!("Signal failed: {}", e)))
+                                    }
+                                }
+                            }
+
+                            #[cfg(windows)]
+                            {
+                                // Windows doesn't support SIGINT, terminate the process
+                                match pty_manager.terminate_pty(pty_handle).await {
+                                    Ok(_) => {
+                                        info!("Terminated Windows process {} (PID: {})", handle_id, pid);
+                                        Ok(())
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to terminate Windows process {}: {}", handle_id, e);
+                                        Err(e)
+                                    }
+                                }
+                            }
+
+                            #[cfg(not(any(unix, windows)))]
+                            {
+                                Err(mosaicterm::error::Error::Other("Signal handling not supported on this platform".to_string()))
+                            }
+                        } else {
+                            error!("No PID found for PTY handle {}", handle_id);
+                            Err(mosaicterm::error::Error::Other("No PID available".to_string()))
+                        }
+                    } else {
+                        error!("Failed to get PTY info for handle {}", handle_id);
+                        Err(mosaicterm::error::Error::Other("Failed to get PTY info".to_string()))
+                    }
+                });
+
+                match result {
+                    Ok(_) => {
+                        info!("Interrupt signal sent successfully");
+                        self.set_status_message(Some("Command interrupted".to_string()));
+                    }
+                    Err(e) => {
+                        error!("Failed to interrupt command: {}", e);
+                        self.set_status_message(Some("Failed to interrupt command".to_string()));
+                    }
+                }
+            } else {
+                warn!("No active PTY process to interrupt");
+                self.set_status_message(Some("No running command to interrupt".to_string()));
             }
+        } else {
+            warn!("Terminal not available for interrupt");
+            self.set_status_message(Some("Terminal not ready".to_string()));
         }
-        info!("Interrupt command requested (Ctrl+C)");
-        self.set_status_message(Some("Command interrupted".to_string()));
     }
 
     /// Handle screen clearing (Ctrl+L)
@@ -682,7 +843,11 @@ impl MosaicTermApp {
                     ui.vertical(|ui| {
                         // Commands appear in execution order: oldest at top, newest at bottom
                         for (i, block) in self.command_history.iter().enumerate() {
-                            Self::render_single_command_block_static(ui, block, i);
+                            if let Some((block_id, pos)) = Self::render_single_command_block_static(ui, block, i) {
+                                // Right-click detected, show context menu
+                                self.command_blocks.interaction_state_mut().context_menu_block = Some(block_id);
+                                self.command_blocks.interaction_state_mut().context_menu_pos = Some(pos);
+                            }
                         }
 
                         // If no commands, show welcome message
@@ -705,14 +870,14 @@ impl MosaicTermApp {
     }
 
     /// Render a single command block (static version to avoid borrow checker issues)
-    fn render_single_command_block_static(ui: &mut egui::Ui, block: &CommandBlock, _index: usize) {
+    fn render_single_command_block_static(ui: &mut egui::Ui, block: &CommandBlock, _index: usize) -> Option<(String, egui::Pos2)> {
         let block_frame = egui::Frame::none()
             .fill(egui::Color32::from_rgb(45, 45, 55))
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 80, 100)))
             .inner_margin(egui::Margin::symmetric(12.0, 8.0))
             .outer_margin(egui::Margin::symmetric(0.0, 4.0));
 
-        block_frame.show(ui, |ui| {
+        let frame_response = block_frame.show(ui, |ui| {
             ui.vertical(|ui| {
                 // Command header with timestamp and status
                 ui.horizontal(|ui| {
@@ -760,6 +925,15 @@ impl MosaicTermApp {
                 });
             });
         });
+
+        // Check if mouse is over this block and right-click was pressed
+        if frame_response.response.hovered() && ui.input(|i| i.pointer.secondary_clicked()) {
+            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                return Some((block.id.clone(), pos));
+            }
+        }
+
+        None
     }
 
 
