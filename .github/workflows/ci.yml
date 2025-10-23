@@ -27,6 +27,9 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.74.0"  # Minimum version that supports lock file v4
+          components: rustfmt, clippy
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
@@ -56,6 +59,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.74.0"  # Minimum version that supports lock file v4
 
       - name: Install cargo-audit
         run: cargo install cargo-audit
@@ -74,7 +79,7 @@ jobs:
       - name: Setup Rust (MSRV)
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.70"  # Matches the minimum version specified in README
+          toolchain: "1.74"  # Matches the minimum version specified in README
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2

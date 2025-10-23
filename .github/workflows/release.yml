@@ -32,6 +32,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.74.0"  # Minimum version that supports lock file v4
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2

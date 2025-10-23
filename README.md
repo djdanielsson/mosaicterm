@@ -1,7 +1,7 @@
 # MosaicTerm
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/djdanielsson/mosaicterm/blob/main/LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-1.74%2B-orange.svg)](https://www.rust-lang.org/)
 [![CI](https://github.com/djdanielsson/mosaicterm/actions/workflows/ci.yml/badge.svg)](https://github.com/djdanielsson/mosaicterm/actions/workflows/ci.yml)
 
 A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.dev). MosaicTerm groups commands and their outputs into discrete, scrollable blocks while maintaining a permanently pinned input prompt at the bottom - creating a clean, organized terminal experience that feels native to your workflow.
@@ -232,7 +232,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ### Development Setup
 
 1. Fork and clone the repository
-2. Install Rust 1.70+ stable toolchain
+2. Install Rust 1.74+ stable toolchain
 3. Run `cargo test` to ensure everything works
 4. Create a feature branch: `git checkout -b feature/your-feature`
 5. Make your changes with tests
