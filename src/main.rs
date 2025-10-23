@@ -250,7 +250,7 @@ fn create_application(_args: &AppArgs, runtime_config: RuntimeConfig) -> Result<
     info!("🏗️  Creating application...");
 
     // Create the app with configuration
-    let mut app = MosaicTermApp::with_config(runtime_config);
+    let app = MosaicTermApp::with_config(runtime_config);
 
     debug!("Application created successfully");
     Ok(app)

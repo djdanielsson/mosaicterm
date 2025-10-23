@@ -67,21 +67,21 @@ jobs:
   #     - name: Run security audit
   #       run: cargo audit
 
-  # # Job to ensure MSRV compatibility
-  # msrv:
-  #   name: MSRV Check
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
+  # Job to ensure MSRV compatibility
+  msrv:
+    name: MSRV Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-  #     - name: Setup Rust (MSRV)
-  #       uses: dtolnay/rust-toolchain@master
-  #       with:
-  #         toolchain: "1.74"  # Matches the minimum version specified in README
+      - name: Setup Rust (MSRV)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.74"  # Matches the minimum version specified in README
 
-  #     - name: Cache dependencies
-  #       uses: Swatinem/rust-cache@v2
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
 
-  #     - name: Check compilation with MSRV
-  #       run: cargo check
+      - name: Check compilation with MSRV
+        run: cargo check

@@ -609,7 +609,7 @@ impl MosaicTermApp {
 
                 // Send interrupt signal to the PTY process
                 let result = executor::block_on(async {
-                    let mut pty_manager = self.pty_manager.lock().await;
+                    let pty_manager = self.pty_manager.lock().await;
 
                     // Get the process PID
                     if let Ok(info) = pty_manager.get_info(pty_handle) {
