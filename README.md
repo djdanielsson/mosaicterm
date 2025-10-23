@@ -1,12 +1,12 @@
 # MosaicTerm
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/your-repo/mosaicterm/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/djdanielsson/mosaicterm/blob/main/LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
-[![CI](https://github.com/your-repo/mosaicterm/actions/workflows/release.yml/badge.svg)](https://github.com/your-repo/mosaicterm/actions/workflows/release.yml)
+[![CI](https://github.com/djdanielsson/mosaicterm/actions/workflows/release.yml/badge.svg)](https://github.com/djdanielsson/mosaicterm/actions/workflows/release.yml)
 
 A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.dev). MosaicTerm groups commands and their outputs into discrete, scrollable blocks while maintaining a permanently pinned input prompt at the bottom - creating a clean, organized terminal experience that feels native to your workflow.
 
-![MosaicTerm Screenshot](https://via.placeholder.com/800x400/1a1a1a/00ff00?text=MosaicTerm+Terminal+Emulator)
+![MosaicTerm Screenshot](https://github.com/djdanielsson/mosaicterm/blob/main/icon.png)
 
 ## ✨ Key Features
 
@@ -29,7 +29,7 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-repo/mosaicterm.git
+git clone https://github.com/djdanielsson/mosaicterm.git
 cd mosaicterm
 
 # Build and run
@@ -223,7 +223,7 @@ MosaicTerm uses GitHub Actions for automated releases. To create a new release:
    - Create a GitHub release with downloadable binaries
    - Generate release notes
 
-Alternatively, you can trigger a release manually from the [Actions tab](https://github.com/your-repo/mosaicterm/actions) by running the "Release" workflow.
+Alternatively, you can trigger a release manually from the [Actions tab](https://github.com/djdanielsson/mosaicterm/actions) by running the "Release" workflow.
 
 ## 🤝 Contributing
 
@@ -256,7 +256,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ## 🐛 Issue Tracking
 
-Found a bug or have a feature request? Please [open an issue](https://github.com/your-repo/mosaicterm/issues) with:
+Found a bug or have a feature request? Please [open an issue](https://github.com/djdanielsson/mosaicterm/issues) with:
 
 - Clear description of the issue
 - Steps to reproduce (if applicable)
@@ -276,9 +276,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Contact
 
-- **Issues**: [GitHub Issues](https://github.com/your-repo/mosaicterm/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-repo/mosaicterm/discussions)
-- **Email**: [your-email@example.com](mailto:your-email@example.com)
+- **Issues**: [GitHub Issues](https://github.com/djdanielsson/mosaicterm/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/djdanielsson/mosaicterm/discussions)
 
 ---
 

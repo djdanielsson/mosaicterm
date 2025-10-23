@@ -91,7 +91,7 @@ jobs:
           body: |
             ## Changes
 
-            See [CHANGELOG.md](https://github.com/your-repo/mosaicterm/blob/main/CHANGELOG.md) for details.
+            See [CHANGELOG.md](https://github.com/djdanielsson/mosaicterm/blob/main/CHANGELOG.md) for details.
 
             ## Downloads
 
