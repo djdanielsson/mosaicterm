@@ -248,8 +248,8 @@ MosaicTerm uses GitHub Actions for automated code quality checks. The following 
 - **Formatting**: `cargo fmt --check` to ensure consistent code style
 - **Linting**: `cargo clippy` with warnings treated as errors
 - **Documentation**: `cargo doc` to verify all docs compile
-- **Security**: `cargo audit` for dependency vulnerabilities
-- **MSRV**: Ensures compatibility with Rust 1.70+
+- **Security**: `cargo audit` for dependency vulnerabilities (temporarily disabled)
+- **MSRV**: Ensures compatibility with Rust 1.74+
 
 **Before pushing**: Run `cargo fmt` and `cargo clippy` locally to fix any issues before CI catches them.
 
