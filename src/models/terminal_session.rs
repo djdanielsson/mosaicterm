@@ -342,7 +342,7 @@ mod tests {
         assert_eq!(ShellType::Bash, ShellType::Bash);
         assert_eq!(ShellType::Fish, ShellType::Fish);
 
-        let custom = ShellType::Other("custom".to_string());
-        assert_eq!(custom, ShellType::Other("custom".to_string()));
+        let custom = ShellType::Other;
+        assert_eq!(custom, ShellType::Other);
     }
 }

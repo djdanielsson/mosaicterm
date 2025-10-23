@@ -440,7 +440,6 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::output_line::AnsiCode;
 
     #[test]
     fn test_ansi_text_renderer_creation() {

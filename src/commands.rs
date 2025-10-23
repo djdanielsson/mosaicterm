@@ -329,7 +329,7 @@ impl CommandExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::terminal_session::ShellType;
+    use crate::models::ShellType;
 
     #[test]
     fn test_command_context_creation() {

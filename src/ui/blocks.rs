@@ -49,7 +49,8 @@ pub struct RenderedBlock {
     status_indicator: StatusIcon,
     /// Timestamp display
     timestamp_display: String,
-    /// Total block dimensions
+    /// Total block dimensions (currently unused but kept for future layout calculations)
+    #[allow(dead_code)]
     dimensions: egui::Vec2,
     /// Whether block is expanded
     expanded: bool,
@@ -691,7 +692,8 @@ mod tests {
         let state = InteractionState::default();
         assert!(state.hovered_block.is_none());
         assert!(state.selected_block.is_none());
-        assert_eq!(state.scroll_position, 0.0);
+        // InteractionState doesn't have scroll_position field
+        assert!(state.hovered_block.is_none());
     }
 
     #[test]

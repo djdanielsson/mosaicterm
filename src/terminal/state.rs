@@ -331,11 +331,10 @@ pub struct TerminalStatus {
 mod tests {
     use super::*;
     use crate::models::TerminalSession;
-    use uuid::Uuid;
 
     #[test]
     fn test_terminal_state_creation() {
-        let session = TerminalSession::new(crate::models::terminal_session::ShellType::Bash, std::path::PathBuf::from("/bin/bash"));
+        let session = TerminalSession::new(crate::TerminalShellType::Bash, std::path::PathBuf::from("/bin/bash"));
         let state = TerminalState::new(session);
 
         assert_eq!(state.cursor.row, 0);
@@ -347,7 +346,7 @@ mod tests {
 
     #[test]
     fn test_cursor_movement() {
-        let session = TerminalSession::new(crate::models::terminal_session::ShellType::Bash, std::path::PathBuf::from("/bin/bash"));
+        let session = TerminalSession::new(crate::TerminalShellType::Bash, std::path::PathBuf::from("/bin/bash"));
         let mut state = TerminalState::new(session);
 
         state.set_cursor(5, 10);
@@ -361,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_cursor_bounds() {
-        let session = TerminalSession::new(crate::models::terminal_session::ShellType::Bash, std::path::PathBuf::from("/bin/bash"));
+        let session = TerminalSession::new(crate::TerminalShellType::Bash, std::path::PathBuf::from("/bin/bash"));
         let mut state = TerminalState::new(session);
 
         // Test upper bounds
@@ -377,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_terminal_mode_changes() {
-        let session = TerminalSession::new(crate::models::terminal_session::ShellType::Bash, std::path::PathBuf::from("/bin/bash"));
+        let session = TerminalSession::new(crate::TerminalShellType::Bash, std::path::PathBuf::from("/bin/bash"));
         let mut state = TerminalState::new(session);
 
         state.set_mode(TerminalMode::Escape);
@@ -417,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_terminal_dimensions() {
-        let session = TerminalSession::new(crate::models::terminal_session::ShellType::Bash, std::path::PathBuf::from("/bin/bash"));
+        let session = TerminalSession::new(crate::TerminalShellType::Bash, std::path::PathBuf::from("/bin/bash"));
         let mut state = TerminalState::new(session);
 
         state.set_dimensions(30, 120);
@@ -427,7 +426,7 @@ mod tests {
 
     #[test]
     fn test_pending_output_management() {
-        let session = TerminalSession::new(crate::models::terminal_session::ShellType::Bash, std::path::PathBuf::from("/bin/bash"));
+        let session = TerminalSession::new(crate::TerminalShellType::Bash, std::path::PathBuf::from("/bin/bash"));
         let mut state = TerminalState::new(session);
 
         assert!(!state.has_pending_output());
@@ -441,7 +440,7 @@ mod tests {
 
     #[test]
     fn test_terminal_status() {
-        let session = TerminalSession::new(crate::models::terminal_session::ShellType::Bash, std::path::PathBuf::from("/bin/bash"));
+        let session = TerminalSession::new(crate::TerminalShellType::Bash, std::path::PathBuf::from("/bin/bash"));
         let state = TerminalState::new(session);
         let status = state.status();
 
@@ -452,7 +451,7 @@ mod tests {
 
     #[test]
     fn test_terminal_reset() {
-        let session = TerminalSession::new(crate::models::terminal_session::ShellType::Bash, std::path::PathBuf::from("/bin/bash"));
+        let session = TerminalSession::new(crate::TerminalShellType::Bash, std::path::PathBuf::from("/bin/bash"));
         let mut state = TerminalState::new(session);
 
         state.set_cursor(10, 20);

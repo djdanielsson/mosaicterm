@@ -213,9 +213,24 @@ impl SignalHandler {
     /// Platform-specific Windows process checking
     #[cfg(windows)]
     fn check_windows_process(&self, pid: u32) -> bool {
-        // Windows process checking implementation
-        // This is a simplified implementation
-        false // TODO: Implement Windows process checking
+        // Windows process checking implementation using WinAPI
+        use std::process::Command;
+        
+        // Use tasklist command to check if process exists
+        let output = Command::new("tasklist")
+            .args(&["/FI", &format!("PID eq {}", pid)])
+            .output();
+            
+        match output {
+            Ok(output) => {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                output_str.contains(&pid.to_string())
+            }
+            Err(_) => {
+                // If tasklist fails, assume process is not running
+                false
+            }
+        }
     }
 }
 

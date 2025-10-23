@@ -289,7 +289,7 @@ mod tests {
         // In some environments (like CI), PTY spawning might fail
         // So we'll just ensure it doesn't panic
         match result {
-            Ok((process, streams)) => {
+            Ok((process, _streams)) => {
                 assert_eq!(process.command, "echo");
                 assert!(process.args.contains(&"test".to_string()));
             }

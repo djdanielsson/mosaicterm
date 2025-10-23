@@ -221,7 +221,6 @@ impl Default for PtyManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_pty_manager_creation() {

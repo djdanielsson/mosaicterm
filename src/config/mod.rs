@@ -476,7 +476,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.ui.font_family, "JetBrains Mono");
         assert_eq!(config.ui.font_size, 12);
-        assert_eq!(config.terminal.shell_type, shell::ShellType::Bash);
+        assert_eq!(config.terminal.shell_type, crate::TerminalShellType::Bash);
     }
 
     #[test]

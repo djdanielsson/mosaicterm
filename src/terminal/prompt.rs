@@ -18,7 +18,7 @@ pub struct PromptDetector {
 }
 
 #[derive(Debug, Clone)]
-struct PromptPattern {
+pub struct PromptPattern {
     /// Shell type
     shell_type: ShellType,
     /// Regex pattern for prompt detection

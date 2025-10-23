@@ -436,7 +436,7 @@ mod tests {
     use tokio;
 
     fn create_test_session() -> TerminalSession {
-        TerminalSession::new(crate::models::terminal_session::ShellType::Bash, std::path::PathBuf::from("/bin/bash"))
+        TerminalSession::new(crate::TerminalShellType::Bash, std::path::PathBuf::from("/bin/bash"))
     }
 
     fn create_test_pty_manager() -> Arc<Mutex<PtyManager>> {

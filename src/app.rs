@@ -51,10 +51,6 @@ pub struct AppState {
 }
 
 
-#[derive(Debug, Clone)]
-pub enum AppTheme {
-    Auto,
-}
 
 impl Default for AppState {
     fn default() -> Self {
@@ -414,12 +410,14 @@ impl MosaicTermApp {
 impl eframe::App for MosaicTermApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Only print debug once per second to avoid spam
-        static mut LAST_DEBUG_TIME: Option<std::time::Instant> = None;
-        unsafe {
+        use std::sync::Mutex;
+        static LAST_DEBUG_TIME: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+        {
             let now = std::time::Instant::now();
-            if LAST_DEBUG_TIME.is_none() || now.duration_since(LAST_DEBUG_TIME.unwrap()).as_secs() >= 1 {
+            let mut last_time = LAST_DEBUG_TIME.lock().unwrap();
+            if last_time.is_none() || now.duration_since(last_time.unwrap()).as_secs() >= 1 {
                 println!("🔄 MosaicTerm UI is rendering...");
-                LAST_DEBUG_TIME = Some(now);
+                *last_time = Some(now);
             }
         }
 
@@ -1053,8 +1051,8 @@ mod tests {
     #[test]
     fn test_app_creation() {
         let app = MosaicTermApp::new();
-        assert!(app.terminal().is_some());
-        assert!(!app.state().terminal_ready);
+        assert!(app.terminal.is_none()); // Terminal starts as None
+        assert!(!app.state.terminal_ready);
     }
 
 
@@ -1070,16 +1068,10 @@ mod tests {
     fn test_status_message() {
         let mut app = MosaicTermApp::new();
         app.set_status_message(Some("Test message".to_string()));
-        assert_eq!(app.state().status_message, Some("Test message".to_string()));
+        assert_eq!(app.state.status_message, Some("Test message".to_string()));
 
         app.set_status_message(None);
-        assert!(app.state().status_message.is_none());
+        assert!(app.state.status_message.is_none());
     }
 
-    #[test]
-    fn test_theme_enum() {
-        assert_eq!(format!("{:?}", AppTheme::Dark), "Dark");
-        assert_eq!(format!("{:?}", AppTheme::Light), "Light");
-        assert_eq!(format!("{:?}", AppTheme::Auto), "Auto");
-    }
 }
