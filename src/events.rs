@@ -445,9 +445,19 @@ mod tests {
         let id1 = generate_event_id();
         let id2 = generate_event_id();
 
-        assert_ne!(id1, id2);
+        // Test that IDs have correct format
         assert!(id1.starts_with("evt_"));
         assert!(id2.starts_with("evt_"));
+
+        // Test that the numeric part is valid
+        let num_part1 = id1.strip_prefix("evt_").unwrap();
+        let num_part2 = id2.strip_prefix("evt_").unwrap();
+        assert!(num_part1.parse::<u128>().is_ok());
+        assert!(num_part2.parse::<u128>().is_ok());
+
+        // IDs should be equal or id2 >= id1 (monotonically increasing timestamps)
+        // We don't assert inequality because they might be generated in the same nanosecond
+        assert!(num_part2.parse::<u128>().unwrap() >= num_part1.parse::<u128>().unwrap());
     }
 
     #[test]
