@@ -38,6 +38,15 @@ impl PromptDetector {
         detector.initialize_patterns();
         detector
     }
+}
+
+impl Default for PromptDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PromptDetector {
 
     /// Create with specific shell type
     pub fn with_shell(shell_type: ShellType) -> Self {
@@ -179,7 +188,15 @@ impl CommandCompletionDetector {
         detector.initialize_patterns();
         detector
     }
+}
 
+impl Default for CommandCompletionDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CommandCompletionDetector {
     /// Initialize default patterns
     fn initialize_patterns(&mut self) {
         // Completion patterns (indicate command finished) - enhanced with versioned prompts
@@ -363,7 +380,7 @@ mod tests {
 
     #[test]
     fn test_prompt_detector_creation() {
-        let mut detector = PromptDetector::new();
+        let detector = PromptDetector::new();
         assert_eq!(detector.current_shell(), ShellType::Other);
     }
 

@@ -53,7 +53,15 @@ impl TerminalViewport {
             dimensions: egui::Vec2::ZERO,
         }
     }
+}
 
+impl Default for TerminalViewport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TerminalViewport {
     /// Create a viewport with custom configuration
     pub fn with_config(config: ViewportConfig) -> Self {
         Self {

@@ -297,7 +297,7 @@ impl EventProcessor {
     pub fn register_handler(&mut self, event_type: &str, handler: Box<dyn EventHandler>) {
         self.handlers
             .entry(event_type.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(handler);
     }
 

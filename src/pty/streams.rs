@@ -98,7 +98,7 @@ impl Default for StreamConfig {
 }
 
 /// Stream statistics for monitoring
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StreamStats {
     /// Total bytes read
     pub bytes_read: u64,
@@ -112,19 +112,6 @@ pub struct StreamStats {
     pub read_timeouts: u64,
     /// Number of write errors
     pub write_errors: u64,
-}
-
-impl Default for StreamStats {
-    fn default() -> Self {
-        Self {
-            bytes_read: 0,
-            bytes_written: 0,
-            read_operations: 0,
-            write_operations: 0,
-            read_timeouts: 0,
-            write_errors: 0,
-        }
-    }
 }
 
 impl StreamStats {

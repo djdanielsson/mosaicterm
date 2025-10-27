@@ -10,20 +10,15 @@ use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 
 /// Represents the state of a PTY process
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PtyState {
     /// Process has been created but not started
+    #[default]
     Created,
     /// Process is currently running
     Running,
     /// Process has terminated
     Terminated,
-}
-
-impl Default for PtyState {
-    fn default() -> Self {
-        PtyState::Created
-    }
 }
 
 /// Manages the pseudoterminal process lifecycle

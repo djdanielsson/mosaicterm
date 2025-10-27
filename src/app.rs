@@ -455,7 +455,7 @@ impl MosaicTermApp {
 
     /// Extract the command name from a command line
     fn get_command_name(&self, command: &str) -> String {
-        command.trim()
+        command
             .split_whitespace()
             .next()
             .unwrap_or("")
@@ -514,11 +514,10 @@ impl MosaicTermApp {
                             }
 
                             // Kill running command (only if still running)
-                            if status == ExecutionStatus::Running {
-                                if ui.button("❌ Kill Command").clicked() {
-                                    self.handle_interrupt_command();
-                                    menu_open = false;
-                                }
+                            if status == ExecutionStatus::Running
+                                && ui.button("❌ Kill Command").clicked() {
+                                self.handle_interrupt_command();
+                                menu_open = false;
                             }
 
                             ui.separator();
@@ -898,7 +897,7 @@ impl MosaicTermApp {
         self.command_history.clear();
         // Clear terminal screen (would send clear command to shell)
         if let Some(_terminal) = &mut self.terminal {
-            let _ = _terminal.process_input("clear");
+            std::mem::drop(_terminal.process_input("clear"));
         }
         info!("Clear screen requested (Ctrl+L)");
         self.set_status_message(Some("Screen cleared".to_string()));
@@ -908,7 +907,7 @@ impl MosaicTermApp {
     fn handle_exit(&mut self) {
         // Send EOF to shell (Ctrl+D)
         if let Some(_terminal) = &mut self.terminal {
-            let _ = _terminal.process_input("\x04"); // EOF character
+            std::mem::drop(_terminal.process_input("\x04")); // EOF character
         }
         info!("Exit requested (Ctrl+D)");
         self.set_status_message(Some("EOF sent".to_string()));
@@ -956,8 +955,6 @@ impl MosaicTermApp {
         info!("Focus previous requested (Ctrl+Shift+Tab)");
         self.set_status_message(Some("Focus cycled to previous element".to_string()));
     }
-
-    /// Render the status bar
 
     /// Render the fixed input area at the bottom
     fn render_fixed_input_area(&mut self, ui: &mut egui::Ui) {
@@ -1269,7 +1266,7 @@ impl MosaicTermApp {
 
                 // Timestamp
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new(&format!("{}", block.timestamp.format("%H:%M:%S")))
+                    ui.label(egui::RichText::new(format!("{}", block.timestamp.format("%H:%M:%S")))
                         .font(egui::FontId::monospace(10.0))
                         .color(egui::Color32::from_rgb(120, 120, 140)));
                 });

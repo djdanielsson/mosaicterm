@@ -73,9 +73,10 @@ impl Default for TerminalDimensions {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TerminalMode {
     /// Normal text input/output
+    #[default]
     Normal,
     /// Escape sequence processing
     Escape,
@@ -85,12 +86,6 @@ pub enum TerminalMode {
     ApplicationKeypad,
     /// Alternate screen buffer
     AlternateScreen,
-}
-
-impl Default for TerminalMode {
-    fn default() -> Self {
-        TerminalMode::Normal
-    }
 }
 
 #[derive(Debug)]

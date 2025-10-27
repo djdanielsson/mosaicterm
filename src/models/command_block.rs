@@ -13,9 +13,10 @@ use serde::{Deserialize, Serialize};
 use crate::models::OutputLine;
 
 /// Execution status of a command
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ExecutionStatus {
     /// Command is pending execution
+    #[default]
     Pending,
     /// Command is currently running
     Running,
@@ -25,12 +26,6 @@ pub enum ExecutionStatus {
     Failed,
     /// Command was cancelled by user
     Cancelled,
-}
-
-impl Default for ExecutionStatus {
-    fn default() -> Self {
-        ExecutionStatus::Pending
-    }
 }
 
 /// Represents a single executed command and its complete output

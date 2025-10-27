@@ -66,7 +66,15 @@ impl OutputProcessor {
             max_buffer_size: 100 * 1024 * 1024, // 100MB for unlimited output
         }
     }
+}
 
+impl Default for OutputProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OutputProcessor {
     /// Create with custom buffer size
     pub fn with_buffer_size(max_buffer_size: usize) -> Self {
         Self {
@@ -176,7 +184,7 @@ impl OutputProcessor {
         }
 
         // Check for various ANSI sequence terminators
-        sequence.chars().last().map_or(false, |c| {
+        sequence.chars().last().is_some_and(|c| {
             matches!(c, 'm' | 'G' | 'H' | 'J' | 'K' | 'A' | 'B' | 'C' | 'D')
         })
     }
@@ -210,7 +218,7 @@ impl OutputProcessor {
                     i += 1;
                     while i < bytes.len() {
                         let ch = bytes[i];
-                        if (ch >= b'A' && ch <= b'Z') || (ch >= b'a' && ch <= b'z') {
+                        if ch.is_ascii_uppercase() || ch.is_ascii_lowercase() {
                             return Some(i + 1);
                         }
                         i += 1;

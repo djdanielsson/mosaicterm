@@ -75,7 +75,15 @@ impl LayoutManager {
             current_mode: LayoutMode::Desktop,
         }
     }
+}
 
+impl Default for LayoutManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LayoutManager {
     /// Create layout manager with custom initial window size
     pub fn with_initial_size(width: f32, height: f32) -> Self {
         let mut manager = Self::new();
@@ -196,10 +204,10 @@ impl LayoutManager {
         let scale_factor = (self.window_size.x / 1920.0).min(self.window_size.y / 1080.0).max(0.5);
 
         AdaptiveFontSizes {
-            terminal: (12.0 * scale_factor).max(9.0).min(18.0),
-            ui_body: (14.0 * scale_factor).max(11.0).min(20.0),
-            ui_heading: (18.0 * scale_factor).max(14.0).min(24.0),
-            input: (14.0 * scale_factor).max(12.0).min(18.0),
+            terminal: (12.0 * scale_factor).clamp(9.0, 18.0),
+            ui_body: (14.0 * scale_factor).clamp(11.0, 20.0),
+            ui_heading: (18.0 * scale_factor).clamp(14.0, 24.0),
+            input: (14.0 * scale_factor).clamp(12.0, 18.0),
         }
     }
 
@@ -344,6 +352,9 @@ pub enum UiElementType {
     Content,
 }
 
+/// Type alias for grid items to reduce complexity
+pub type GridItems = Vec<Box<dyn FnOnce(&mut egui::Ui)>>;
+
 /// Responsive grid layout helper
 pub struct ResponsiveGrid {
     columns: usize,
@@ -358,7 +369,7 @@ impl ResponsiveGrid {
         }
     }
 
-    pub fn show<F>(&self, ui: &mut egui::Ui, items: Vec<Box<dyn FnOnce(&mut egui::Ui)>>, item_width: Option<f32>)
+    pub fn show<F>(&self, ui: &mut egui::Ui, items: GridItems, item_width: Option<f32>)
     where
         F: FnOnce(&mut egui::Ui),
     {

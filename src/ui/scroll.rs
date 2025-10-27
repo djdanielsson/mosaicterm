@@ -91,7 +91,15 @@ impl ScrollableHistory {
             block_heights: HashMap::new(),
         }
     }
+}
 
+impl Default for ScrollableHistory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ScrollableHistory {
     /// Create with custom configuration
     pub fn with_config(scrollbar_config: ScrollbarConfig) -> Self {
         Self {

@@ -93,7 +93,6 @@ impl Default for PromptFormatter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_basic_formatting() {

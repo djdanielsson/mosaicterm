@@ -66,6 +66,15 @@ impl InputPrompt {
             max_history: 100,
         }
     }
+}
+
+impl Default for InputPrompt {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl InputPrompt {
 
     /// Create with custom prompt text
     pub fn with_prompt(prompt: &str) -> Self {
@@ -140,14 +149,13 @@ impl InputPrompt {
                 }
 
                 // Handle input events
-                if input_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    if !self.current_input.trim().is_empty() {
-                        submitted_command = Some(self.current_input.clone());
-                        self.add_to_history(self.current_input.clone());
-                        self.current_input.clear();
-                        self.cursor_position = 0;
-                        self.history_position = None;
-                    }
+                if input_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    && !self.current_input.trim().is_empty() {
+                    submitted_command = Some(self.current_input.clone());
+                    self.add_to_history(self.current_input.clone());
+                    self.current_input.clear();
+                    self.cursor_position = 0;
+                    self.history_position = None;
                 }
 
                 // Handle arrow keys for history navigation

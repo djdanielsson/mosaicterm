@@ -6,11 +6,12 @@
 use serde::{Deserialize, Serialize};
 
 /// Type of shell being used
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum ShellType {
     /// Bourne Again Shell
     Bash,
     /// Z Shell
+    #[default]
     Zsh,
     /// Fish Shell
     Fish,
@@ -28,12 +29,6 @@ pub enum ShellType {
     Cmd,
     /// Other/Unknown shell
     Other,
-}
-
-impl Default for ShellType {
-    fn default() -> Self {
-        ShellType::Zsh
-    }
 }
 
 impl ShellType {
@@ -54,7 +49,7 @@ impl ShellType {
     }
 
     /// Get shell type from string (case-insensitive)
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_string(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "bash" => ShellType::Bash,
             "zsh" => ShellType::Zsh,

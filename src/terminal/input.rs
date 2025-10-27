@@ -72,16 +72,14 @@ impl CommandInputProcessor {
             } else {
                 InputResult::MultiLineContinue
             }
+        } else if self.current_command.trim().is_empty() {
+            InputResult::EmptyCommand
         } else {
-            if self.current_command.trim().is_empty() {
-                InputResult::EmptyCommand
-            } else {
-                let command = self.current_command.clone();
-                self.add_to_history(command.clone());
-                self.current_command.clear();
-                self.cursor_position = 0;
-                InputResult::CommandReady(command)
-            }
+            let command = self.current_command.clone();
+            self.add_to_history(command.clone());
+            self.current_command.clear();
+            self.cursor_position = 0;
+            InputResult::CommandReady(command)
         }
     }
 

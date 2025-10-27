@@ -36,6 +36,12 @@ impl PtyHandle {
     }
 }
 
+impl Default for PtyHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Information about a PTY process
 #[derive(Debug, Clone)]
 pub struct PtyInfo {
@@ -137,7 +143,7 @@ impl PtyManager {
                 pid: process.pid,
                 command: process.command.clone(),
                 working_directory: std::path::PathBuf::from("."), // TODO: Get actual working directory
-                start_time: process.start_time.unwrap_or_else(|| Utc::now()),
+                start_time: process.start_time.unwrap_or_else(Utc::now),
                 is_alive: process.is_running(),
             })
         } else {

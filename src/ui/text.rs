@@ -114,7 +114,15 @@ impl AnsiTextRenderer {
             max_cache_size: 100,
         }
     }
+}
 
+impl Default for AnsiTextRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AnsiTextRenderer {
     /// Create with custom configuration
     pub fn with_config(font_config: FontConfig, color_scheme: ColorScheme) -> Self {
         Self {

@@ -10,9 +10,6 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use tracing::{debug, error, info, warn};
-use tracing_subscriber;
-use egui;
-use eframe;
 
 // Import from the library
 use mosaicterm::config::RuntimeConfig;
@@ -23,6 +20,7 @@ use app::MosaicTermApp;
 
 /// Application configuration
 #[derive(Debug)]
+#[derive(Default)]
 struct AppArgs {
     /// Configuration file path
     config_path: Option<PathBuf>,
@@ -34,18 +32,6 @@ struct AppArgs {
     height: Option<f32>,
     /// Initial theme
     theme: Option<String>,
-}
-
-impl Default for AppArgs {
-    fn default() -> Self {
-        Self {
-            config_path: None,
-            debug: false,
-            width: None,
-            height: None,
-            theme: None,
-        }
-    }
 }
 
 impl AppArgs {
@@ -149,7 +135,7 @@ fn main() -> Result<()> {
     });
 
     // Initialize logging based on debug flag
-    let log_level = if args.debug || env::var("MOSAICTERM_DEBUG").map_or(false, |v| v == "1" || v.to_lowercase() == "true") {
+    let log_level = if args.debug || env::var("MOSAICTERM_DEBUG").is_ok_and(|v| v == "1" || v.to_lowercase() == "true") {
         "debug"
     } else {
         "info"
@@ -310,12 +296,12 @@ fn create_window_icon() -> egui::IconData {
 
     for y in 0..32 {
         for x in 0..32 {
-            let pixel = if x >= 4 && x < 28 && y >= 4 && y < 28 {
+            let pixel = if (4..28).contains(&x) && (4..28).contains(&y) {
                 // Terminal window area
                 if y < 8 {
                     // Title bar
                     bg_color
-                } else if x >= 6 && x < 26 && y >= 10 && y < 26 {
+                } else if (6..26).contains(&x) && (10..26).contains(&y) {
                     // Terminal content area with some pattern
                     match (x + y) % 7 {
                         0 => fg_color, // Terminal text
@@ -358,8 +344,8 @@ fn load_or_create_window_icon() -> egui::IconData {
                 let (width, height) = rgba.dimensions();
                 return egui::IconData {
                     rgba: rgba.into_raw(),
-                    width: width as u32,
-                    height: height as u32,
+                    width,
+                    height,
                 };
             }
         }
@@ -420,7 +406,9 @@ mod tests {
 
     #[test]
     fn test_command_exists() {
-        // Test with a command that should exist
-        assert!(mosaicterm::system_info().os != "unknown" || true); // Allow test to pass on any system
+        // Test that system_info returns something valid
+        let sys_info = mosaicterm::system_info();
+        // Just verify the call works - always passes
+        let _ = sys_info.os;
     }
 }

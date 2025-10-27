@@ -37,7 +37,7 @@ impl DirectExecutor {
         command_block.mark_running();
 
         // Parse command and arguments
-        let parts: Vec<&str> = command_str.trim().split_whitespace().collect();
+        let parts: Vec<&str> = command_str.split_whitespace().collect();
         if parts.is_empty() {
             return Err(Error::Other("Empty command".to_string()));
         }
@@ -141,7 +141,7 @@ impl DirectExecutor {
 
     /// Check if command should use direct execution
     pub fn should_use_direct_execution(command: &str) -> bool {
-        let cmd = command.trim().split_whitespace().next().unwrap_or("");
+        let cmd = command.split_whitespace().next().unwrap_or("");
         
         // Commands that work well with direct execution
         matches!(cmd, 
@@ -160,7 +160,7 @@ impl Default for DirectExecutor {
 
 /// Commands that require interactive PTY mode
 pub fn requires_pty_mode(command: &str) -> bool {
-    let cmd = command.trim().split_whitespace().next().unwrap_or("");
+    let cmd = command.split_whitespace().next().unwrap_or("");
     
     matches!(cmd,
         "vim" | "nano" | "emacs" | "less" | "more" | "top" | "htop" | 

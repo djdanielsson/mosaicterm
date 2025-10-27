@@ -88,7 +88,7 @@ pub enum ContextMenuAction {
     RerunCommand(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InteractionState {
     /// Currently hovered block ID
     pub hovered_block: Option<String>,
@@ -113,17 +113,6 @@ impl Default for BlockConfig {
     }
 }
 
-impl Default for InteractionState {
-    fn default() -> Self {
-        Self {
-            hovered_block: None,
-            selected_block: None,
-            context_menu_block: None,
-            context_menu_pos: None,
-        }
-    }
-}
-
 impl CommandBlocks {
     /// Create a new command blocks renderer
     pub fn new() -> Self {
@@ -134,7 +123,15 @@ impl CommandBlocks {
             interaction_state: InteractionState::default(),
         }
     }
+}
 
+impl Default for CommandBlocks {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CommandBlocks {
     /// Create with custom configuration
     pub fn with_config(config: BlockConfig) -> Self {
         Self {
@@ -580,11 +577,10 @@ impl CommandBlocks {
             });
 
         // Close menu if clicked outside or if the response was clicked
-        if ui.input(|i| i.pointer.any_click()) {
-            if !response.response.rect.contains(position) || response.response.clicked() {
-                self.interaction_state.context_menu_block = None;
-                self.interaction_state.context_menu_pos = None;
-            }
+        if ui.input(|i| i.pointer.any_click())
+            && (!response.response.rect.contains(position) || response.response.clicked()) {
+            self.interaction_state.context_menu_block = None;
+            self.interaction_state.context_menu_pos = None;
         }
 
         action
@@ -609,14 +605,13 @@ impl CommandBlocks {
                 }
 
                 // Copy Output (if any)
-                if !command_block.output.is_empty() {
-                    if ui.selectable_label(false, "📄 Copy Output").clicked() {
-                        let output_text = command_block.output.iter()
-                            .map(|line| line.text.clone())
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        *action = Some(ContextMenuAction::CopyOutput(output_text));
-                    }
+                if !command_block.output.is_empty()
+                    && ui.selectable_label(false, "📄 Copy Output").clicked() {
+                    let output_text = command_block.output.iter()
+                        .map(|line| line.text.clone())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    *action = Some(ContextMenuAction::CopyOutput(output_text));
                 }
 
                 ui.separator();

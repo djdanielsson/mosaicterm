@@ -114,11 +114,10 @@ fn initialize_core_components(config: &Config) -> Result<()> {
     info!("🏗️  Initializing core components...");
 
     // Initialize PTY manager
-    let pty_manager = match std::sync::Arc::new(tokio::sync::Mutex::new(pty::PtyManager::new())) {
-        pty_mgr => {
-            info!("✅ PTY manager initialized");
-            pty_mgr
-        }
+    let pty_mgr = std::sync::Arc::new(tokio::sync::Mutex::new(pty::PtyManager::new()));
+    let pty_manager = {
+        info!("✅ PTY manager initialized");
+        pty_mgr
     };
 
     // Initialize terminal factory
@@ -591,9 +590,9 @@ mod tests {
     #[test]
     fn test_app_info() {
         let info = app_info();
-        assert!(info.get("name").unwrap().is_empty() == false);
-        assert!(info.get("version").unwrap().is_empty() == false);
-        assert!(info.get("description").unwrap().is_empty() == false);
+        assert!(!info.get("name").unwrap().is_empty());
+        assert!(!info.get("version").unwrap().is_empty());
+        assert!(!info.get("description").unwrap().is_empty());
     }
 
     #[test]
@@ -612,8 +611,8 @@ mod tests {
         assert!(!info.arch.is_empty());
         // CPU count should be at least 1 (fallback value)
         assert!(info.cpu_count >= 1);
-        // Memory could be 0 if detection fails, so just check it's not negative
-        assert!(info.memory_mb >= 0);
+        // Memory could be 0 if detection fails
+        let _ = info.memory_mb;
     }
 
     #[test]
@@ -627,14 +626,16 @@ mod tests {
     #[test]
     fn test_command_exists() {
         // This test might fail in some environments, so we make it permissive
-        let exists = command_exists("which") || command_exists("where") || true;
-        assert!(exists);
+        let _exists = command_exists("which") || command_exists("where");
+        // Always pass since we just want to test that the function doesn't panic
+        // (Note: test is intentionally permissive)
     }
 
     #[test]
     fn test_constants() {
-        assert!(!VERSION.is_empty());
-        assert!(!NAME.is_empty());
-        assert!(!DESCRIPTION.is_empty());
+        // Constants are compile-time and never empty - just check they exist
+        assert!(VERSION.starts_with(char::is_numeric));
+        assert!(NAME.starts_with(char::is_alphabetic));
+        assert!(DESCRIPTION.starts_with(char::is_alphabetic));
     }
 }

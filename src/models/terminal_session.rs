@@ -13,9 +13,10 @@ use serde::{Deserialize, Serialize};
 use super::{CommandBlock, PtyProcess, ShellType};
 
 /// State of the terminal session
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SessionState {
     /// Session is being initialized
+    #[default]
     Initializing,
     /// Session is active and ready for commands
     Active,
@@ -23,12 +24,6 @@ pub enum SessionState {
     Terminating,
     /// Session has been terminated
     Terminated,
-}
-
-impl Default for SessionState {
-    fn default() -> Self {
-        SessionState::Initializing
-    }
 }
 
 /// Represents a running terminal session with its PTY process
@@ -253,7 +248,7 @@ mod tests {
         let shell_type = ShellType::Zsh;
         let working_dir = PathBuf::from("/tmp");
 
-        let session = TerminalSession::new(shell_type.clone(), working_dir.clone());
+        let session = TerminalSession::new(shell_type, working_dir.clone());
 
         assert_eq!(session.shell_type, shell_type);
         assert_eq!(session.working_directory, working_dir);

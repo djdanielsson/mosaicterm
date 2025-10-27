@@ -272,7 +272,7 @@ impl ShellManager {
                     path.exists()
                 } else {
                     // Check if it's in PATH
-                    env::var("PATH").map_or(false, |path_var| {
+                    env::var("PATH").is_ok_and(|path_var| {
                         env::split_paths(&path_var).any(|dir| dir.join(path_str).exists())
                     })
                 }
@@ -291,7 +291,7 @@ impl ShellManager {
                         path.exists()
                     } else {
                         // Check PATH
-                        env::var("PATH").map_or(false, |path_var| {
+                        env::var("PATH").is_ok_and(|path_var| {
                             env::split_paths(&path_var).any(|dir| dir.join(path).exists())
                         })
                     }
@@ -557,15 +557,7 @@ pub mod utils {
 
     /// Check if shell supports certain features
     pub fn shell_supports_feature(shell_type: ShellType, feature: ShellFeature) -> bool {
-        match (shell_type, feature) {
-            (ShellType::Bash | ShellType::Zsh, ShellFeature::Scripting) => true,
-            (ShellType::Fish, ShellFeature::Scripting) => true,
-            (ShellType::PowerShell, ShellFeature::Scripting) => true,
-            (ShellType::Bash | ShellType::Zsh | ShellType::Fish, ShellFeature::Colors) => true,
-            (ShellType::PowerShell, ShellFeature::Colors) => true,
-            (_, ShellFeature::Interactive) => true,
-            _ => false,
-        }
+        matches!((shell_type, feature), (ShellType::Bash | ShellType::Zsh, ShellFeature::Scripting) | (ShellType::Fish, ShellFeature::Scripting) | (ShellType::PowerShell, ShellFeature::Scripting) | (ShellType::Bash | ShellType::Zsh | ShellType::Fish, ShellFeature::Colors) | (ShellType::PowerShell, ShellFeature::Colors) | (_, ShellFeature::Interactive))
     }
 
     /// Validate shell configuration

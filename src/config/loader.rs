@@ -3,8 +3,6 @@
 //! Handles loading and saving configuration files from various locations
 //! with support for multiple formats and fallback mechanisms.
 
-#![allow(unexpected_cfgs)]
-
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::fs;
@@ -104,7 +102,7 @@ impl ConfigLoader {
     /// Save configuration to the current path or default location
     pub fn save(&self, config: &Config) -> Result<PathBuf> {
         let path = self.current_path.clone()
-            .unwrap_or_else(|| Self::get_default_config_path());
+            .unwrap_or_else(Self::get_default_config_path);
 
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
@@ -130,7 +128,9 @@ impl ConfigLoader {
         let content = match path.extension().and_then(|ext| ext.to_str()) {
             Some("json") => serde_json::to_string_pretty(config)
                 .map_err(|e| Error::Other(format!("Failed to serialize config: {}", e)))?,
-            Some("toml") | _ => toml::to_string_pretty(config)
+            Some("toml") => toml::to_string_pretty(config)
+                .map_err(|e| Error::Other(format!("Failed to serialize config: {}", e)))?,
+            _ => toml::to_string_pretty(config)
                 .map_err(|e| Error::Other(format!("Failed to serialize config: {}", e)))?,
         };
 

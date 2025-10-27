@@ -16,30 +16,23 @@ use crate::config::theme::ThemeManager;
 use crate::config::shell::ShellManager;
 
 /// Main configuration structure for MosaicTerm
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     /// UI configuration
+    #[serde(default)]
     pub ui: UiConfig,
 
     /// Terminal configuration
+    #[serde(default)]
     pub terminal: TerminalConfig,
 
     /// PTY configuration
+    #[serde(default)]
     pub pty: PtyConfig,
 
     /// Key binding configuration
+    #[serde(default)]
     pub key_bindings: KeyBindings,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            ui: UiConfig::default(),
-            terminal: TerminalConfig::default(),
-            pty: PtyConfig::default(),
-            key_bindings: KeyBindings::default(),
-        }
-    }
 }
 
 /// UI-related configuration

@@ -40,7 +40,7 @@ impl CommandContext {
 
     /// Create context from terminal session
     pub fn from_session(session: &TerminalSession) -> Self {
-        Self::new(session.working_directory.clone(), session.shell_type.clone())
+        Self::new(session.working_directory.clone(), session.shell_type)
     }
 
     /// Validate and prepare a command for execution

@@ -8,26 +8,19 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// Main configuration structure for MosaicTerm
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     /// UI configuration
+    #[serde(default)]
     pub ui: UiConfig,
 
     /// Terminal configuration
+    #[serde(default)]
     pub terminal: TerminalConfig,
 
     /// Key bindings configuration
+    #[serde(default)]
     pub key_bindings: KeyBindingsConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            ui: UiConfig::default(),
-            terminal: TerminalConfig::default(),
-            key_bindings: KeyBindingsConfig::default(),
-        }
-    }
 }
 
 /// UI-related configuration

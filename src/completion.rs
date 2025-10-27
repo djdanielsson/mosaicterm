@@ -272,10 +272,9 @@ impl CompletionProvider {
                             {
                                 use std::os::unix::fs::PermissionsExt;
                                 if let Ok(metadata) = entry.metadata() {
-                                    if metadata.is_file() && (metadata.permissions().mode() & 0o111 != 0) {
-                                        if !commands.contains(&filename) {
-                                            commands.push(filename);
-                                        }
+                                    if metadata.is_file() && (metadata.permissions().mode() & 0o111 != 0)
+                                        && !commands.contains(&filename) {
+                                        commands.push(filename);
                                     }
                                 }
                             }

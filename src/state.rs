@@ -55,7 +55,7 @@ pub struct ApplicationSettings {
 }
 
 /// UI state management
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UiState {
     // All fields in UiState are currently unused and have been removed
 }
@@ -346,13 +346,6 @@ impl Default for ApplicationSettings {
     }
 }
 
-impl Default for UiState {
-    fn default() -> Self {
-        Self {
-            // All fields removed - using unit struct
-        }
-    }
-}
 
 impl StateManager {
     /// Create new state manager
