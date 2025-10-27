@@ -570,6 +570,8 @@ mod tests {
     #[test]
     fn test_generate_terminal_id() {
         let id1 = generate_terminal_id();
+        // Add a small delay to ensure different timestamps
+        std::thread::sleep(std::time::Duration::from_nanos(100));
         let id2 = generate_terminal_id();
 
         assert_ne!(id1, id2);
