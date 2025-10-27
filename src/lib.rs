@@ -10,6 +10,7 @@
 extern crate tracing;
 
 pub mod config;
+pub mod completion;
 pub mod error;
 pub mod events;
 pub mod state;

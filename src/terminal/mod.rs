@@ -315,6 +315,16 @@ impl Terminal {
             Ok(false)
         }
     }
+
+    /// Get the current working directory for this terminal session
+    pub fn get_working_directory(&self) -> &std::path::Path {
+        &self.state.session.working_directory
+    }
+
+    /// Set the current working directory for this terminal session
+    pub fn set_working_directory(&mut self, path: std::path::PathBuf) {
+        self.state.session.working_directory = path;
+    }
 }
 
 /// Terminal factory for creating terminals with different configurations

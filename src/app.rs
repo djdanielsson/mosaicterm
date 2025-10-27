@@ -10,10 +10,11 @@ use mosaicterm::pty::PtyManager;
 use mosaicterm::terminal::{Terminal, TerminalFactory};
 use mosaicterm::execution::DirectExecutor;
 use mosaicterm::models::{TerminalSession, ShellType as ModelShellType};
-use mosaicterm::ui::{InputPrompt, ScrollableHistory, CommandBlocks};
+use mosaicterm::ui::{InputPrompt, ScrollableHistory, CommandBlocks, CompletionPopup};
 use mosaicterm::models::{CommandBlock, ExecutionStatus};
 use mosaicterm::config::RuntimeConfig;
 use mosaicterm::error::Result;
+use mosaicterm::completion::CompletionProvider;
 
 /// Main MosaicTerm application
 pub struct MosaicTermApp {
@@ -27,13 +28,19 @@ pub struct MosaicTermApp {
     command_blocks: CommandBlocks,
     input_prompt: InputPrompt,
     scrollable_history: ScrollableHistory,
+    completion_popup: CompletionPopup,
     /// Command history
     command_history: Vec<CommandBlock>,
     /// Application state
     state: AppState,
     /// Runtime configuration
     runtime_config: RuntimeConfig,
-    /// Accumulates partial output (no newline yet) for the latest command
+    /// Completion provider
+    completion_provider: CompletionProvider,
+    /// Last tab press time for double-tab detection
+    last_tab_press: Option<std::time::Instant>,
+    /// Flag to indicate completion was just applied (need to move cursor)
+    completion_just_applied: bool,
     /// Last time a command was executed (for timeout detection)
     last_command_time: Option<std::time::Instant>,
 }
@@ -85,6 +92,7 @@ impl MosaicTermApp {
         let command_blocks = CommandBlocks::new();
         let input_prompt = InputPrompt::new();
         let scrollable_history = ScrollableHistory::new();
+        let completion_popup = CompletionPopup::new();
 
         let runtime_config = RuntimeConfig::new().unwrap_or_else(|e| {
             warn!("Failed to create runtime config: {}, using minimal config", e);
@@ -141,9 +149,13 @@ impl MosaicTermApp {
             command_blocks,
             input_prompt,
             scrollable_history,
+            completion_popup,
             command_history,
             state: AppState::default(),
             runtime_config,
+            completion_provider: CompletionProvider::new(),
+            last_tab_press: None,
+            completion_just_applied: false,
             last_command_time: None,
         }
     }
@@ -251,6 +263,9 @@ impl MosaicTermApp {
 
         info!("Processing command: {}", command);
 
+        // Check if this is a cd command and update working directory
+        self.update_working_directory_if_cd(&command);
+
         // Check if we should use direct execution (faster, cleaner)
         if DirectExecutor::should_use_direct_execution(&command) {
             info!("Using direct execution for command: {}", command);
@@ -263,7 +278,10 @@ impl MosaicTermApp {
         info!("Using PTY execution for command: {}", command);
         
         // Create command block and add to history first
-        let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+        let working_dir = self.terminal.as_ref()
+            .map(|t| t.get_working_directory().to_path_buf())
+            .unwrap_or_else(|| std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("/")));
         let mut command_block = CommandBlock::new(command.clone(), working_dir.clone());
         command_block.mark_running();
         self.command_history.push(command_block);
@@ -294,6 +312,65 @@ impl MosaicTermApp {
         Ok(())
     }
 
+
+    /// Update working directory if command is a cd command
+    fn update_working_directory_if_cd(&mut self, command: &str) {
+        let trimmed = command.trim();
+        
+        // Parse cd command (handle various forms: cd, cd -, cd ~, cd /path, etc.)
+        if !trimmed.starts_with("cd") && !trimmed.starts_with("pushd") && !trimmed.starts_with("popd") {
+            return;
+        }
+        
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.is_empty() || (parts[0] != "cd" && parts[0] != "pushd" && parts[0] != "popd") {
+            return;
+        }
+        
+        if let Some(terminal) = &mut self.terminal {
+            let current_dir = terminal.get_working_directory().to_path_buf();
+            
+            let new_dir = if parts.len() == 1 || (parts[0] == "cd" && parts.len() == 1) {
+                // cd with no arguments goes to home
+                if let Some(home) = std::env::var_os("HOME") {
+                    std::path::PathBuf::from(home)
+                } else {
+                    current_dir.clone()
+                }
+            } else if parts[1] == "-" {
+                // cd - goes to previous directory (we don't track this, so stay)
+                current_dir.clone()
+            } else if parts[1] == "~" {
+                // cd ~ goes to home
+                if let Some(home) = std::env::var_os("HOME") {
+                    std::path::PathBuf::from(home)
+                } else {
+                    current_dir.clone()
+                }
+            } else if parts[1].starts_with("~/") {
+                // cd ~/path expands tilde
+                if let Some(home) = std::env::var_os("HOME") {
+                    std::path::PathBuf::from(home).join(&parts[1][2..])
+                } else {
+                    current_dir.clone()
+                }
+            } else if parts[1].starts_with('/') {
+                // cd /absolute/path
+                std::path::PathBuf::from(parts[1])
+            } else {
+                // cd relative/path
+                current_dir.join(parts[1])
+            };
+            
+            // Canonicalize and update if valid
+            if let Ok(canonical) = new_dir.canonicalize() {
+                if canonical.is_dir() {
+                    terminal.set_working_directory(canonical.clone());
+                    debug!("Updated working directory to: {:?}", canonical);
+                }
+            }
+        }
+    }
 
     /// Update application state
     pub fn update_state(&mut self) {
@@ -755,7 +832,7 @@ impl MosaicTermApp {
             .inner_margin(egui::Margin::symmetric(15.0, 10.0))
             .outer_margin(egui::Margin::symmetric(5.0, 5.0));
 
-        input_frame.show(ui, |ui| {
+        let frame_response = input_frame.show(ui, |ui| {
             ui.vertical(|ui| {
                 // Input prompt label
                 ui.label(egui::RichText::new("$")
@@ -764,27 +841,97 @@ impl MosaicTermApp {
                     .strong());
 
                 // Get current input for display
-                let mut current_input = self.input_prompt.current_input().to_string();
+                let old_input = self.input_prompt.current_input().to_string();
+                let mut current_input = old_input.clone();
 
+                // Check for keys BEFORE TextEdit consumes them
+                let tab_pressed = ui.input(|i| i.key_pressed(egui::Key::Tab));
+                let escape_pressed = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                let up_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowUp));
+                let down_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowDown));
+                
                 // Input field - take full width
+                // We set .lock_focus(true) to prevent Tab from moving focus away
                 let input_response = ui.add(
                     egui::TextEdit::singleline(&mut current_input)
                         .font(egui::FontId::monospace(14.0))
                         .desired_width(f32::INFINITY)
                         .hint_text("Type a command and press Enter...")
                         .margin(egui::Vec2::new(8.0, 6.0))
+                        .lock_focus(true)  // Prevent Tab from changing focus
                 );
-                // Ensure the input keeps focus so typing works
-                if !input_response.has_focus() {
-                    input_response.request_focus();
-                }
+                
+                // Store input rect for positioning completion popup
+                let input_rect = input_response.rect;
+                
+                // Always ensure the input keeps focus
+                input_response.request_focus();
 
+                // Check if input changed (for filtering)
+                let input_changed = old_input != current_input;
+                
                 // Update the input prompt with the current input
                 self.input_prompt.set_input(current_input.clone());
+                
+                // If completion was just applied, move cursor to end
+                if self.completion_just_applied {
+                    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), input_response.id) {
+                        let ccursor = egui::text::CCursor::new(current_input.len());
+                        state.set_ccursor_range(Some(egui::text::CCursorRange::one(ccursor)));
+                        state.store(ui.ctx(), input_response.id);
+                    }
+                    self.completion_just_applied = false;
+                }
+
+                // Handle keys based on popup state
+                if self.completion_popup.is_visible() {
+                    // Popup is open - Tab/arrows navigate, Enter selects, Escape closes
+                    if tab_pressed || down_pressed {
+                        self.completion_popup.select_next();
+                    } else if up_pressed {
+                        self.completion_popup.select_previous();
+                    } else if escape_pressed {
+                        self.completion_popup.hide();
+                } else if input_changed {
+                    // Update completions when typing
+                    let working_dir = self.terminal.as_ref()
+                        .map(|t| t.get_working_directory().to_path_buf())
+                        .unwrap_or_else(|| std::env::current_dir()
+                            .unwrap_or_else(|_| std::path::PathBuf::from("/")));
+                    if let Ok(result) = self.completion_provider.get_completions(&current_input, &working_dir) {
+                            if !result.is_empty() {
+                                let popup_pos = egui::pos2(input_rect.left(), input_rect.bottom() + 5.0);
+                                self.completion_popup.show(result, popup_pos);
+                            } else {
+                                self.completion_popup.hide();
+                            }
+                        }
+                    }
+                } else {
+                    // Popup is closed - Tab/Tab opens it
+                    if tab_pressed {
+                        self.handle_tab_completion(&current_input, input_rect);
+                    } else if up_pressed {
+                        // Navigate history when popup is closed
+                        self.input_prompt.navigate_history_previous();
+                    } else if down_pressed {
+                        self.input_prompt.navigate_history_next();
+                    }
+                }
 
                 // Handle Enter key to submit command
                 if input_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    if !current_input.trim().is_empty() {
+                    // Check if completion popup is visible
+                    if self.completion_popup.is_visible() {
+                        // Select completion
+                        let selected_text = self.completion_popup.get_selected_item()
+                            .map(|item| item.text.clone());
+                        if let Some(text) = selected_text {
+                            self.apply_completion(&text);
+                            self.completion_just_applied = true;  // Flag for cursor positioning
+                        }
+                        self.completion_popup.hide();
+                    } else if !current_input.trim().is_empty() {
                         let command = current_input.clone();
                         self.input_prompt.add_to_history(command.clone());
                         self.input_prompt.clear_input();
@@ -794,16 +941,84 @@ impl MosaicTermApp {
                     }
                 }
 
-                // Handle arrow keys for history navigation
-                if input_response.has_focus() {
-                    if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                        self.input_prompt.navigate_history_previous();
-                    } else if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-                        self.input_prompt.navigate_history_next();
-                    }
-                }
-            });
+                (input_response, input_rect)
+            })
         });
+
+        // Render completion popup if visible (outside the input frame)
+        let (_input_response, input_rect) = frame_response.inner.inner;
+        if self.completion_popup.is_visible() {
+            if let Some(selected_text) = self.completion_popup.render(ui.ctx(), input_rect) {
+                // Apply the selected completion
+                self.apply_completion(&selected_text);
+                self.completion_just_applied = true;  // Flag for cursor positioning
+                self.completion_popup.hide();
+            }
+        }
+    }
+    
+    /// Handle tab key press for completions
+    fn handle_tab_completion(&mut self, input: &str, input_rect: egui::Rect) {
+        let now = std::time::Instant::now();
+        
+        // Check if this is a double-tab (within 500ms)
+        let is_double_tab = self.last_tab_press
+            .map(|last| now.duration_since(last).as_millis() < 500)
+            .unwrap_or(false);
+        
+        debug!("Tab pressed! Input: '{}', Double-tab: {}", input, is_double_tab);
+        
+        self.last_tab_press = Some(now);
+        
+        // Show completions on double-tab
+        if is_double_tab {
+            let working_dir = self.terminal.as_ref()
+                .map(|t| t.get_working_directory().to_path_buf())
+                .unwrap_or_else(|| std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("/")));
+            
+            debug!("Getting completions for '{}' in {:?}", input, working_dir);
+            
+            // Get completions
+            if let Ok(result) = self.completion_provider.get_completions(input, &working_dir) {
+                debug!("Got {} completions", result.len());
+                if !result.is_empty() {
+                    // Position popup below input
+                    let popup_pos = egui::pos2(input_rect.left(), input_rect.bottom() + 5.0);
+                    self.completion_popup.show(result, popup_pos);
+                    debug!("Showing completion popup at {:?}", popup_pos);
+                } else {
+                    debug!("No completions found");
+                }
+            } else {
+                warn!("Failed to get completions");
+            }
+        }
+        // First tab does nothing - wait for double-tab
+    }
+    
+    /// Apply a completion to the input
+    fn apply_completion(&mut self, completion: &str) {
+        let current_input = self.input_prompt.current_input();
+        let parts: Vec<&str> = current_input.split_whitespace().collect();
+        
+        let new_input = if parts.len() <= 1 {
+            // Completing command - add space after
+            format!("{} ", completion)
+        } else {
+            // Completing argument - replace last part
+            let mut new_parts = parts[..parts.len() - 1].to_vec();
+            new_parts.push(completion);
+            let result = new_parts.join(" ");
+            // Add space after if it's a directory, otherwise just the completion
+            if completion.ends_with('/') {
+                result
+            } else {
+                format!("{} ", result)
+            }
+        };
+        
+        self.input_prompt.set_input(new_input);
     }
 
     /// Render the command history area above the input

@@ -4,6 +4,7 @@
 //! including command block rendering, input handling, and layout management.
 
 pub mod blocks;
+pub mod completion_popup;
 pub mod input;
 pub mod scroll;
 pub mod text;
@@ -11,6 +12,7 @@ pub mod viewport;
 
 // Re-exports for convenience
 pub use blocks::{CommandBlocks, BlockConfig, RenderedBlock, StatusIcon};
+pub use completion_popup::CompletionPopup;
 pub use input::{InputPrompt, InputConfig};
 pub use scroll::{ScrollableHistory, ScrollbarConfig, ScrollState};
 pub use text::{AnsiTextRenderer, FontConfig, ColorScheme};
