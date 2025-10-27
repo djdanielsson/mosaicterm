@@ -8,6 +8,7 @@
 pub mod loader;
 pub mod theme;
 pub mod shell;
+pub mod prompt;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -110,6 +111,11 @@ pub struct TerminalConfig {
 
     /// Bell style
     pub bell_style: BellStyle,
+
+    /// Custom prompt format
+    /// Supports variables: $USER, $HOSTNAME, $PWD, $HOME, $SHELL
+    /// Example: "$USER@$HOSTNAME:$PWD$ "
+    pub prompt_format: String,
 }
 
 impl Default for TerminalConfig {
@@ -123,6 +129,7 @@ impl Default for TerminalConfig {
             mouse_support: true,
             scrollback_buffer: 1000000, // Increased to 1M for unlimited output
             bell_style: BellStyle::Sound,
+            prompt_format: "$USER@$HOSTNAME:$PWD$ ".to_string(),
         }
     }
 }
@@ -439,6 +446,7 @@ pub mod utils {
             mouse_support: overlay.mouse_support,
             scrollback_buffer: if overlay.scrollback_buffer == 0 { base.scrollback_buffer } else { overlay.scrollback_buffer },
             bell_style: overlay.bell_style,
+            prompt_format: if overlay.prompt_format.is_empty() { base.prompt_format } else { overlay.prompt_format },
         }
     }
 

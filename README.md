@@ -12,6 +12,8 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 
 - **Block-Based History**: Commands and their outputs are grouped into discrete, scrollable blocks
 - **Pinned Input Prompt**: Always-visible input field at the bottom for seamless command entry
+- **Custom Prompts**: Fully customizable prompt format with variable substitution ($USER, $HOSTNAME, $PWD, etc.)
+- **Tab Completion**: Intelligent command and path completion with popup UI (double-tab to activate)
 - **Native ANSI Support**: Full color support for `ls`, `bat`, `fzf`, and other CLI tools
 - **Zsh Integration**: Seamless support for zsh with Oh My Zsh, plugins, and completions
 - **Modern GUI**: Built with [egui](https://github.com/emilk/egui) for native performance and feel
@@ -94,19 +96,45 @@ src/
 MosaicTerm supports TOML-based configuration. Create `~/.config/mosaicterm/config.toml`:
 
 ```toml
-[theme]
-name = "dark"
-background = "#1a1a1a"
-foreground = "#ffffff"
-
-[shell]
-type = "zsh"
-config_path = "~/.zshrc"
-
 [ui]
+font_family = "JetBrains Mono"
 font_size = 12
-block_spacing = 8
+theme_name = "default-dark"
+
+[terminal]
+shell_type = "Bash"
+shell_path = "/bin/bash"
+# Customize your prompt with variables like $USER, $HOSTNAME, $PWD
+prompt_format = "$USER@$HOSTNAME:$PWD$ "
+
+[pty]
+buffer_size = 1048576
 ```
+
+### Custom Prompts
+
+MosaicTerm allows you to fully customize your command prompt with variable substitution:
+
+```toml
+[terminal]
+# Standard Unix-style
+prompt_format = "$USER@$HOSTNAME:$PWD$ "
+
+# Minimalist
+prompt_format = "$PWD > "
+
+# Multi-line with emoji
+prompt_format = "🚀 $USER@$HOSTNAME\n$PWD ❯ "
+```
+
+**Supported Variables:**
+- `$USER` - Current username
+- `$HOSTNAME` - System hostname
+- `$PWD` - Current working directory (with ~ for home)
+- `$HOME` - Home directory path
+- `$SHELL` - Current shell path
+
+📖 **[Full Custom Prompt Documentation](docs/CUSTOM_PROMPT.md)**
 
 ### Environment Variables
 
@@ -151,7 +179,6 @@ block_spacing = 8
 - [ ] Remote shell support (SSH)
 - [ ] Multi-tab interface
 - [ ] Customizable block actions
-- [ ] AI-assisted command suggestions
 
 ## 🧪 Development
 

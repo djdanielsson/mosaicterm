@@ -12,7 +12,7 @@ use mosaicterm::execution::DirectExecutor;
 use mosaicterm::models::{TerminalSession, ShellType as ModelShellType};
 use mosaicterm::ui::{InputPrompt, ScrollableHistory, CommandBlocks, CompletionPopup};
 use mosaicterm::models::{CommandBlock, ExecutionStatus};
-use mosaicterm::config::RuntimeConfig;
+use mosaicterm::config::{RuntimeConfig, prompt::PromptFormatter};
 use mosaicterm::error::Result;
 use mosaicterm::completion::CompletionProvider;
 
@@ -37,6 +37,8 @@ pub struct MosaicTermApp {
     runtime_config: RuntimeConfig,
     /// Completion provider
     completion_provider: CompletionProvider,
+    /// Prompt formatter for custom prompts
+    prompt_formatter: PromptFormatter,
     /// Last tab press time for double-tab detection
     last_tab_press: Option<std::time::Instant>,
     /// Flag to indicate completion was just applied (need to move cursor)
@@ -90,7 +92,6 @@ impl MosaicTermApp {
 
         // Create UI components
         let command_blocks = CommandBlocks::new();
-        let input_prompt = InputPrompt::new();
         let scrollable_history = ScrollableHistory::new();
         let completion_popup = CompletionPopup::new();
 
@@ -99,6 +100,18 @@ impl MosaicTermApp {
             // For now, panic on config creation failure - this should be handled better
             panic!("Failed to create runtime config: {}", e);
         });
+
+        // Create prompt formatter from config
+        let prompt_format = runtime_config.config().terminal.prompt_format.clone();
+        info!("Loading prompt format from config: '{}'", prompt_format);
+        let prompt_formatter = PromptFormatter::new(prompt_format);
+
+        // Create input prompt with initial prompt rendering
+        let mut input_prompt = InputPrompt::new();
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+        let initial_prompt = prompt_formatter.render(&working_dir);
+        info!("Initial prompt rendered as: '{}'", initial_prompt);
+        input_prompt.set_prompt(&initial_prompt);
 
         let mut command_history = Vec::new();
 
@@ -154,6 +167,7 @@ impl MosaicTermApp {
             state: AppState::default(),
             runtime_config,
             completion_provider: CompletionProvider::new(),
+            prompt_formatter,
             last_tab_press: None,
             completion_just_applied: false,
             last_command_time: None,
@@ -250,6 +264,9 @@ impl MosaicTermApp {
         let terminal = self.terminal_factory.create_and_initialize(session).await?;
         self.terminal = Some(terminal);
         self.state.terminal_ready = true;
+
+        // Update prompt after terminal initialization
+        self.update_prompt();
 
         info!("Terminal session initialized successfully");
         Ok(())
@@ -367,8 +384,20 @@ impl MosaicTermApp {
                 if canonical.is_dir() {
                     terminal.set_working_directory(canonical.clone());
                     debug!("Updated working directory to: {:?}", canonical);
+                    // Update prompt after directory change
+                    self.update_prompt();
                 }
             }
+        }
+    }
+
+    /// Update the prompt display based on current working directory
+    fn update_prompt(&mut self) {
+        if let Some(terminal) = &self.terminal {
+            let working_dir = terminal.get_working_directory();
+            let rendered_prompt = self.prompt_formatter.render(working_dir);
+            debug!("Updated prompt to: '{}' (working_dir: {:?})", rendered_prompt, working_dir);
+            self.input_prompt.set_prompt(&rendered_prompt);
         }
     }
 
@@ -834,8 +863,8 @@ impl MosaicTermApp {
 
         let frame_response = input_frame.show(ui, |ui| {
             ui.vertical(|ui| {
-                // Input prompt label
-                ui.label(egui::RichText::new("$")
+                // Input prompt label - use the custom prompt from config
+                ui.label(egui::RichText::new(self.input_prompt.prompt_text())
                     .font(egui::FontId::monospace(16.0))
                     .color(egui::Color32::from_rgb(100, 200, 100))
                     .strong());

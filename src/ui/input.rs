@@ -267,6 +267,11 @@ impl InputPrompt {
         self.prompt_text = prompt.to_string();
     }
 
+    /// Get current prompt text
+    pub fn prompt_text(&self) -> &str {
+        &self.prompt_text
+    }
+
     /// Get current input text
     pub fn current_input(&self) -> &str {
         &self.current_input
