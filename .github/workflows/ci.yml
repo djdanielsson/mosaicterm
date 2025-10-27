@@ -6,6 +6,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test
@@ -78,7 +82,7 @@ jobs:
       - name: Setup Rust (MSRV)
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.74"  # Matches the minimum version specified in README
+          toolchain: "1.77"  # Minimum version that supports Cargo.lock v4
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
