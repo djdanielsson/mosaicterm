@@ -4,11 +4,11 @@
 //! This model manages the overall terminal session state,
 //! including command history and session lifecycle.
 
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use chrono::{DateTime, Utc};
 use uuid::Uuid;
-use serde::{Deserialize, Serialize};
 
 use super::{CommandBlock, PtyProcess, ShellType};
 
@@ -77,7 +77,7 @@ impl TerminalSession {
     pub fn with_environment(
         shell_type: ShellType,
         working_directory: PathBuf,
-        environment: HashMap<String, String>
+        environment: HashMap<String, String>,
     ) -> Self {
         let mut session = Self::new(shell_type, working_directory);
         session.environment = environment;
@@ -140,7 +140,11 @@ impl TerminalSession {
     }
 
     /// Get commands within a time range
-    pub fn get_commands_in_range(&self, start_time: DateTime<Utc>, end_time: DateTime<Utc>) -> Vec<&CommandBlock> {
+    pub fn get_commands_in_range(
+        &self,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+    ) -> Vec<&CommandBlock> {
         self.command_history
             .iter()
             .filter(|block| block.timestamp >= start_time && block.timestamp <= end_time)
@@ -176,10 +180,15 @@ impl TerminalSession {
         let total_commands = self.command_history.len();
         let successful_commands = self.get_successful_commands().len();
         let failed_commands = self.get_failed_commands().len();
-        let running_commands = self.command_history.iter().filter(|b| b.is_running()).count();
+        let running_commands = self
+            .command_history
+            .iter()
+            .filter(|b| b.is_running())
+            .count();
 
         let avg_execution_time = if total_commands > 0 {
-            let total_time: std::time::Duration = self.command_history
+            let total_time: std::time::Duration = self
+                .command_history
                 .iter()
                 .filter_map(|b| b.execution_time)
                 .sum();
@@ -234,7 +243,10 @@ pub struct SessionStatistics {
 
 impl Default for TerminalSession {
     fn default() -> Self {
-        Self::new(ShellType::default(), std::env::current_dir().unwrap_or_default())
+        Self::new(
+            ShellType::default(),
+            std::env::current_dir().unwrap_or_default(),
+        )
     }
 }
 
@@ -322,13 +334,13 @@ mod tests {
         let mut env = HashMap::new();
         env.insert("TEST_VAR".to_string(), "test_value".to_string());
 
-        let session = TerminalSession::with_environment(
-            ShellType::Bash,
-            PathBuf::from("/tmp"),
-            env.clone()
-        );
+        let session =
+            TerminalSession::with_environment(ShellType::Bash, PathBuf::from("/tmp"), env.clone());
 
-        assert_eq!(session.environment.get("TEST_VAR"), Some(&"test_value".to_string()));
+        assert_eq!(
+            session.environment.get("TEST_VAR"),
+            Some(&"test_value".to_string())
+        );
     }
 
     #[test]

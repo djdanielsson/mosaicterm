@@ -11,11 +11,11 @@ pub mod text;
 pub mod viewport;
 
 // Re-exports for convenience
-pub use blocks::{CommandBlocks, BlockConfig, RenderedBlock, StatusIcon};
+pub use blocks::{BlockConfig, CommandBlocks, RenderedBlock, StatusIcon};
 pub use completion_popup::CompletionPopup;
-pub use input::{InputPrompt, InputConfig};
-pub use scroll::{ScrollableHistory, ScrollbarConfig, ScrollState};
-pub use text::{AnsiTextRenderer, FontConfig, ColorScheme};
+pub use input::{InputConfig, InputPrompt};
+pub use scroll::{ScrollState, ScrollableHistory, ScrollbarConfig};
+pub use text::{AnsiTextRenderer, ColorScheme, FontConfig};
 pub use viewport::{TerminalViewport, ViewportConfig};
 
 use eframe::egui;
@@ -57,8 +57,8 @@ pub enum LayoutMode {
 impl Default for LayoutBreakpoints {
     fn default() -> Self {
         Self {
-            mobile: 600.0,  // Below 600px width
-            tablet: 900.0,  // Below 900px width
+            mobile: 600.0,   // Below 600px width
+            tablet: 900.0,   // Below 900px width
             desktop: 1200.0, // Above 1200px width
         }
     }
@@ -201,7 +201,9 @@ impl LayoutManager {
 
     /// Calculate adaptive font sizes based on window size
     pub fn adaptive_font_sizes(&self) -> AdaptiveFontSizes {
-        let scale_factor = (self.window_size.x / 1920.0).min(self.window_size.y / 1080.0).max(0.5);
+        let scale_factor = (self.window_size.x / 1920.0)
+            .min(self.window_size.y / 1080.0)
+            .max(0.5);
 
         AdaptiveFontSizes {
             terminal: (12.0 * scale_factor).clamp(9.0, 18.0),
@@ -248,16 +250,26 @@ impl LayoutManager {
     }
 
     /// Apply layout constraints to UI elements
-    pub fn constrain_ui_element(&self, available_space: egui::Vec2, element_type: UiElementType) -> egui::Vec2 {
+    pub fn constrain_ui_element(
+        &self,
+        available_space: egui::Vec2,
+        element_type: UiElementType,
+    ) -> egui::Vec2 {
         let proportions = self.layout_proportions();
 
         match element_type {
-            UiElementType::StatusBar => egui::vec2(available_space.x, proportions.status_bar_height),
-            UiElementType::InputArea => egui::vec2(available_space.x, proportions.input_area_height),
+            UiElementType::StatusBar => {
+                egui::vec2(available_space.x, proportions.status_bar_height)
+            }
+            UiElementType::InputArea => {
+                egui::vec2(available_space.x, proportions.input_area_height)
+            }
             UiElementType::Sidebar => egui::vec2(proportions.sidebar_width, available_space.y),
             UiElementType::Content => {
                 let content_width = available_space.x - proportions.sidebar_width;
-                let content_height = available_space.y - proportions.status_bar_height - proportions.input_area_height;
+                let content_height = available_space.y
+                    - proportions.status_bar_height
+                    - proportions.input_area_height;
                 egui::vec2(content_width.max(200.0), content_height.max(100.0))
             }
         }
@@ -292,18 +304,18 @@ impl LayoutManager {
         style.spacing.item_spacing = self.responsive_spacing();
         style.spacing.button_padding = egui::vec2(
             self.responsive_spacing().x * 0.75,
-            self.responsive_spacing().y * 0.5
+            self.responsive_spacing().y * 0.5,
         );
         style.spacing.menu_margin = egui::Margin::same(self.responsive_spacing().x * 0.5);
 
         // Update font sizes
         style.text_styles.insert(
             egui::TextStyle::Body,
-            egui::FontId::proportional(self.responsive_font_size())
+            egui::FontId::proportional(self.responsive_font_size()),
         );
         style.text_styles.insert(
             egui::TextStyle::Monospace,
-            egui::FontId::monospace(self.responsive_mono_font_size())
+            egui::FontId::monospace(self.responsive_mono_font_size()),
         );
     }
 }
@@ -377,7 +389,8 @@ impl ResponsiveGrid {
             for (index, item) in items.into_iter().enumerate() {
                 let width = item_width.unwrap_or_else(|| {
                     let available_width = ui.available_width();
-                    (available_width - self.spacing.x * (self.columns - 1) as f32) / self.columns as f32
+                    (available_width - self.spacing.x * (self.columns - 1) as f32)
+                        / self.columns as f32
                 });
 
                 ui.allocate_ui(egui::vec2(width, ui.available_height()), |ui| {

@@ -3,14 +3,14 @@
 //! Core PTY management system that handles creation, lifecycle,
 //! and coordination of pseudoterminal processes.
 
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
-use crate::error::{Error, Result};
-use crate::models::PtyProcess;
 use super::process::spawn_pty_process;
 use super::streams::PtyStreams;
+use crate::error::{Error, Result};
+use crate::models::PtyProcess;
 
 /// Handle to a managed PTY process
 #[derive(Debug, Clone)]
@@ -156,7 +156,10 @@ impl PtyManager {
         if let Some(streams) = self.streams.get_mut(&handle.id) {
             streams.write(data).await
         } else {
-            Err(Error::Other(format!("PTY streams for {} not found", handle.id)))
+            Err(Error::Other(format!(
+                "PTY streams for {} not found",
+                handle.id
+            )))
         }
     }
 
@@ -169,7 +172,10 @@ impl PtyManager {
                 streams.read_with_timeout(timeout_ms).await
             }
         } else {
-            Err(Error::Other(format!("PTY streams for {} not found", handle.id)))
+            Err(Error::Other(format!(
+                "PTY streams for {} not found",
+                handle.id
+            )))
         }
     }
 
@@ -178,7 +184,10 @@ impl PtyManager {
         if let Some(streams) = self.streams.get_mut(&handle.id) {
             streams.try_read_now()
         } else {
-            Err(Error::Other(format!("PTY streams for {} not found", handle.id)))
+            Err(Error::Other(format!(
+                "PTY streams for {} not found",
+                handle.id
+            )))
         }
     }
 
@@ -189,7 +198,8 @@ impl PtyManager {
 
     /// Clean up terminated processes
     pub fn cleanup_terminated(&mut self) {
-        let terminated: Vec<String> = self.active_processes
+        let terminated: Vec<String> = self
+            .active_processes
             .iter()
             .filter(|(_, process)| !process.is_running())
             .map(|(id, _)| id.clone())
@@ -213,7 +223,10 @@ impl PtyManager {
         {
             Ok(())
         } else {
-            Err(Error::Other(format!("Command '{}' not found or not executable", command)))
+            Err(Error::Other(format!(
+                "Command '{}' not found or not executable",
+                command
+            )))
         }
     }
 }

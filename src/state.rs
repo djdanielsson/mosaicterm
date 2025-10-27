@@ -8,11 +8,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::debug;
 
-use crate::error::{Error, Result};
-use crate::terminal::{Terminal, TerminalFactory, TerminalStatus};
-use crate::models::{TerminalSession, CommandBlock};
-use crate::models::ShellType;
 use crate::config::RuntimeConfig;
+use crate::error::{Error, Result};
+use crate::models::ShellType;
+use crate::models::{CommandBlock, TerminalSession};
+use crate::terminal::{Terminal, TerminalFactory, TerminalStatus};
 
 /// Global application state
 pub type AppState = Arc<RwLock<ApplicationState>>;
@@ -120,7 +120,10 @@ pub enum ApplicationEvent {
     /// Terminal switched
     TerminalSwitched { id: String },
     /// Command executed
-    CommandExecuted { terminal_id: String, command: String },
+    CommandExecuted {
+        terminal_id: String,
+        command: String,
+    },
     /// Theme changed
     ThemeChanged { theme_name: String },
     /// Settings changed
@@ -182,7 +185,9 @@ impl ApplicationState {
         let id = generate_terminal_id();
 
         if self.terminals.len() >= self.settings.max_terminals {
-            return Err(Error::Other("Maximum number of terminals reached".to_string()));
+            return Err(Error::Other(
+                "Maximum number of terminals reached".to_string(),
+            ));
         }
 
         self.terminals.insert(id.clone(), terminal);
@@ -197,7 +202,8 @@ impl ApplicationState {
             self.active_terminal_id = self.terminals.keys().next().cloned();
         }
 
-        self.terminals.remove(id)
+        self.terminals
+            .remove(id)
             .ok_or_else(|| Error::Other(format!("Terminal '{}' not found", id)))
     }
 
@@ -340,12 +346,9 @@ impl TerminalInstance {
 
 impl Default for ApplicationSettings {
     fn default() -> Self {
-        Self {
-            max_terminals: 10,
-        }
+        Self { max_terminals: 10 }
     }
 }
-
 
 impl StateManager {
     /// Create new state manager
@@ -408,7 +411,8 @@ impl StateManager {
 
         self.dispatch_event(ApplicationEvent::TerminalCreated {
             id: terminal_id.clone(),
-        }).await?;
+        })
+        .await?;
 
         Ok(terminal_id)
     }
@@ -418,9 +422,8 @@ impl StateManager {
         let mut state = self.state.write().await;
         state.remove_terminal(id)?;
 
-        self.dispatch_event(ApplicationEvent::TerminalDestroyed {
-            id: id.to_string(),
-        }).await?;
+        self.dispatch_event(ApplicationEvent::TerminalDestroyed { id: id.to_string() })
+            .await?;
 
         Ok(())
     }
@@ -430,9 +433,8 @@ impl StateManager {
         let mut state = self.state.write().await;
         state.switch_terminal(id)?;
 
-        self.dispatch_event(ApplicationEvent::TerminalSwitched {
-            id: id.to_string(),
-        }).await?;
+        self.dispatch_event(ApplicationEvent::TerminalSwitched { id: id.to_string() })
+            .await?;
 
         Ok(())
     }
@@ -444,7 +446,9 @@ impl StateManager {
         ApplicationStats {
             terminal_count: state.terminals.len(),
             active_terminal: state.active_terminal_id.clone(),
-            total_commands: state.terminals.values()
+            total_commands: state
+                .terminals
+                .values()
                 .map(|t| t.command_history.len())
                 .sum(),
             memory_usage: 0, // TODO: Implement memory tracking
@@ -486,7 +490,8 @@ fn event_type(event: &ApplicationEvent) -> String {
         ApplicationEvent::WindowResized { .. } => "window_resized",
         ApplicationEvent::Shutdown => "shutdown",
         ApplicationEvent::Error { .. } => "error",
-    }.to_string()
+    }
+    .to_string()
 }
 
 #[cfg(test)]
@@ -530,17 +535,35 @@ mod tests {
     #[test]
     fn test_application_status_variants() {
         let status = ApplicationStatus::Error("test error".to_string());
-        assert!(matches!(ApplicationStatus::Starting, ApplicationStatus::Starting));
-        assert!(matches!(ApplicationStatus::Running, ApplicationStatus::Running));
-        assert!(matches!(ApplicationStatus::ShuttingDown, ApplicationStatus::ShuttingDown));
+        assert!(matches!(
+            ApplicationStatus::Starting,
+            ApplicationStatus::Starting
+        ));
+        assert!(matches!(
+            ApplicationStatus::Running,
+            ApplicationStatus::Running
+        ));
+        assert!(matches!(
+            ApplicationStatus::ShuttingDown,
+            ApplicationStatus::ShuttingDown
+        ));
         assert!(matches!(status, ApplicationStatus::Error(_)));
     }
 
     #[test]
     fn test_startup_behavior_variants() {
-        assert!(matches!(StartupBehavior::NewTerminal, StartupBehavior::NewTerminal));
-        assert!(matches!(StartupBehavior::RestoreSession, StartupBehavior::RestoreSession));
-        assert!(matches!(StartupBehavior::WelcomeScreen, StartupBehavior::WelcomeScreen));
+        assert!(matches!(
+            StartupBehavior::NewTerminal,
+            StartupBehavior::NewTerminal
+        ));
+        assert!(matches!(
+            StartupBehavior::RestoreSession,
+            StartupBehavior::RestoreSession
+        ));
+        assert!(matches!(
+            StartupBehavior::WelcomeScreen,
+            StartupBehavior::WelcomeScreen
+        ));
         assert!(matches!(StartupBehavior::None, StartupBehavior::None));
     }
 
@@ -557,8 +580,16 @@ mod tests {
     #[test]
     fn test_event_type_conversion() {
         assert_eq!(event_type(&ApplicationEvent::Shutdown), "shutdown");
-        assert_eq!(event_type(&ApplicationEvent::SettingsChanged), "settings_changed");
-        assert_eq!(event_type(&ApplicationEvent::Error { message: "test".to_string() }), "error");
+        assert_eq!(
+            event_type(&ApplicationEvent::SettingsChanged),
+            "settings_changed"
+        );
+        assert_eq!(
+            event_type(&ApplicationEvent::Error {
+                message: "test".to_string()
+            }),
+            "error"
+        );
     }
 
     #[test]
@@ -568,7 +599,7 @@ mod tests {
             active_terminal: Some("terminal_123".to_string()),
             total_commands: 150,
             memory_usage: 1024 * 1024, // 1MB
-            uptime: 3600, // 1 hour
+            uptime: 3600,              // 1 hour
         };
 
         assert_eq!(stats.terminal_count, 3);

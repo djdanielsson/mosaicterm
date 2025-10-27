@@ -75,7 +75,6 @@ impl Default for InputPrompt {
 }
 
 impl InputPrompt {
-
     /// Create with custom prompt text
     pub fn with_prompt(prompt: &str) -> Self {
         Self {
@@ -112,10 +111,12 @@ impl InputPrompt {
         input_frame.show(ui, |ui| {
             ui.horizontal(|ui| {
                 // Enhanced prompt text with better visual hierarchy
-                ui.label(egui::RichText::new(&self.prompt_text)
-                    .font(egui::FontId::monospace(14.0))
-                    .color(egui::Color32::from_rgb(120, 230, 120))
-                    .strong());
+                ui.label(
+                    egui::RichText::new(&self.prompt_text)
+                        .font(egui::FontId::monospace(14.0))
+                        .color(egui::Color32::from_rgb(120, 230, 120))
+                        .strong(),
+                );
 
                 ui.add_space(12.0);
 
@@ -126,7 +127,7 @@ impl InputPrompt {
                         .desired_width(f32::INFINITY)
                         .hint_text("Enter command...")
                         .margin(egui::Vec2::new(10.0, 8.0))
-                        .text_color_opt(Some(egui::Color32::from_rgb(220, 220, 240)))
+                        .text_color_opt(Some(egui::Color32::from_rgb(220, 220, 240))),
                 );
 
                 // Enhanced visual feedback for focused state
@@ -137,20 +138,25 @@ impl InputPrompt {
                     painter.rect_stroke(
                         rect,
                         4.0,
-                        egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 150, 255))
+                        egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 150, 255)),
                     );
 
                     // Add subtle glow effect
                     painter.rect_stroke(
                         rect.expand(1.0),
                         4.0,
-                        egui::Stroke::new(1.0, egui::Color32::from_rgba_premultiplied(100, 150, 255, 100))
+                        egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgba_premultiplied(100, 150, 255, 100),
+                        ),
                     );
                 }
 
                 // Handle input events
-                if input_response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                    && !self.current_input.trim().is_empty() {
+                if input_response.lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    && !self.current_input.trim().is_empty()
+                {
                     submitted_command = Some(self.current_input.clone());
                     self.add_to_history(self.current_input.clone());
                     self.current_input.clear();
@@ -175,24 +181,34 @@ impl InputPrompt {
                 ui.add_space(4.0);
 
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("💡")
-                        .font(egui::FontId::proportional(13.0))
-                        .color(egui::Color32::from_rgb(160, 160, 180)));
+                    ui.label(
+                        egui::RichText::new("💡")
+                            .font(egui::FontId::proportional(13.0))
+                            .color(egui::Color32::from_rgb(160, 160, 180)),
+                    );
 
                     ui.add_space(6.0);
 
-                    ui.label(egui::RichText::new("Use ↑↓ arrows to navigate command history")
-                        .font(egui::FontId::proportional(12.0))
-                        .color(egui::Color32::from_rgb(160, 160, 180)));
+                    ui.label(
+                        egui::RichText::new("Use ↑↓ arrows to navigate command history")
+                            .font(egui::FontId::proportional(12.0))
+                            .color(egui::Color32::from_rgb(160, 160, 180)),
+                    );
                 });
 
                 // Show current history position if browsing
                 if let Some(pos) = self.history_position {
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(format!("📜 History: {}/{}", pos + 1, self.history.len()))
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "📜 History: {}/{}",
+                                pos + 1,
+                                self.history.len()
+                            ))
                             .font(egui::FontId::proportional(11.0))
-                            .color(egui::Color32::from_rgb(140, 140, 160)));
+                            .color(egui::Color32::from_rgb(140, 140, 160)),
+                        );
                     });
                 }
             }
@@ -340,7 +356,10 @@ pub mod utils {
 
         for pattern in &dangerous_patterns {
             if input.contains(pattern) {
-                return Err(format!("Potentially dangerous command detected: {}", pattern));
+                return Err(format!(
+                    "Potentially dangerous command detected: {}",
+                    pattern
+                ));
             }
         }
 
@@ -350,7 +369,8 @@ pub mod utils {
     /// Sanitize input text
     pub fn sanitize_input(input: &str) -> String {
         // Remove null bytes and other problematic characters
-        input.chars()
+        input
+            .chars()
             .filter(|&c| c != '\0' && !c.is_control() || c == '\n' || c == '\t' || c == '\r')
             .collect()
     }
@@ -361,7 +381,8 @@ pub mod utils {
             return Vec::new();
         }
 
-        history.iter()
+        history
+            .iter()
             .filter(|cmd| cmd.starts_with(input))
             .take(10)
             .cloned()

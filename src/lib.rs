@@ -9,8 +9,8 @@
 #[macro_use]
 extern crate tracing;
 
-pub mod config;
 pub mod completion;
+pub mod config;
 pub mod error;
 pub mod events;
 pub mod state;
@@ -19,9 +19,9 @@ pub mod state;
 pub mod pty;
 pub mod terminal;
 pub use terminal::{Terminal, TerminalFactory, TerminalState};
+pub mod ansi;
 pub mod commands;
 pub mod execution;
-pub mod ansi;
 
 // UI modules
 pub mod ui;
@@ -29,18 +29,17 @@ pub mod ui;
 // Model modules
 pub mod models;
 
-
 // Re-exports for core functionality
 pub use config::{Config, RuntimeConfig};
 pub use error::{Error, Result};
-pub use events::{EventBus, EventProcessor, EventBuilder};
-pub use state::{ApplicationState, StateManager, AppState};
+pub use events::{EventBuilder, EventBus, EventProcessor};
+pub use state::{AppState, ApplicationState, StateManager};
 
 // Convenience re-exports for common types
-pub use models::ShellType as TerminalShellType;
-pub use config::theme::ThemeManager;
-pub use config::shell::ShellManager;
 pub use config::loader::ConfigLoader;
+pub use config::shell::ShellManager;
+pub use config::theme::ThemeManager;
+pub use models::ShellType as TerminalShellType;
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -74,7 +73,10 @@ pub fn init() -> Result<RuntimeConfig> {
         }
         Err(e) => {
             error!("Failed to create runtime configuration: {}", e);
-            return Err(Error::Other(format!("Runtime configuration creation failed: {}", e)));
+            return Err(Error::Other(format!(
+                "Runtime configuration creation failed: {}",
+                e
+            )));
         }
     };
 
@@ -129,7 +131,10 @@ fn initialize_core_components(config: &Config) -> Result<()> {
     match theme_manager.set_theme(&config.ui.theme_name) {
         Ok(_) => info!("✅ Theme '{}' applied successfully", config.ui.theme_name),
         Err(e) => {
-            warn!("Failed to set theme '{}', using default: {}", config.ui.theme_name, e);
+            warn!(
+                "Failed to set theme '{}', using default: {}",
+                config.ui.theme_name, e
+            );
             // Try to set default theme
             if let Err(e2) = theme_manager.set_theme("dark") {
                 warn!("Failed to set default theme: {}", e2);
@@ -152,26 +157,39 @@ fn initialize_core_components(config: &Config) -> Result<()> {
 
 /// Initialize MosaicTerm with custom configuration
 pub fn init_with_config(config_path: &std::path::Path) -> Result<RuntimeConfig> {
-    info!("🚀 Initializing {} v{} with config: {}", NAME, VERSION, config_path.display());
+    info!(
+        "🚀 Initializing {} v{} with config: {}",
+        NAME,
+        VERSION,
+        config_path.display()
+    );
 
     // Step 1: Validate system requirements
     validate_system_requirements()?;
 
     // Step 2: Validate config file exists and is readable
     if !config_path.exists() {
-        return Err(Error::Config(
-            format!("Configuration file does not exist: {}", config_path.display())
-        ));
+        return Err(Error::Config(format!(
+            "Configuration file does not exist: {}",
+            config_path.display()
+        )));
     }
 
     // Step 3: Load custom configuration with detailed error handling
     let runtime_config = match RuntimeConfig::load_from_file(config_path) {
         Ok(config) => {
-            info!("✅ Custom configuration loaded from: {}", config_path.display());
+            info!(
+                "✅ Custom configuration loaded from: {}",
+                config_path.display()
+            );
             config
         }
         Err(e) => {
-            error!("Failed to load custom configuration from {}: {}", config_path.display(), e);
+            error!(
+                "Failed to load custom configuration from {}: {}",
+                config_path.display(),
+                e
+            );
             return Err(Error::Other(format!("Failed to load configuration: {}", e)));
         }
     };
@@ -214,16 +232,28 @@ pub fn create_config() -> Result<RuntimeConfig> {
 pub fn handle_startup_error(error: &Error) -> String {
     match error {
         Error::Config(msg) => {
-            format!("Configuration Error: {}\n\nTry:\n• Check configuration file syntax\n• Ensure file permissions are correct\n• Use default configuration", msg)
+            format!(
+                "Configuration Error: {}\n\nTry:\n• Check configuration file syntax\n• Ensure file permissions are correct\n• Use default configuration",
+                msg
+            )
         }
         Error::Other(msg) => {
-            format!("Initialization Error: {}\n\nTry:\n• Restart the application\n• Check system resources\n• Verify dependencies are installed", msg)
+            format!(
+                "Initialization Error: {}\n\nTry:\n• Restart the application\n• Check system resources\n• Verify dependencies are installed",
+                msg
+            )
         }
         Error::Io(err) => {
-            format!("I/O Error: {}\n\nTry:\n• Check file permissions\n• Ensure required directories exist\n• Verify disk space", err)
+            format!(
+                "I/O Error: {}\n\nTry:\n• Check file permissions\n• Ensure required directories exist\n• Verify disk space",
+                err
+            )
         }
         _ => {
-            format!("Unexpected Error: {}\n\nPlease report this issue with debug logs enabled", error)
+            format!(
+                "Unexpected Error: {}\n\nPlease report this issue with debug logs enabled",
+                error
+            )
         }
     }
 }
@@ -237,8 +267,15 @@ pub fn app_info() -> std::collections::HashMap<String, String> {
     info.insert("description".to_string(), DESCRIPTION.to_string());
 
     // Add build information
-    info.insert("build_profile".to_string(),
-        if cfg!(debug_assertions) { "debug" } else { "release" }.to_string());
+    info.insert(
+        "build_profile".to_string(),
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        }
+        .to_string(),
+    );
 
     #[cfg(target_os = "macos")]
     info.insert("platform".to_string(), "macOS".to_string());
@@ -261,7 +298,10 @@ pub fn app_info() -> std::collections::HashMap<String, String> {
     }
 
     info.insert("features".to_string(), features.join(", "));
-    info.insert("phase".to_string(), "Phase 4: Application Launch & Basic UI".to_string());
+    info.insert(
+        "phase".to_string(),
+        "Phase 4: Application Launch & Basic UI".to_string(),
+    );
 
     info
 }
@@ -476,7 +516,8 @@ fn get_cpu_count() -> usize {
     #[cfg(target_os = "linux")]
     {
         if let Ok(content) = std::fs::read_to_string("/proc/cpuinfo") {
-            let cpu_count = content.lines()
+            let cpu_count = content
+                .lines()
                 .filter(|line| line.starts_with("processor"))
                 .count();
             if cpu_count > 0 {
@@ -617,10 +658,22 @@ mod tests {
 
     #[test]
     fn test_validation_issue_variants() {
-        assert!(matches!(ValidationIssue::MissingCommand("test".to_string()), ValidationIssue::MissingCommand(_)));
-        assert!(matches!(ValidationIssue::LowMemory(100), ValidationIssue::LowMemory(_)));
-        assert!(matches!(ValidationIssue::MissingCapability("tty".to_string()), ValidationIssue::MissingCapability(_)));
-        assert!(matches!(ValidationIssue::InsufficientPermissions("root".to_string()), ValidationIssue::InsufficientPermissions(_)));
+        assert!(matches!(
+            ValidationIssue::MissingCommand("test".to_string()),
+            ValidationIssue::MissingCommand(_)
+        ));
+        assert!(matches!(
+            ValidationIssue::LowMemory(100),
+            ValidationIssue::LowMemory(_)
+        ));
+        assert!(matches!(
+            ValidationIssue::MissingCapability("tty".to_string()),
+            ValidationIssue::MissingCapability(_)
+        ));
+        assert!(matches!(
+            ValidationIssue::InsufficientPermissions("root".to_string()),
+            ValidationIssue::InsufficientPermissions(_)
+        ));
     }
 
     #[test]

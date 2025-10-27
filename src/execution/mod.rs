@@ -3,13 +3,13 @@
 //! This module provides clean, fast command execution by directly spawning
 //! processes instead of relying on shell prompt parsing.
 
-use std::path::PathBuf;
+use crate::error::{Error, Result};
+use crate::models::{CommandBlock, OutputLine};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
-use crate::error::{Error, Result};
-use crate::models::{CommandBlock, OutputLine};
 
 /// Direct command execution without shell/PTY overhead
 pub struct DirectExecutor {
@@ -33,7 +33,8 @@ impl DirectExecutor {
 
     /// Execute a command directly and return results immediately
     pub async fn execute_command(&self, command_str: &str) -> Result<CommandBlock> {
-        let mut command_block = CommandBlock::new(command_str.to_string(), self.working_dir.clone());
+        let mut command_block =
+            CommandBlock::new(command_str.to_string(), self.working_dir.clone());
         command_block.mark_running();
 
         // Parse command and arguments
@@ -45,10 +46,7 @@ impl DirectExecutor {
         let (cmd, args) = (parts[0], &parts[1..]);
 
         // Execute with timeout
-        let execution_result = timeout(
-            self.default_timeout,
-            self.run_command(cmd, args)
-        ).await;
+        let execution_result = timeout(self.default_timeout, self.run_command(cmd, args)).await;
 
         match execution_result {
             Ok(Ok((stdout, stderr, exit_code))) => {
@@ -79,7 +77,7 @@ impl DirectExecutor {
                 // Mark as completed with exit code
                 let duration = Duration::from_millis(100); // Small duration for direct commands
                 command_block.mark_completed(duration);
-                
+
                 if exit_code != 0 {
                     command_block.add_output_line(OutputLine {
                         text: format!("Command exited with code: {}", exit_code),
@@ -142,12 +140,32 @@ impl DirectExecutor {
     /// Check if command should use direct execution
     pub fn should_use_direct_execution(command: &str) -> bool {
         let cmd = command.split_whitespace().next().unwrap_or("");
-        
+
         // Commands that work well with direct execution
-        matches!(cmd, 
-            "ls" | "pwd" | "echo" | "cat" | "grep" | "find" | "wc" | "sort" | 
-            "head" | "tail" | "whoami" | "date" | "df" | "du" | "ps" | "uname" |
-            "which" | "whereis" | "file" | "stat" | "tree" | "curl" | "wget"
+        matches!(
+            cmd,
+            "ls" | "pwd"
+                | "echo"
+                | "cat"
+                | "grep"
+                | "find"
+                | "wc"
+                | "sort"
+                | "head"
+                | "tail"
+                | "whoami"
+                | "date"
+                | "df"
+                | "du"
+                | "ps"
+                | "uname"
+                | "which"
+                | "whereis"
+                | "file"
+                | "stat"
+                | "tree"
+                | "curl"
+                | "wget"
         )
     }
 }
@@ -161,11 +179,27 @@ impl Default for DirectExecutor {
 /// Commands that require interactive PTY mode
 pub fn requires_pty_mode(command: &str) -> bool {
     let cmd = command.split_whitespace().next().unwrap_or("");
-    
-    matches!(cmd,
-        "vim" | "nano" | "emacs" | "less" | "more" | "top" | "htop" | 
-        "ssh" | "telnet" | "ftp" | "mysql" | "psql" | "node" | "python" |
-        "bash" | "zsh" | "fish" | "sh"
+
+    matches!(
+        cmd,
+        "vim"
+            | "nano"
+            | "emacs"
+            | "less"
+            | "more"
+            | "top"
+            | "htop"
+            | "ssh"
+            | "telnet"
+            | "ftp"
+            | "mysql"
+            | "psql"
+            | "node"
+            | "python"
+            | "bash"
+            | "zsh"
+            | "fish"
+            | "sh"
     )
 }
 
@@ -178,7 +212,7 @@ mod tests {
         let executor = DirectExecutor::new();
         let result = executor.execute_command("echo hello").await;
         assert!(result.is_ok());
-        
+
         let command_block = result.unwrap();
         assert_eq!(command_block.command, "echo hello");
         assert!(!command_block.output.is_empty());

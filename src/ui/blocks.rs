@@ -3,11 +3,11 @@
 //! This module handles the rendering of individual command blocks
 //! in the MosaicTerm interface.
 
-use eframe::egui;
-use std::collections::HashMap;
 use crate::error::Result;
 use crate::models::{CommandBlock, ExecutionStatus};
 use crate::terminal::ansi_parser::AnsiParser;
+use eframe::egui;
+use std::collections::HashMap;
 
 /// Command block renderer
 pub struct CommandBlocks {
@@ -201,18 +201,22 @@ impl CommandBlocks {
     fn render_command_header(&self, ui: &mut egui::Ui, block: &CommandBlock, index: usize) {
         ui.horizontal(|ui| {
             // Command number
-            ui.label(egui::RichText::new(format!("#{}", index + 1))
-                .font(egui::FontId::monospace(10.0))
-                .color(egui::Color32::from_rgb(150, 150, 170)));
+            ui.label(
+                egui::RichText::new(format!("#{}", index + 1))
+                    .font(egui::FontId::monospace(10.0))
+                    .color(egui::Color32::from_rgb(150, 150, 170)),
+            );
 
             ui.separator();
 
             // Timestamp
             let timestamp = format!("{}", block.timestamp.format("%H:%M:%S"));
 
-            ui.label(egui::RichText::new(&timestamp)
-                .font(egui::FontId::monospace(10.0))
-                .color(egui::Color32::from_rgb(120, 120, 140)));
+            ui.label(
+                egui::RichText::new(&timestamp)
+                    .font(egui::FontId::monospace(10.0))
+                    .color(egui::Color32::from_rgb(120, 120, 140)),
+            );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Status indicator
@@ -232,7 +236,10 @@ impl CommandBlocks {
                     if exit_code == 0 {
                         ui.colored_label(egui::Color32::from_rgb(0, 255, 100), "● Success");
                     } else {
-                        ui.colored_label(egui::Color32::from_rgb(255, 100, 100), format!("● Failed ({})", exit_code));
+                        ui.colored_label(
+                            egui::Color32::from_rgb(255, 100, 100),
+                            format!("● Failed ({})", exit_code),
+                        );
                     }
                 } else {
                     ui.colored_label(egui::Color32::from_rgb(0, 255, 100), "● Completed");
@@ -257,9 +264,11 @@ impl CommandBlocks {
             self.render_rendered_block(ui, &rendered);
         } else {
             // Fallback to plain text
-            ui.label(egui::RichText::new(&block.command)
-                .font(egui::FontId::monospace(12.0))
-                .color(egui::Color32::from_rgb(200, 200, 255)));
+            ui.label(
+                egui::RichText::new(&block.command)
+                    .font(egui::FontId::monospace(12.0))
+                    .color(egui::Color32::from_rgb(200, 200, 255)),
+            );
         }
     }
 
@@ -280,15 +289,15 @@ impl CommandBlocks {
                     self.config.max_output_lines
                 };
 
-                let display_lines = block.output.iter()
-                    .take(display_limit)
-                    .enumerate();
+                let display_lines = block.output.iter().take(display_limit).enumerate();
 
                 for (i, line) in display_lines {
                     // Render each output line
-                    ui.label(egui::RichText::new(&line.text)
-                        .font(egui::FontId::monospace(11.0))
-                        .color(egui::Color32::from_rgb(180, 180, 200)));
+                    ui.label(
+                        egui::RichText::new(&line.text)
+                            .font(egui::FontId::monospace(11.0))
+                            .color(egui::Color32::from_rgb(180, 180, 200)),
+                    );
 
                     // Add subtle line spacing
                     if i < block.output.len().min(display_limit) - 1 {
@@ -297,11 +306,15 @@ impl CommandBlocks {
                 }
 
                 // Show truncation indicator if needed
-                if self.config.max_output_lines > 0 && block.output.len() > self.config.max_output_lines {
+                if self.config.max_output_lines > 0
+                    && block.output.len() > self.config.max_output_lines
+                {
                     let remaining = block.output.len() - self.config.max_output_lines;
-                    ui.label(egui::RichText::new(format!("... and {} more lines", remaining))
-                        .font(egui::FontId::monospace(9.0))
-                        .color(egui::Color32::from_rgb(120, 120, 140)));
+                    ui.label(
+                        egui::RichText::new(format!("... and {} more lines", remaining))
+                            .font(egui::FontId::monospace(9.0))
+                            .color(egui::Color32::from_rgb(120, 120, 140)),
+                    );
                 }
             });
         });
@@ -343,7 +356,9 @@ impl CommandBlocks {
             self.config.max_output_lines
         };
 
-        let output_text = block.output.iter()
+        let output_text = block
+            .output
+            .iter()
             .take(output_limit)
             .map(|line| line.text.clone())
             .collect::<Vec<_>>()
@@ -423,7 +438,8 @@ impl CommandBlocks {
             egui::Color32::from_rgb(80, 80, 100)
         };
 
-        ui.painter().rect_stroke(block_rect, 4.0, egui::Stroke::new(1.0, border_color));
+        ui.painter()
+            .rect_stroke(block_rect, 4.0, egui::Stroke::new(1.0, border_color));
 
         // Block content
         ui.allocate_ui_at_rect(block_rect.shrink(self.config.padding.x), |ui| {
@@ -484,16 +500,20 @@ impl CommandBlocks {
             }
 
             // Command text
-            ui.label(egui::RichText::new(&rendered.command_area.text)
-                .font(egui::FontId::monospace(self.config.font_size))
-                .color(egui::Color32::WHITE));
+            ui.label(
+                egui::RichText::new(&rendered.command_area.text)
+                    .font(egui::FontId::monospace(self.config.font_size))
+                    .color(egui::Color32::WHITE),
+            );
 
             // Timestamp (right-aligned)
             if self.config.show_timestamps && !rendered.timestamp_display.is_empty() {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new(&rendered.timestamp_display)
-                        .font(egui::FontId::proportional(self.config.font_size * 0.8))
-                        .color(egui::Color32::LIGHT_GRAY));
+                    ui.label(
+                        egui::RichText::new(&rendered.timestamp_display)
+                            .font(egui::FontId::proportional(self.config.font_size * 0.8))
+                            .color(egui::Color32::LIGHT_GRAY),
+                    );
                 });
             }
         });
@@ -509,9 +529,11 @@ impl CommandBlocks {
         ui.add_space(2.0);
 
         // Output text
-        ui.label(egui::RichText::new(&rendered.output_area.text)
-            .font(egui::FontId::monospace(self.config.font_size))
-            .color(egui::Color32::LIGHT_GRAY));
+        ui.label(
+            egui::RichText::new(&rendered.output_area.text)
+                .font(egui::FontId::monospace(self.config.font_size))
+                .color(egui::Color32::LIGHT_GRAY),
+        );
     }
 
     /// Render placeholder when no blocks are available
@@ -519,9 +541,11 @@ impl CommandBlocks {
         ui.centered_and_justified(|ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(20.0);
-                ui.label(egui::RichText::new("🖥️")
-                    .font(egui::FontId::proportional(48.0))
-                    .color(egui::Color32::LIGHT_GRAY));
+                ui.label(
+                    egui::RichText::new("🖥️")
+                        .font(egui::FontId::proportional(48.0))
+                        .color(egui::Color32::LIGHT_GRAY),
+                );
                 ui.add_space(10.0);
                 ui.heading("No commands yet");
                 ui.label("Execute a command to see it here");
@@ -566,7 +590,12 @@ impl CommandBlocks {
     }
 
     /// Render context menu at a specific position for a specific block
-    pub fn render_context_menu_at(&mut self, ui: &mut egui::Ui, command_block: &CommandBlock, position: egui::Pos2) -> Option<ContextMenuAction> {
+    pub fn render_context_menu_at(
+        &mut self,
+        ui: &mut egui::Ui,
+        command_block: &CommandBlock,
+        position: egui::Pos2,
+    ) -> Option<ContextMenuAction> {
         let mut action = None;
 
         // Render context menu at the specified position
@@ -578,7 +607,8 @@ impl CommandBlocks {
 
         // Close menu if clicked outside or if the response was clicked
         if ui.input(|i| i.pointer.any_click())
-            && (!response.response.rect.contains(position) || response.response.clicked()) {
+            && (!response.response.rect.contains(position) || response.response.clicked())
+        {
             self.interaction_state.context_menu_block = None;
             self.interaction_state.context_menu_pos = None;
         }
@@ -593,7 +623,12 @@ impl CommandBlocks {
     }
 
     /// Render the context menu UI
-    fn render_context_menu_ui(&self, ui: &mut egui::Ui, command_block: &CommandBlock, action: &mut Option<ContextMenuAction>) {
+    fn render_context_menu_ui(
+        &self,
+        ui: &mut egui::Ui,
+        command_block: &CommandBlock,
+        action: &mut Option<ContextMenuAction>,
+    ) {
         egui::Frame::popup(ui.style())
             .shadow(egui::epaint::Shadow::small_dark())
             .show(ui, |ui| {
@@ -601,13 +636,18 @@ impl CommandBlocks {
 
                 // Copy Command
                 if ui.selectable_label(false, "📋 Copy Command").clicked() {
-                    *action = Some(ContextMenuAction::CopyCommand(command_block.command.clone()));
+                    *action = Some(ContextMenuAction::CopyCommand(
+                        command_block.command.clone(),
+                    ));
                 }
 
                 // Copy Output (if any)
                 if !command_block.output.is_empty()
-                    && ui.selectable_label(false, "📄 Copy Output").clicked() {
-                    let output_text = command_block.output.iter()
+                    && ui.selectable_label(false, "📄 Copy Output").clicked()
+                {
+                    let output_text = command_block
+                        .output
+                        .iter()
                         .map(|line| line.text.clone())
                         .collect::<Vec<_>>()
                         .join("\n");
@@ -618,14 +658,18 @@ impl CommandBlocks {
 
                 // Rerun Command
                 if ui.selectable_label(false, "🔄 Rerun Command").clicked() {
-                    *action = Some(ContextMenuAction::RerunCommand(command_block.command.clone()));
+                    *action = Some(ContextMenuAction::RerunCommand(
+                        command_block.command.clone(),
+                    ));
                 }
 
                 // Copy Command + Output (if output exists)
                 if !command_block.output.is_empty() {
                     ui.separator();
                     if ui.selectable_label(false, "📋 Copy All").clicked() {
-                        let output_text = command_block.output.iter()
+                        let output_text = command_block
+                            .output
+                            .iter()
                             .map(|line| line.text.clone())
                             .collect::<Vec<_>>()
                             .join("\n");
@@ -643,10 +687,7 @@ pub mod utils {
 
     /// Create a mock command block for testing
     pub fn create_mock_block(command: &str, _output: &str, _success: bool) -> CommandBlock {
-        CommandBlock::new(
-            command.to_string(),
-            std::path::PathBuf::from("/tmp"),
-        )
+        CommandBlock::new(command.to_string(), std::path::PathBuf::from("/tmp"))
     }
 
     /// Calculate block height based on content
@@ -732,21 +773,24 @@ mod tests {
     #[test]
     fn test_clear_cache() {
         let mut blocks = CommandBlocks::new();
-        blocks.rendered_blocks.insert("test".to_string(), RenderedBlock {
-            id: "test".to_string(),
-            command_area: RenderArea {
-                text: "test".to_string(),
-                dimensions: egui::Vec2::new(50.0, 20.0),
+        blocks.rendered_blocks.insert(
+            "test".to_string(),
+            RenderedBlock {
+                id: "test".to_string(),
+                command_area: RenderArea {
+                    text: "test".to_string(),
+                    dimensions: egui::Vec2::new(50.0, 20.0),
+                },
+                output_area: RenderArea {
+                    text: "output".to_string(),
+                    dimensions: egui::Vec2::new(50.0, 20.0),
+                },
+                status_indicator: StatusIcon::Success,
+                timestamp_display: String::new(),
+                dimensions: egui::Vec2::new(50.0, 40.0),
+                expanded: true,
             },
-            output_area: RenderArea {
-                text: "output".to_string(),
-                dimensions: egui::Vec2::new(50.0, 20.0),
-            },
-            status_indicator: StatusIcon::Success,
-            timestamp_display: String::new(),
-            dimensions: egui::Vec2::new(50.0, 40.0),
-            expanded: true,
-        });
+        );
 
         assert_eq!(blocks.rendered_blocks.len(), 1);
         blocks.clear_cache();
@@ -758,7 +802,8 @@ mod tests {
         let mut blocks = CommandBlocks::new();
 
         // Create a test block
-        let test_block = CommandBlock::new("echo hello".to_string(), std::path::PathBuf::from("/tmp"));
+        let test_block =
+            CommandBlock::new("echo hello".to_string(), std::path::PathBuf::from("/tmp"));
         let test_pos = egui::Pos2::new(100.0, 200.0);
 
         // Initially no context menu

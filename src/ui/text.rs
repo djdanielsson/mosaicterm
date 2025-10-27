@@ -3,11 +3,11 @@
 //! This module handles rendering of text with ANSI escape sequence formatting
 //! for the MosaicTerm interface.
 
-use eframe::egui;
-use std::collections::HashMap;
 use crate::error::Result;
 use crate::models::output_line::AnsiCode;
 use crate::terminal::AnsiColor;
+use eframe::egui;
+use std::collections::HashMap;
 
 /// ANSI-aware text renderer
 pub struct AnsiTextRenderer {
@@ -86,14 +86,29 @@ impl Default for ColorScheme {
         ansi_colors.insert(AnsiColor::White, egui::Color32::from_rgb(229, 229, 229));
 
         // Bright ANSI colors
-        ansi_colors.insert(AnsiColor::BrightBlack, egui::Color32::from_rgb(102, 102, 102));
+        ansi_colors.insert(
+            AnsiColor::BrightBlack,
+            egui::Color32::from_rgb(102, 102, 102),
+        );
         ansi_colors.insert(AnsiColor::BrightRed, egui::Color32::from_rgb(241, 76, 76));
-        ansi_colors.insert(AnsiColor::BrightGreen, egui::Color32::from_rgb(35, 209, 139));
-        ansi_colors.insert(AnsiColor::BrightYellow, egui::Color32::from_rgb(245, 245, 67));
+        ansi_colors.insert(
+            AnsiColor::BrightGreen,
+            egui::Color32::from_rgb(35, 209, 139),
+        );
+        ansi_colors.insert(
+            AnsiColor::BrightYellow,
+            egui::Color32::from_rgb(245, 245, 67),
+        );
         ansi_colors.insert(AnsiColor::BrightBlue, egui::Color32::from_rgb(59, 142, 234));
-        ansi_colors.insert(AnsiColor::BrightMagenta, egui::Color32::from_rgb(214, 112, 214));
+        ansi_colors.insert(
+            AnsiColor::BrightMagenta,
+            egui::Color32::from_rgb(214, 112, 214),
+        );
         ansi_colors.insert(AnsiColor::BrightCyan, egui::Color32::from_rgb(41, 184, 219));
-        ansi_colors.insert(AnsiColor::BrightWhite, egui::Color32::from_rgb(229, 229, 229));
+        ansi_colors.insert(
+            AnsiColor::BrightWhite,
+            egui::Color32::from_rgb(229, 229, 229),
+        );
 
         Self {
             default_text: egui::Color32::from_rgb(229, 229, 229),
@@ -134,7 +149,12 @@ impl AnsiTextRenderer {
     }
 
     /// Render text with ANSI codes
-    pub fn render_ansi_text(&mut self, ui: &mut egui::Ui, text: &str, ansi_codes: &[AnsiCode]) -> Result<()> {
+    pub fn render_ansi_text(
+        &mut self,
+        ui: &mut egui::Ui,
+        text: &str,
+        ansi_codes: &[AnsiCode],
+    ) -> Result<()> {
         let cache_key = self.generate_cache_key(text, ansi_codes);
 
         // Check cache first
@@ -157,9 +177,14 @@ impl AnsiTextRenderer {
 
     /// Render plain text without ANSI codes
     pub fn render_plain_text(&mut self, ui: &mut egui::Ui, text: &str) {
-        ui.label(egui::RichText::new(text)
-            .font(egui::FontId::new(self.font_config.size, self.font_config.family.clone()))
-            .color(self.color_scheme.default_text));
+        ui.label(
+            egui::RichText::new(text)
+                .font(egui::FontId::new(
+                    self.font_config.size,
+                    self.font_config.family.clone(),
+                ))
+                .color(self.color_scheme.default_text),
+        );
     }
 
     /// Render text with ANSI formatting
@@ -167,7 +192,8 @@ impl AnsiTextRenderer {
         let mut layout = egui::epaint::text::LayoutJob::default();
         let mut current_color = self.color_scheme.default_text;
         let mut current_bg_color = self.color_scheme.default_background;
-        let mut current_font = egui::FontId::new(self.font_config.size, self.font_config.family.clone());
+        let mut current_font =
+            egui::FontId::new(self.font_config.size, self.font_config.family.clone());
         let mut ansi_code_count = 0;
 
         // Sort ANSI codes by position
@@ -180,11 +206,22 @@ impl AnsiTextRenderer {
             // Add text before this ANSI code
             if code.position > last_pos {
                 let text_before = &text[last_pos..code.position];
-                self.add_text_section(&mut layout, text_before, &current_font, current_color, current_bg_color);
+                self.add_text_section(
+                    &mut layout,
+                    text_before,
+                    &current_font,
+                    current_color,
+                    current_bg_color,
+                );
             }
 
             // Apply ANSI formatting
-            self.apply_ansi_formatting(code, &mut current_color, &mut current_bg_color, &mut current_font);
+            self.apply_ansi_formatting(
+                code,
+                &mut current_color,
+                &mut current_bg_color,
+                &mut current_font,
+            );
             ansi_code_count += 1;
             last_pos = code.position;
         }
@@ -192,13 +229,19 @@ impl AnsiTextRenderer {
         // Add remaining text
         if last_pos < text.len() {
             let remaining_text = &text[last_pos..];
-            self.add_text_section(&mut layout, remaining_text, &current_font, current_color, current_bg_color);
+            self.add_text_section(
+                &mut layout,
+                remaining_text,
+                &current_font,
+                current_color,
+                current_bg_color,
+            );
         }
 
         // Calculate approximate dimensions (simplified)
         let dimensions = egui::Vec2::new(
             text.len() as f32 * self.font_config.size * 0.6,
-            self.font_config.size * self.font_config.line_height
+            self.font_config.size * self.font_config.line_height,
         );
 
         Ok(RenderedText {
@@ -250,7 +293,8 @@ impl AnsiTextRenderer {
             // Reset
             *current_color = self.color_scheme.default_text;
             *current_bg_color = self.color_scheme.default_background;
-            *current_font = egui::FontId::new(self.font_config.size, self.font_config.family.clone());
+            *current_font =
+                egui::FontId::new(self.font_config.size, self.font_config.family.clone());
         } else if ansi_code.code.contains("[1") {
             // Bold - make brighter
             let r = (current_color.r() as f32 * 1.2).min(255.0) as u8;
@@ -301,7 +345,9 @@ impl AnsiTextRenderer {
 
     /// Add custom color mapping
     pub fn add_custom_color(&mut self, name: &str, color: egui::Color32) {
-        self.color_scheme.custom_colors.insert(name.to_string(), color);
+        self.color_scheme
+            .custom_colors
+            .insert(name.to_string(), color);
     }
 
     /// Get current font configuration
@@ -324,12 +370,20 @@ impl AnsiTextRenderer {
     }
 
     /// Render a line of output with ANSI formatting
-    pub fn render_output_line(&mut self, ui: &mut egui::Ui, line: &crate::models::OutputLine) -> Result<()> {
+    pub fn render_output_line(
+        &mut self,
+        ui: &mut egui::Ui,
+        line: &crate::models::OutputLine,
+    ) -> Result<()> {
         self.render_ansi_text(ui, &line.text, &line.ansi_codes)
     }
 
     /// Render multiple output lines with proper spacing
-    pub fn render_output_lines(&mut self, ui: &mut egui::Ui, lines: &[crate::models::OutputLine]) -> Result<()> {
+    pub fn render_output_lines(
+        &mut self,
+        ui: &mut egui::Ui,
+        lines: &[crate::models::OutputLine],
+    ) -> Result<()> {
         for (i, line) in lines.iter().enumerate() {
             self.render_output_line(ui, line)?;
 
@@ -356,14 +410,26 @@ impl AnsiTextRenderer {
         ansi_colors.insert(AnsiColor::White, egui::Color32::from_rgb(203, 204, 205));
 
         // Bright colors
-        ansi_colors.insert(AnsiColor::BrightBlack, egui::Color32::from_rgb(129, 131, 131));
+        ansi_colors.insert(
+            AnsiColor::BrightBlack,
+            egui::Color32::from_rgb(129, 131, 131),
+        );
         ansi_colors.insert(AnsiColor::BrightRed, egui::Color32::from_rgb(252, 57, 31));
         ansi_colors.insert(AnsiColor::BrightGreen, egui::Color32::from_rgb(49, 231, 34));
-        ansi_colors.insert(AnsiColor::BrightYellow, egui::Color32::from_rgb(234, 236, 35));
+        ansi_colors.insert(
+            AnsiColor::BrightYellow,
+            egui::Color32::from_rgb(234, 236, 35),
+        );
         ansi_colors.insert(AnsiColor::BrightBlue, egui::Color32::from_rgb(88, 51, 255));
-        ansi_colors.insert(AnsiColor::BrightMagenta, egui::Color32::from_rgb(249, 53, 248));
+        ansi_colors.insert(
+            AnsiColor::BrightMagenta,
+            egui::Color32::from_rgb(249, 53, 248),
+        );
         ansi_colors.insert(AnsiColor::BrightCyan, egui::Color32::from_rgb(20, 240, 252));
-        ansi_colors.insert(AnsiColor::BrightWhite, egui::Color32::from_rgb(233, 235, 235));
+        ansi_colors.insert(
+            AnsiColor::BrightWhite,
+            egui::Color32::from_rgb(233, 235, 235),
+        );
 
         ColorScheme {
             default_text: egui::Color32::from_rgb(203, 204, 205),
@@ -427,12 +493,21 @@ pub mod utils {
         ansi_colors.insert(AnsiColor::White, egui::Color32::from_rgb(36, 36, 36));
 
         // Bright colors for light theme
-        ansi_colors.insert(AnsiColor::BrightBlack, egui::Color32::from_rgb(102, 102, 102));
+        ansi_colors.insert(
+            AnsiColor::BrightBlack,
+            egui::Color32::from_rgb(102, 102, 102),
+        );
         ansi_colors.insert(AnsiColor::BrightRed, egui::Color32::from_rgb(237, 85, 59));
         ansi_colors.insert(AnsiColor::BrightGreen, egui::Color32::from_rgb(0, 188, 120));
-        ansi_colors.insert(AnsiColor::BrightYellow, egui::Color32::from_rgb(244, 191, 117));
+        ansi_colors.insert(
+            AnsiColor::BrightYellow,
+            egui::Color32::from_rgb(244, 191, 117),
+        );
         ansi_colors.insert(AnsiColor::BrightBlue, egui::Color32::from_rgb(59, 142, 234));
-        ansi_colors.insert(AnsiColor::BrightMagenta, egui::Color32::from_rgb(214, 112, 214));
+        ansi_colors.insert(
+            AnsiColor::BrightMagenta,
+            egui::Color32::from_rgb(214, 112, 214),
+        );
         ansi_colors.insert(AnsiColor::BrightCyan, egui::Color32::from_rgb(41, 184, 219));
         ansi_colors.insert(AnsiColor::BrightWhite, egui::Color32::from_rgb(0, 0, 0));
 
@@ -477,13 +552,14 @@ mod tests {
 
         // Add something to cache
         let cache_key = "test".to_string();
-        renderer.render_cache.insert(cache_key.clone(),
+        renderer.render_cache.insert(
+            cache_key.clone(),
             RenderedText {
                 layout: egui::epaint::text::LayoutJob::default(),
                 dimensions: egui::Vec2::new(100.0, 20.0),
                 has_formatting: false,
                 ansi_code_count: 0,
-            }
+            },
         );
 
         assert_eq!(renderer.render_cache.len(), 1);
@@ -514,7 +590,10 @@ mod tests {
     #[test]
     fn test_utils_create_light_theme() {
         let light_scheme = utils::create_light_theme();
-        assert_ne!(light_scheme.default_text, utils::create_dark_theme().default_text);
+        assert_ne!(
+            light_scheme.default_text,
+            utils::create_dark_theme().default_text
+        );
     }
 
     #[test]
@@ -543,6 +622,9 @@ mod tests {
 
         renderer.add_custom_color("custom", custom_color);
 
-        assert_eq!(renderer.color_scheme.custom_colors.get("custom"), Some(&custom_color));
+        assert_eq!(
+            renderer.color_scheme.custom_colors.get("custom"),
+            Some(&custom_color)
+        );
     }
 }

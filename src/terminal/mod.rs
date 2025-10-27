@@ -4,24 +4,27 @@
 //! for processing commands and managing terminal state.
 
 pub mod ansi_parser;
-pub mod state;
 pub mod input;
 pub mod output;
 pub mod prompt;
+pub mod state;
 
 // Re-exports for convenience
-pub use ansi_parser::{AnsiParser, ParsedText, AnsiColor, AnsiAttribute};
-pub use state::{TerminalState, Cursor, TerminalDimensions, TerminalMode, ScreenBuffer, BufferLine, TerminalStatus};
-pub use input::{CommandInputProcessor, InputResult, validation};
-pub use output::{OutputProcessor, OutputChunk, StreamType, BufferStats, segmentation};
-pub use prompt::{PromptDetector, CommandCompletionDetector, utils as prompt_utils};
+pub use ansi_parser::{AnsiAttribute, AnsiColor, AnsiParser, ParsedText};
+pub use input::{validation, CommandInputProcessor, InputResult};
+pub use output::{segmentation, BufferStats, OutputChunk, OutputProcessor, StreamType};
+pub use prompt::{utils as prompt_utils, CommandCompletionDetector, PromptDetector};
+pub use state::{
+    BufferLine, Cursor, ScreenBuffer, TerminalDimensions, TerminalMode, TerminalState,
+    TerminalStatus,
+};
 
+use crate::error::Result;
+use crate::models::{OutputLine, ShellType, TerminalSession};
+use crate::pty::{PtyHandle, PtyManager};
+use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use chrono::Utc;
-use crate::error::Result;
-use crate::pty::{PtyManager, PtyHandle};
-use crate::models::{TerminalSession, OutputLine, ShellType};
 
 /// Main terminal emulator
 pub struct Terminal {
@@ -56,7 +59,11 @@ impl Terminal {
     }
 
     /// Create terminal with specific shell type
-    pub fn with_shell(session: TerminalSession, shell_type: ShellType, pty_manager: Arc<Mutex<PtyManager>>) -> Self {
+    pub fn with_shell(
+        session: TerminalSession,
+        shell_type: ShellType,
+        pty_manager: Arc<Mutex<PtyManager>>,
+    ) -> Self {
         let mut terminal = Self::new(session, pty_manager);
         terminal.prompt_detector = PromptDetector::with_shell(shell_type);
         terminal
@@ -72,30 +79,40 @@ impl Terminal {
         // Determine shell command and args based on shell type
         // Use arguments that prevent config file loading to ensure PS1 suppression works
         let (shell_command, shell_args) = match session.shell_type {
-            crate::models::ShellType::Bash => ("bash".to_string(), vec!["--norc".to_string(), "--noprofile".to_string()]),
+            crate::models::ShellType::Bash => (
+                "bash".to_string(),
+                vec!["--norc".to_string(), "--noprofile".to_string()],
+            ),
             crate::models::ShellType::Zsh => ("zsh".to_string(), vec!["-f".to_string()]), // -f = no .zshrc
             crate::models::ShellType::Fish => ("fish".to_string(), vec!["--no-config".to_string()]),
             crate::models::ShellType::Ksh => ("ksh".to_string(), vec![]),
             crate::models::ShellType::Csh => ("csh".to_string(), vec![]),
             crate::models::ShellType::Tcsh => ("tcsh".to_string(), vec![]),
             crate::models::ShellType::Dash => ("dash".to_string(), vec![]),
-            crate::models::ShellType::PowerShell => ("powershell".to_string(), vec!["-NoProfile".to_string()]),
+            crate::models::ShellType::PowerShell => {
+                ("powershell".to_string(), vec!["-NoProfile".to_string()])
+            }
             crate::models::ShellType::Cmd => ("cmd".to_string(), vec![]),
             crate::models::ShellType::Other => ("sh".to_string(), vec![]), // Fallback to basic shell
         };
 
-        let handle = pty_manager.create_pty(
-            &shell_command,
-            &shell_args,
-            &session.environment,
-            Some(session.working_directory.as_path()),
-        ).await?;
+        let handle = pty_manager
+            .create_pty(
+                &shell_command,
+                &shell_args,
+                &session.environment,
+                Some(session.working_directory.as_path()),
+            )
+            .await?;
 
         // Store PTY handle and log
         let handle_id = handle.id.clone();
         self.pty_handle = Some(handle);
 
-        info!("Terminal session initialized with PTY handle: {}", handle_id);
+        info!(
+            "Terminal session initialized with PTY handle: {}",
+            handle_id
+        );
         Ok(())
     }
 
@@ -103,7 +120,10 @@ impl Terminal {
     pub fn initialize_with_pty(&mut self, handle: PtyHandle) -> Result<()> {
         let handle_id = handle.id.clone();
         self.pty_handle = Some(handle);
-        info!("Terminal initialized with existing PTY handle: {}", handle_id);
+        info!(
+            "Terminal initialized with existing PTY handle: {}",
+            handle_id
+        );
         Ok(())
     }
 
@@ -134,7 +154,8 @@ impl Terminal {
                 }
                 _ => {
                     // Update terminal state with current command
-                    self.state.set_current_command(self.input_processor.current_command().to_string());
+                    self.state
+                        .set_current_command(self.input_processor.current_command().to_string());
                 }
             }
         }
@@ -154,7 +175,9 @@ impl Terminal {
 
         // Create command block
         let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
-        let command_block = self.input_processor.create_command_block(command, &working_dir);
+        let command_block = self
+            .input_processor
+            .create_command_block(command, &working_dir);
 
         // Add to history
         self.state.add_command_to_history(command_block.clone());
@@ -162,14 +185,20 @@ impl Terminal {
         // Send to PTY if available
         if let Some(handle) = &self.pty_handle {
             let mut manager = self.pty_manager.lock().await;
-            self.input_processor.send_command(&mut manager, handle, command).await?;
+            self.input_processor
+                .send_command(&mut manager, handle, command)
+                .await?;
         }
 
         Ok(InputResult::CommandReady(command.to_string()))
     }
 
     /// Process output from PTY
-    pub async fn process_output(&mut self, data: &[u8], stream_type: StreamType) -> Result<Vec<OutputLine>> {
+    pub async fn process_output(
+        &mut self,
+        data: &[u8],
+        stream_type: StreamType,
+    ) -> Result<Vec<OutputLine>> {
         let chunk = OutputChunk {
             data: data.to_vec(),
             timestamp: Utc::now(),
@@ -301,7 +330,9 @@ impl Terminal {
             // Process the chunk and return the lines
             self.output_processor.process_chunk(chunk)
         } else {
-            Err(crate::error::Error::Other("No PTY handle available".to_string()))
+            Err(crate::error::Error::Other(
+                "No PTY handle available".to_string(),
+            ))
         }
     }
 
@@ -372,7 +403,11 @@ impl TerminalFactory {
     }
 
     /// Create and initialize a terminal with specific shell
-    pub async fn create_and_initialize_with_shell(&self, session: TerminalSession, shell_type: ShellType) -> Result<Terminal> {
+    pub async fn create_and_initialize_with_shell(
+        &self,
+        session: TerminalSession,
+        shell_type: ShellType,
+    ) -> Result<Terminal> {
         let mut terminal = self.create_with_shell(session, shell_type);
         terminal.initialize_session().await?;
         Ok(terminal)
@@ -380,17 +415,20 @@ impl TerminalFactory {
 
     /// Create and initialize a bash terminal
     pub async fn create_and_initialize_bash(&self, session: TerminalSession) -> Result<Terminal> {
-        self.create_and_initialize_with_shell(session, ShellType::Bash).await
+        self.create_and_initialize_with_shell(session, ShellType::Bash)
+            .await
     }
 
     /// Create and initialize a zsh terminal
     pub async fn create_and_initialize_zsh(&self, session: TerminalSession) -> Result<Terminal> {
-        self.create_and_initialize_with_shell(session, ShellType::Zsh).await
+        self.create_and_initialize_with_shell(session, ShellType::Zsh)
+            .await
     }
 
     /// Create and initialize a fish terminal
     pub async fn create_and_initialize_fish(&self, session: TerminalSession) -> Result<Terminal> {
-        self.create_and_initialize_with_shell(session, ShellType::Fish).await
+        self.create_and_initialize_with_shell(session, ShellType::Fish)
+            .await
     }
 }
 
@@ -410,10 +448,7 @@ pub mod utils {
             _ => ShellType::Other,
         };
 
-        TerminalSession::new(
-            shell_type,
-            std::path::PathBuf::from(shell_path),
-        )
+        TerminalSession::new(shell_type, std::path::PathBuf::from(shell_path))
     }
 
     /// Check if terminal is ready for input
@@ -446,7 +481,10 @@ mod tests {
     use tokio;
 
     fn create_test_session() -> TerminalSession {
-        TerminalSession::new(crate::TerminalShellType::Bash, std::path::PathBuf::from("/bin/bash"))
+        TerminalSession::new(
+            crate::TerminalShellType::Bash,
+            std::path::PathBuf::from("/bin/bash"),
+        )
     }
 
     fn create_test_pty_manager() -> Arc<Mutex<PtyManager>> {
@@ -494,7 +532,7 @@ mod tests {
 
         // Should not be ready yet (no newline)
         match result {
-            InputResult::NoOp => {},
+            InputResult::NoOp => {}
             _ => panic!("Expected NoOp for incomplete command"),
         }
     }
@@ -522,7 +560,9 @@ mod tests {
         let mut terminal = Terminal::new(session, pty_manager);
 
         // Set some state
-        terminal.input_processor.set_current_command("test".to_string());
+        terminal
+            .input_processor
+            .set_current_command("test".to_string());
 
         terminal.clear();
 

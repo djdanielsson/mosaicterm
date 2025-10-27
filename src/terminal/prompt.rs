@@ -2,9 +2,9 @@
 //!
 //! Detects shell prompts and command completion in terminal output.
 
-use regex::Regex;
 use crate::error::Result;
 use crate::models::{OutputLine, ShellType};
+use regex::Regex;
 
 /// Prompt detector for various shell types
 #[derive(Debug)]
@@ -24,7 +24,6 @@ pub struct PromptPattern {
     /// Regex pattern for prompt detection
     pattern: Regex,
 }
-
 
 impl PromptDetector {
     /// Create a new prompt detector
@@ -47,7 +46,6 @@ impl Default for PromptDetector {
 }
 
 impl PromptDetector {
-
     /// Create with specific shell type
     pub fn with_shell(shell_type: ShellType) -> Self {
         let mut detector = Self::new();
@@ -145,7 +143,8 @@ impl PromptDetector {
 
     /// Get prompt patterns for current shell
     pub fn get_patterns_for_shell(&self, shell_type: ShellType) -> Vec<&PromptPattern> {
-        self.prompt_patterns.iter()
+        self.prompt_patterns
+            .iter()
             .filter(|p| p.shell_type == shell_type)
             .collect()
     }
@@ -208,27 +207,22 @@ impl CommandCompletionDetector {
             Regex::new(r"^% $").unwrap(),
             Regex::new(r"^>$").unwrap(),
             Regex::new(r"^> $").unwrap(),
-            
             // Versioned shell prompts (with and without trailing space)
-            Regex::new(r"^bash-\d+\.\d+\$").unwrap(),     // bash-5.2$
-            Regex::new(r"^bash-\d+\.\d+\$ ").unwrap(),    // bash-5.2$ 
-            Regex::new(r"^zsh-\d+\.\d+%").unwrap(),       // zsh-5.8%
-            Regex::new(r"^zsh-\d+\.\d+% ").unwrap(),      // zsh-5.8% 
-            Regex::new(r"^fish-\d+\.\d+>").unwrap(),      // fish-3.4>
-            Regex::new(r"^fish-\d+\.\d+> ").unwrap(),     // fish-3.4> 
-            
+            Regex::new(r"^bash-\d+\.\d+\$").unwrap(), // bash-5.2$
+            Regex::new(r"^bash-\d+\.\d+\$ ").unwrap(), // bash-5.2$
+            Regex::new(r"^zsh-\d+\.\d+%").unwrap(),   // zsh-5.8%
+            Regex::new(r"^zsh-\d+\.\d+% ").unwrap(),  // zsh-5.8%
+            Regex::new(r"^fish-\d+\.\d+>").unwrap(),  // fish-3.4>
+            Regex::new(r"^fish-\d+\.\d+> ").unwrap(), // fish-3.4>
             // User@host style prompts
             Regex::new(r"^\[.*\]\$ $").unwrap(),
             Regex::new(r"^\[.*\]% $").unwrap(),
             Regex::new(r"^\[.*\]> $").unwrap(),
-            
             // PS1 style prompts with paths (very specific to avoid false positives)
-            Regex::new(r"^[~/][A-Za-z0-9/_.-]*\$ $").unwrap(),     // /path/to/dir$ or ~/path$
-            Regex::new(r"^[~/][A-Za-z0-9/_.-]*% $").unwrap(),      // /path/to/dir% or ~/path%
-            
+            Regex::new(r"^[~/][A-Za-z0-9/_.-]*\$ $").unwrap(), // /path/to/dir$ or ~/path$
+            Regex::new(r"^[~/][A-Za-z0-9/_.-]*% $").unwrap(),  // /path/to/dir% or ~/path%
             // Windows prompts
             Regex::new(r"^[A-Z]:\\.*>$").unwrap(),
-            
             // Colored prompt indicators (common ANSI stripped patterns)
             Regex::new(r"^\s*\$ $").unwrap(),
             Regex::new(r"^\s*% $").unwrap(),
@@ -237,10 +231,10 @@ impl CommandCompletionDetector {
 
         // Continuation patterns (indicate command still running)
         self.continuation_patterns.extend([
-            Regex::new(r"\\$").unwrap(),                  // Line continuation
-            Regex::new(r"^\s*>\s*$").unwrap(),           // Input redirection prompt
-            Regex::new(r"^\s*\?\s*$").unwrap(),          // Multi-line input prompt
-            Regex::new(r"^\s*\+\s*$").unwrap(),          // Continuation prompt
+            Regex::new(r"\\$").unwrap(),        // Line continuation
+            Regex::new(r"^\s*>\s*$").unwrap(),  // Input redirection prompt
+            Regex::new(r"^\s*\?\s*$").unwrap(), // Multi-line input prompt
+            Regex::new(r"^\s*\+\s*$").unwrap(), // Continuation prompt
         ]);
     }
 
@@ -258,7 +252,7 @@ impl CommandCompletionDetector {
                     return true;
                 }
             }
-            
+
             // Also check trimmed text for edge cases with whitespace
             let trimmed_text = last_line.text.trim();
             for pattern in &self.completion_patterns {
@@ -270,7 +264,7 @@ impl CommandCompletionDetector {
 
         false
     }
-    
+
     /// Check if a specific line looks like a shell prompt (for integration with PromptDetector)
     pub fn is_line_a_prompt(&self, line: &OutputLine) -> bool {
         let text = line.text.trim();
@@ -449,12 +443,30 @@ mod tests {
 
     #[test]
     fn test_shell_type_from_string() {
-        assert_eq!(PromptDetector::shell_type_from_string("bash"), ShellType::Bash);
-        assert_eq!(PromptDetector::shell_type_from_string("zsh"), ShellType::Zsh);
-        assert_eq!(PromptDetector::shell_type_from_string("fish"), ShellType::Fish);
-        assert_eq!(PromptDetector::shell_type_from_string("powershell"), ShellType::PowerShell);
-        assert_eq!(PromptDetector::shell_type_from_string("cmd"), ShellType::Cmd);
-        assert_eq!(PromptDetector::shell_type_from_string("unknown"), ShellType::Other);
+        assert_eq!(
+            PromptDetector::shell_type_from_string("bash"),
+            ShellType::Bash
+        );
+        assert_eq!(
+            PromptDetector::shell_type_from_string("zsh"),
+            ShellType::Zsh
+        );
+        assert_eq!(
+            PromptDetector::shell_type_from_string("fish"),
+            ShellType::Fish
+        );
+        assert_eq!(
+            PromptDetector::shell_type_from_string("powershell"),
+            ShellType::PowerShell
+        );
+        assert_eq!(
+            PromptDetector::shell_type_from_string("cmd"),
+            ShellType::Cmd
+        );
+        assert_eq!(
+            PromptDetector::shell_type_from_string("unknown"),
+            ShellType::Other
+        );
     }
 
     #[test]
@@ -500,10 +512,7 @@ mod tests {
     #[test]
     fn test_shell_type_detection() {
         let mut detector = PromptDetector::new();
-        let lines = vec![
-            create_test_line("Welcome to bash"),
-            create_test_line("$ "),
-        ];
+        let lines = vec![create_test_line("Welcome to bash"), create_test_line("$ ")];
 
         let detected = detector.detect_shell_type(&lines);
         assert_eq!(detected, ShellType::Bash);

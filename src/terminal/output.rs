@@ -3,13 +3,13 @@
 //! Processes terminal output, segments it into logical chunks,
 //! and handles ANSI escape sequence parsing.
 
-use std::collections::VecDeque;
-use chrono::{DateTime, Utc};
 use crate::error::Result;
-use crate::models::OutputLine;
 use crate::models::output_line::AnsiCode;
+use crate::models::OutputLine;
+use crate::pty::{PtyHandle, PtyManager};
 use crate::terminal::ansi_parser::{AnsiParser, ParsedText};
-use crate::pty::{PtyManager, PtyHandle};
+use chrono::{DateTime, Utc};
+use std::collections::VecDeque;
 
 /// Output processor for terminal streams
 #[derive(Debug)]
@@ -116,7 +116,12 @@ impl OutputProcessor {
     }
 
     /// Process raw data bytes
-    fn process_data(&mut self, data: &[u8], timestamp: DateTime<Utc>, stream_type: StreamType) -> Result<()> {
+    fn process_data(
+        &mut self,
+        data: &[u8],
+        timestamp: DateTime<Utc>,
+        stream_type: StreamType,
+    ) -> Result<()> {
         // Convert bytes to string, handling encoding errors
         let text = String::from_utf8_lossy(data);
 
@@ -144,7 +149,11 @@ impl OutputProcessor {
     }
 
     /// Process newline character
-    fn process_newline(&mut self, timestamp: DateTime<Utc>, _stream_type: StreamType) -> Result<()> {
+    fn process_newline(
+        &mut self,
+        timestamp: DateTime<Utc>,
+        _stream_type: StreamType,
+    ) -> Result<()> {
         if !self.current_line.is_empty() {
             // Parse ANSI codes if present
             let parsed = self.ansi_parser.parse(&self.current_line)?;
@@ -184,14 +193,20 @@ impl OutputProcessor {
         }
 
         // Check for various ANSI sequence terminators
-        sequence.chars().last().is_some_and(|c| {
-            matches!(c, 'm' | 'G' | 'H' | 'J' | 'K' | 'A' | 'B' | 'C' | 'D')
-        })
+        sequence
+            .chars()
+            .last()
+            .is_some_and(|c| matches!(c, 'm' | 'G' | 'H' | 'J' | 'K' | 'A' | 'B' | 'C' | 'D'))
     }
 
     /// Process complete ANSI sequence
     fn process_ansi_sequence(&mut self) -> Result<()> {
-        if let Some(code) = self.ansi_parser.parse(&self.current_line)?.ansi_codes.first() {
+        if let Some(code) = self
+            .ansi_parser
+            .parse(&self.current_line)?
+            .ansi_codes
+            .first()
+        {
             self.current_ansi_codes.push(code.clone());
         }
 
@@ -238,15 +253,18 @@ impl OutputProcessor {
 
         // Add any remaining content as a line
         if !self.current_line.is_empty() {
-            let parsed = self.ansi_parser.parse(&self.current_line).unwrap_or_else(|_| {
-                // Fallback if parsing fails
-                ParsedText {
-                    original_text: self.current_line.clone(),
-                    clean_text: self.current_line.clone(),
-                    ansi_codes: Vec::new(),
-                    position_map: Vec::new(),
-                }
-            });
+            let parsed = self
+                .ansi_parser
+                .parse(&self.current_line)
+                .unwrap_or_else(|_| {
+                    // Fallback if parsing fails
+                    ParsedText {
+                        original_text: self.current_line.clone(),
+                        clean_text: self.current_line.clone(),
+                        ansi_codes: Vec::new(),
+                        position_map: Vec::new(),
+                    }
+                });
 
             let output_line = OutputLine {
                 text: parsed.clean_text,
@@ -328,7 +346,10 @@ impl OutputProcessor {
 
         // Keep reading until we get no more data or hit max timeout
         while total_time < max_timeout_ms {
-            match self.read_and_process_output(pty_manager, handle, chunk_timeout).await {
+            match self
+                .read_and_process_output(pty_manager, handle, chunk_timeout)
+                .await
+            {
                 Ok(lines) if lines.is_empty() => {
                     // No more data available
                     break;
@@ -409,13 +430,7 @@ pub mod segmentation {
 
     /// Check if line contains a command prompt
     fn is_command_prompt(line: &OutputLine) -> bool {
-        let prompt_patterns = [
-            r"^\$",
-            r"^#",
-            r"^>",
-            r"bash-\d+\.\d+\$",
-            r"zsh-\d+\.\d+%",
-        ];
+        let prompt_patterns = [r"^\$", r"^#", r"^>", r"bash-\d+\.\d+\$", r"zsh-\d+\.\d+%"];
 
         for pattern in &prompt_patterns {
             if Regex::new(pattern).unwrap().is_match(&line.text) {

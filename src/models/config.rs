@@ -4,8 +4,8 @@
 //! This model handles all user-configurable settings including
 //! UI theme, terminal settings, and shell configuration.
 
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Main configuration structure for MosaicTerm
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -70,7 +70,10 @@ impl UiConfig {
             return Err(ConfigError::InvalidScrollbackLines(self.scrollback_lines));
         }
         if self.window_width < 400 || self.window_height < 300 {
-            return Err(ConfigError::InvalidWindowSize(self.window_width, self.window_height));
+            return Err(ConfigError::InvalidWindowSize(
+                self.window_width,
+                self.window_height,
+            ));
         }
         Ok(())
     }

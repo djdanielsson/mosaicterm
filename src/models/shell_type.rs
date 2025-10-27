@@ -73,18 +73,18 @@ impl ShellType {
     pub fn get_default_prompt_patterns(&self) -> Vec<String> {
         match self {
             ShellType::Bash => vec![
-                r"^\$ $".to_string(),           // Simple dollar prompt
-                r"^\[.*\]\$ $".to_string(),     // User@host prompt
-                r"^.*\$ $".to_string(),         // Generic dollar prompt
+                r"^\$ $".to_string(),       // Simple dollar prompt
+                r"^\[.*\]\$ $".to_string(), // User@host prompt
+                r"^.*\$ $".to_string(),     // Generic dollar prompt
             ],
             ShellType::Zsh => vec![
-                r"^% $".to_string(),            // Simple percent prompt
-                r"^\[.*\]% $".to_string(),      // User@host prompt
-                r"^.*% $".to_string(),          // Generic percent prompt
+                r"^% $".to_string(),       // Simple percent prompt
+                r"^\[.*\]% $".to_string(), // User@host prompt
+                r"^.*% $".to_string(),     // Generic percent prompt
             ],
             ShellType::Fish => vec![
-                r"^> $".to_string(),            // Simple arrow prompt
-                r"^.*> $".to_string(),          // Generic arrow prompt
+                r"^> $".to_string(),   // Simple arrow prompt
+                r"^.*> $".to_string(), // Generic arrow prompt
             ],
             _ => vec![r"^.*[$%>]$ $".to_string()], // Generic fallback
         }

@@ -3,8 +3,8 @@
 //! This module handles parsing and processing of ANSI escape sequences
 //! for proper display of colored and formatted terminal output.
 
-use regex::Regex;
 use crate::Result;
+use regex::Regex;
 
 /// ANSI escape sequence parser
 pub struct AnsiParser {
@@ -59,7 +59,7 @@ impl AnsiParser {
             // Process the escape sequence
             let escape_seq = mat.as_str();
             self.process_escape_sequence(escape_seq);
-            
+
             last_end = mat.end();
         }
 
@@ -94,15 +94,13 @@ impl AnsiParser {
         // Remove the ESC[ prefix and the final character
         let seq = seq.trim_start_matches('\x1b').trim_start_matches('[');
         let seq = seq.trim_end_matches(char::is_alphabetic);
-        
+
         if seq.is_empty() {
             return;
         }
 
         // Split by semicolon to get individual codes
-        let codes: Vec<u32> = seq.split(';')
-            .filter_map(|s| s.parse().ok())
-            .collect();
+        let codes: Vec<u32> = seq.split(';').filter_map(|s| s.parse().ok()).collect();
 
         for &code in &codes {
             match code {
@@ -156,30 +154,74 @@ impl AnsiParser {
     /// Convert ANSI color code to RGB
     fn ansi_color_to_rgb(code: u32) -> Color {
         match code {
-            0 => Color { r: 0, g: 0, b: 0 },         // Black
-            1 => Color { r: 128, g: 0, b: 0 },       // Red
-            2 => Color { r: 0, g: 128, b: 0 },       // Green
-            3 => Color { r: 128, g: 128, b: 0 },     // Yellow
-            4 => Color { r: 0, g: 0, b: 128 },       // Blue
-            5 => Color { r: 128, g: 0, b: 128 },     // Magenta
-            6 => Color { r: 0, g: 128, b: 128 },     // Cyan
-            7 => Color { r: 192, g: 192, b: 192 },   // White
-            _ => Color { r: 255, g: 255, b: 255 },   // Default
+            0 => Color { r: 0, g: 0, b: 0 },   // Black
+            1 => Color { r: 128, g: 0, b: 0 }, // Red
+            2 => Color { r: 0, g: 128, b: 0 }, // Green
+            3 => Color {
+                r: 128,
+                g: 128,
+                b: 0,
+            }, // Yellow
+            4 => Color { r: 0, g: 0, b: 128 }, // Blue
+            5 => Color {
+                r: 128,
+                g: 0,
+                b: 128,
+            }, // Magenta
+            6 => Color {
+                r: 0,
+                g: 128,
+                b: 128,
+            }, // Cyan
+            7 => Color {
+                r: 192,
+                g: 192,
+                b: 192,
+            }, // White
+            _ => Color {
+                r: 255,
+                g: 255,
+                b: 255,
+            }, // Default
         }
     }
 
     /// Convert ANSI bright color code to RGB
     fn ansi_bright_color_to_rgb(code: u32) -> Color {
         match code {
-            0 => Color { r: 128, g: 128, b: 128 },   // Bright Black (Gray)
-            1 => Color { r: 255, g: 0, b: 0 },       // Bright Red
-            2 => Color { r: 0, g: 255, b: 0 },       // Bright Green
-            3 => Color { r: 255, g: 255, b: 0 },     // Bright Yellow
-            4 => Color { r: 0, g: 0, b: 255 },       // Bright Blue
-            5 => Color { r: 255, g: 0, b: 255 },     // Bright Magenta
-            6 => Color { r: 0, g: 255, b: 255 },     // Bright Cyan
-            7 => Color { r: 255, g: 255, b: 255 },   // Bright White
-            _ => Color { r: 255, g: 255, b: 255 },   // Default
+            0 => Color {
+                r: 128,
+                g: 128,
+                b: 128,
+            }, // Bright Black (Gray)
+            1 => Color { r: 255, g: 0, b: 0 }, // Bright Red
+            2 => Color { r: 0, g: 255, b: 0 }, // Bright Green
+            3 => Color {
+                r: 255,
+                g: 255,
+                b: 0,
+            }, // Bright Yellow
+            4 => Color { r: 0, g: 0, b: 255 }, // Bright Blue
+            5 => Color {
+                r: 255,
+                g: 0,
+                b: 255,
+            }, // Bright Magenta
+            6 => Color {
+                r: 0,
+                g: 255,
+                b: 255,
+            }, // Bright Cyan
+            7 => Color {
+                r: 255,
+                g: 255,
+                b: 255,
+            }, // Bright White
+            _ => Color {
+                r: 255,
+                g: 255,
+                b: 255,
+            }, // Default
         }
     }
 }
@@ -232,7 +274,7 @@ mod tests {
     fn test_simple_color_parsing() {
         let mut parser = AnsiParser::new();
         let result = parser.parse("\x1b[31mred text\x1b[0m").unwrap();
-        
+
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].text, "red text");
         assert!(result[0].foreground_color.is_some());
@@ -242,7 +284,7 @@ mod tests {
     fn test_plain_text() {
         let mut parser = AnsiParser::new();
         let result = parser.parse("plain text").unwrap();
-        
+
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].text, "plain text");
         assert!(result[0].foreground_color.is_none());
@@ -252,7 +294,7 @@ mod tests {
     fn test_bold_text() {
         let mut parser = AnsiParser::new();
         let result = parser.parse("\x1b[1mbold text\x1b[0m").unwrap();
-        
+
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].text, "bold text");
         assert!(result[0].attributes.contains(&TextAttribute::Bold));

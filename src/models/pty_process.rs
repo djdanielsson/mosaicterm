@@ -6,8 +6,8 @@
 
 // Note: AsyncRead and AsyncWrite will be used when implementing actual PTY I/O
 // use tokio::io::{AsyncRead, AsyncWrite};
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Represents the state of a PTY process
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -92,9 +92,11 @@ impl PtyProcess {
     /// Get the execution duration if the process has terminated
     pub fn execution_duration(&self) -> Option<std::time::Duration> {
         match (self.start_time, self.end_time) {
-            (Some(start), Some(end)) => {
-                Some(end.signed_duration_since(start).to_std().unwrap_or_default())
-            }
+            (Some(start), Some(end)) => Some(
+                end.signed_duration_since(start)
+                    .to_std()
+                    .unwrap_or_default(),
+            ),
             _ => None,
         }
     }
@@ -114,12 +116,15 @@ impl PtyProcess {
 
         let pid_str = self.pid.map_or("N/A".to_string(), |pid| pid.to_string());
 
-        format!("{} [{}] - {} {} {}",
-                self.command,
-                pid_str,
-                state_str,
-                self.args.join(" "),
-                self.exit_code.map_or(String::new(), |code| format!("(exit: {})", code)))
+        format!(
+            "{} [{}] - {} {} {}",
+            self.command,
+            pid_str,
+            state_str,
+            self.args.join(" "),
+            self.exit_code
+                .map_or(String::new(), |code| format!("(exit: {})", code))
+        )
     }
 }
 

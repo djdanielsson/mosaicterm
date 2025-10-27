@@ -4,15 +4,17 @@
 //! handling process spawning, I/O streams, and signal management.
 
 pub mod manager;
-pub mod streams;
 pub mod process;
 pub mod signals;
+pub mod streams;
 
 // Re-exports for convenience
-pub use manager::{PtyManager, PtyHandle, PtyInfo};
+pub use manager::{PtyHandle, PtyInfo, PtyManager};
+pub use process::{
+    get_default_shell, get_user_shell, spawn_pty_process, validate_command, SpawnConfig,
+};
+pub use signals::{utils, Signal, SignalConfig, SignalHandler};
 pub use streams::{PtyStreams, StreamConfig, StreamStats};
-pub use process::{spawn_pty_process, SpawnConfig, validate_command, get_default_shell, get_user_shell};
-pub use signals::{SignalHandler, Signal, SignalConfig, utils};
 
 // Legacy compatibility exports
 pub use manager::PtyHandle as PtyHandleLegacy;
@@ -22,7 +24,11 @@ pub use manager::PtyInfo as PtyInfoLegacy;
 // These will be replaced with proper implementations once all modules are integrated
 
 /// Create a PTY process (legacy implementation)
-pub fn create_pty(command: &str, args: &[String], env: &std::collections::HashMap<String, String>) -> crate::error::Result<PtyHandle> {
+pub fn create_pty(
+    command: &str,
+    args: &[String],
+    env: &std::collections::HashMap<String, String>,
+) -> crate::error::Result<PtyHandle> {
     // Create a PTY manager instance
     let _manager = PtyManager::new();
 
@@ -48,7 +54,7 @@ pub fn create_pty(command: &str, args: &[String], env: &std::collections::HashMa
         // Note: This is a simplified implementation that doesn't actually spawn the process
         // In a real implementation, this would use the async manager
         let handle = PtyHandle::new();
-        
+
         // Store command info in the handle (this would normally be done by the manager)
         // For now, just return the handle
         Ok(handle)
@@ -111,9 +117,10 @@ pub fn get_pty_info(handle: &PtyHandle) -> crate::error::Result<PtyInfo> {
         // Return basic info for the handle
         Ok(PtyInfo {
             id: handle.id.clone(),
-            pid: None, // Would be populated from actual process
+            pid: None,                      // Would be populated from actual process
             command: "unknown".to_string(), // Would be stored when creating PTY
-            working_directory: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")),
+            working_directory: std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("/")),
             start_time: chrono::Utc::now(), // Would be stored when creating PTY
             is_alive: !handle.id.is_empty(),
         })

@@ -2,10 +2,10 @@
 //!
 //! Manages visual themes, colors, and styling for the MosaicTerm interface.
 
+use crate::error::{Error, Result};
+use eframe::egui;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use eframe::egui;
-use crate::error::{Error, Result};
 
 /// Theme manager for MosaicTerm
 #[derive(Debug, Clone)]
@@ -312,7 +312,8 @@ impl ThemeManager {
 
         // High Contrast Theme
         let high_contrast_theme = Self::create_high_contrast_theme();
-        self.themes.insert("high-contrast".to_string(), high_contrast_theme);
+        self.themes
+            .insert("high-contrast".to_string(), high_contrast_theme);
     }
 
     /// Create the default dark theme
@@ -599,13 +600,15 @@ impl ThemeManager {
 
     /// Get the current theme
     pub fn current_theme(&self) -> Result<&Theme> {
-        self.themes.get(&self.current_theme)
+        self.themes
+            .get(&self.current_theme)
             .ok_or_else(|| Error::Other(format!("Theme '{}' not found", self.current_theme)))
     }
 
     /// Get a mutable reference to the current theme
     pub fn current_theme_mut(&mut self) -> Result<&mut Theme> {
-        self.themes.get_mut(&self.current_theme)
+        self.themes
+            .get_mut(&self.current_theme)
             .ok_or_else(|| Error::Other(format!("Theme '{}' not found", self.current_theme)))
     }
 
@@ -622,7 +625,10 @@ impl ThemeManager {
     /// Add a custom theme
     pub fn add_theme(&mut self, theme: Theme) -> Result<()> {
         if self.themes.contains_key(&theme.name) {
-            return Err(Error::Other(format!("Theme '{}' already exists", theme.name)));
+            return Err(Error::Other(format!(
+                "Theme '{}' already exists",
+                theme.name
+            )));
         }
         self.themes.insert(theme.name.clone(), theme);
         Ok(())
@@ -760,10 +766,19 @@ impl ThemeManager {
         let mono_font = egui::FontId::monospace(theme.typography.terminal_size);
         let prop_font = egui::FontId::proportional(theme.typography.ui_size);
 
-        style.text_styles.insert(egui::TextStyle::Monospace, mono_font);
-        style.text_styles.insert(egui::TextStyle::Body, prop_font.clone());
-        style.text_styles.insert(egui::TextStyle::Button, prop_font.clone());
-        style.text_styles.insert(egui::TextStyle::Heading, egui::FontId::proportional(theme.typography.heading_size));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Monospace, mono_font);
+        style
+            .text_styles
+            .insert(egui::TextStyle::Body, prop_font.clone());
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, prop_font.clone());
+        style.text_styles.insert(
+            egui::TextStyle::Heading,
+            egui::FontId::proportional(theme.typography.heading_size),
+        );
 
         ctx.set_style(style);
 
@@ -777,24 +792,72 @@ impl ThemeManager {
         let mut ansi_colors = HashMap::new();
 
         // Basic ANSI colors
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::Black, theme.colors.ansi_colors.black.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::Red, theme.colors.ansi_colors.red.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::Green, theme.colors.ansi_colors.green.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::Yellow, theme.colors.ansi_colors.yellow.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::Blue, theme.colors.ansi_colors.blue.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::Magenta, theme.colors.ansi_colors.magenta.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::Cyan, theme.colors.ansi_colors.cyan.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::White, theme.colors.ansi_colors.white.to_egui());
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::Black,
+            theme.colors.ansi_colors.black.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::Red,
+            theme.colors.ansi_colors.red.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::Green,
+            theme.colors.ansi_colors.green.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::Yellow,
+            theme.colors.ansi_colors.yellow.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::Blue,
+            theme.colors.ansi_colors.blue.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::Magenta,
+            theme.colors.ansi_colors.magenta.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::Cyan,
+            theme.colors.ansi_colors.cyan.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::White,
+            theme.colors.ansi_colors.white.to_egui(),
+        );
 
         // Bright ANSI colors
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::BrightBlack, theme.colors.ansi_colors.bright_black.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::BrightRed, theme.colors.ansi_colors.bright_red.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::BrightGreen, theme.colors.ansi_colors.bright_green.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::BrightYellow, theme.colors.ansi_colors.bright_yellow.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::BrightBlue, theme.colors.ansi_colors.bright_blue.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::BrightMagenta, theme.colors.ansi_colors.bright_magenta.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::BrightCyan, theme.colors.ansi_colors.bright_cyan.to_egui());
-        ansi_colors.insert(crate::terminal::ansi_parser::AnsiColor::BrightWhite, theme.colors.ansi_colors.bright_white.to_egui());
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::BrightBlack,
+            theme.colors.ansi_colors.bright_black.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::BrightRed,
+            theme.colors.ansi_colors.bright_red.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::BrightGreen,
+            theme.colors.ansi_colors.bright_green.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::BrightYellow,
+            theme.colors.ansi_colors.bright_yellow.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::BrightBlue,
+            theme.colors.ansi_colors.bright_blue.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::BrightMagenta,
+            theme.colors.ansi_colors.bright_magenta.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::BrightCyan,
+            theme.colors.ansi_colors.bright_cyan.to_egui(),
+        );
+        ansi_colors.insert(
+            crate::terminal::ansi_parser::AnsiColor::BrightWhite,
+            theme.colors.ansi_colors.bright_white.to_egui(),
+        );
 
         Ok(crate::ui::text::ColorScheme {
             default_text: theme.colors.text.primary.to_egui(),
@@ -839,7 +902,10 @@ impl ThemeManager {
             "solarized_light" => self.apply_solarized_light_scheme(),
             "dracula" => self.apply_dracula_scheme(),
             "nord" => self.apply_nord_scheme(),
-            _ => Err(Error::Other(format!("Unknown color scheme: {}", scheme_name))),
+            _ => Err(Error::Other(format!(
+                "Unknown color scheme: {}",
+                scheme_name
+            ))),
         }
     }
 

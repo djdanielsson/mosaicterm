@@ -3,14 +3,14 @@
 //! This module handles command validation, parsing, and
 //! execution coordination between the UI and PTY layers.
 
+use crate::error::{Error, Result};
+use crate::models::{CommandBlock, TerminalSession};
+use crate::pty::{PtyHandle, PtyManager};
+use crate::terminal::input::{validation, CommandInputProcessor, InputResult};
+use regex::Regex;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
-use regex::Regex;
-use crate::error::{Error, Result};
-use crate::models::{CommandBlock, TerminalSession};
-use crate::terminal::input::{CommandInputProcessor, InputResult, validation};
-use crate::pty::{PtyManager, PtyHandle};
 
 /// Command execution context
 pub struct CommandContext {
@@ -90,11 +90,11 @@ impl CommandContext {
                 }
 
                 true
-            },
+            }
             crate::models::ShellType::Fish => {
                 // Fish has simpler syntax, mainly check for backslash
                 !trimmed.ends_with('\\')
-            },
+            }
             _ => {
                 // For other shells, basic check
                 !trimmed.ends_with('\\') && !trimmed.is_empty()
@@ -108,11 +108,11 @@ impl CommandContext {
             crate::models::ShellType::Bash | crate::models::ShellType::Zsh => {
                 // Handle bash/zsh specific features
                 self.process_bash_zsh_command(command)
-            },
+            }
             crate::models::ShellType::Fish => {
                 // Handle fish specific features
                 self.process_fish_command(command)
-            },
+            }
             _ => Ok(command.to_string()),
         }
     }
@@ -156,17 +156,17 @@ impl CommandContext {
         let prepared_command = self.prepare_command(command)?;
 
         // Create command block
-        let mut command_block = CommandBlock::new(
-            prepared_command.clone(),
-            self.working_directory.clone(),
-        );
+        let mut command_block =
+            CommandBlock::new(prepared_command.clone(), self.working_directory.clone());
 
         // Mark as running
         command_block.mark_running();
 
         // Send command to PTY
         let command_with_newline = format!("{}\n", prepared_command);
-        manager.send_input(handle, command_with_newline.as_bytes()).await?;
+        manager
+            .send_input(handle, command_with_newline.as_bytes())
+            .await?;
 
         // Add to history
         self.add_to_history(prepared_command);
@@ -201,7 +201,8 @@ impl CommandContext {
             Err(_) => return Vec::new(),
         };
 
-        self.history.iter()
+        self.history
+            .iter()
             .filter(|cmd| regex.is_match(cmd))
             .collect()
     }
@@ -210,7 +211,6 @@ impl CommandContext {
     pub fn get_last_command(&self) -> Option<&String> {
         self.history.last()
     }
-
 
     /// Execute command and collect output
     pub async fn execute_command_with_output(
@@ -224,7 +224,9 @@ impl CommandContext {
         let mut command_block = self.execute_command(manager, handle, command).await?;
 
         // Read output for a short period to collect initial response
-        let output_lines = output_processor.read_output_until_timeout(manager, handle, 1000).await?;
+        let output_lines = output_processor
+            .read_output_until_timeout(manager, handle, 1000)
+            .await?;
 
         // Add output lines to command block
         for line in output_lines {
@@ -290,12 +292,15 @@ impl CommandExecutor {
             match self.input_processor.process_char(ch) {
                 InputResult::CommandReady(command) => {
                     // Execute the command
-                    let command_block = self.context.execute_command(manager, handle, &command).await?;
+                    let command_block = self
+                        .context
+                        .execute_command(manager, handle, &command)
+                        .await?;
                     return Ok(Some(command_block));
-                },
+                }
                 InputResult::EmptyCommand => {
                     return Ok(None);
-                },
+                }
                 _ => {
                     // Continue processing input
                 }
@@ -333,10 +338,7 @@ mod tests {
 
     #[test]
     fn test_command_context_creation() {
-        let context = CommandContext::new(
-            PathBuf::from("/tmp"),
-            ShellType::Bash,
-        );
+        let context = CommandContext::new(PathBuf::from("/tmp"), ShellType::Bash);
 
         assert_eq!(context.working_directory(), &PathBuf::from("/tmp"));
         assert!(context.get_history().is_empty());
@@ -344,10 +346,7 @@ mod tests {
 
     #[test]
     fn test_command_validation() {
-        let context = CommandContext::new(
-            PathBuf::from("/tmp"),
-            ShellType::Bash,
-        );
+        let context = CommandContext::new(PathBuf::from("/tmp"), ShellType::Bash);
 
         assert!(context.prepare_command("echo hello").is_ok());
         assert!(context.prepare_command("").is_err());
@@ -356,10 +355,7 @@ mod tests {
 
     #[test]
     fn test_command_completion_check() {
-        let context = CommandContext::new(
-            PathBuf::from("/tmp"),
-            ShellType::Bash,
-        );
+        let context = CommandContext::new(PathBuf::from("/tmp"), ShellType::Bash);
 
         assert!(context.is_complete_command("echo hello"));
         assert!(!context.is_complete_command("echo hello \\"));
@@ -368,10 +364,7 @@ mod tests {
 
     #[test]
     fn test_history_management() {
-        let mut context = CommandContext::new(
-            PathBuf::from("/tmp"),
-            ShellType::Bash,
-        );
+        let mut context = CommandContext::new(PathBuf::from("/tmp"), ShellType::Bash);
 
         context.add_to_history("cmd1".to_string());
         context.add_to_history("cmd2".to_string());
@@ -382,10 +375,7 @@ mod tests {
 
     #[test]
     fn test_bash_history_expansion() {
-        let mut context = CommandContext::new(
-            PathBuf::from("/tmp"),
-            ShellType::Bash,
-        );
+        let mut context = CommandContext::new(PathBuf::from("/tmp"), ShellType::Bash);
 
         context.add_to_history("echo hello".to_string());
 
@@ -395,10 +385,7 @@ mod tests {
 
     #[test]
     fn test_command_executor_creation() {
-        let context = CommandContext::new(
-            PathBuf::from("/tmp"),
-            ShellType::Bash,
-        );
+        let context = CommandContext::new(PathBuf::from("/tmp"), ShellType::Bash);
 
         let executor = CommandExecutor::new(context);
         assert!(executor.current_input().is_empty());

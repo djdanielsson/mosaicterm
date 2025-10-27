@@ -3,9 +3,9 @@
 //! Parses ANSI escape sequences from terminal output, extracting formatting
 //! information and separating it from the actual text content.
 
-use regex::Regex;
 use crate::error::Result;
 use crate::models::output_line::AnsiCode;
+use regex::Regex;
 
 /// ANSI escape sequence parser
 #[derive(Debug)]
@@ -268,7 +268,8 @@ impl ParsedText {
 
     /// Get ANSI codes that affect a specific position
     pub fn get_codes_at(&self, position: usize) -> Vec<&AnsiCode> {
-        self.ansi_codes.iter()
+        self.ansi_codes
+            .iter()
             .filter(|code| code.position <= position)
             .collect()
     }
@@ -423,8 +424,14 @@ mod tests {
         assert_eq!(AnsiColor::from_ansi_code(1), Some(AnsiColor::Red));
         assert_eq!(AnsiColor::from_ansi_code(8), None);
 
-        assert_eq!(AnsiColor::from_bright_ansi_code(0), Some(AnsiColor::BrightBlack));
-        assert_eq!(AnsiColor::from_bright_ansi_code(7), Some(AnsiColor::BrightWhite));
+        assert_eq!(
+            AnsiColor::from_bright_ansi_code(0),
+            Some(AnsiColor::BrightBlack)
+        );
+        assert_eq!(
+            AnsiColor::from_bright_ansi_code(7),
+            Some(AnsiColor::BrightWhite)
+        );
     }
 
     #[test]

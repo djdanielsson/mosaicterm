@@ -2,10 +2,10 @@
 //!
 //! Provides intelligent auto-completion for commands, arguments, and file paths.
 
-use std::path::{Path, PathBuf};
+use crate::error::Result;
 use std::env;
 use std::fs;
-use crate::error::Result;
+use std::path::{Path, PathBuf};
 
 /// Completion provider for shell commands and paths
 #[derive(Debug, Clone)]
@@ -83,10 +83,10 @@ impl CompletionProvider {
     /// Get completions for the given input
     pub fn get_completions(&mut self, input: &str, working_dir: &Path) -> Result<CompletionResult> {
         let input_trimmed = input.trim();
-        
+
         // Parse the input to determine what to complete
         let parts: Vec<&str> = input_trimmed.split_whitespace().collect();
-        
+
         if parts.is_empty() {
             // No input - suggest common commands
             return Ok(CompletionResult {
@@ -117,7 +117,9 @@ impl CompletionProvider {
     fn complete_command(&mut self, prefix: &str) -> Result<CompletionResult> {
         self.refresh_command_cache_if_needed()?;
 
-        let suggestions: Vec<CompletionItem> = self.command_cache.iter()
+        let suggestions: Vec<CompletionItem> = self
+            .command_cache
+            .iter()
             .filter(|cmd| cmd.starts_with(prefix))
             .take(50) // Limit to 50 suggestions
             .map(|cmd| CompletionItem {
@@ -138,7 +140,7 @@ impl CompletionProvider {
     /// Complete a file or directory path
     fn complete_path(&self, prefix: &str, working_dir: &Path) -> Result<CompletionResult> {
         let (dir_path, file_prefix) = self.parse_path_prefix(prefix, working_dir);
-        
+
         let mut suggestions = Vec::new();
 
         // Read directory contents
@@ -183,17 +185,15 @@ impl CompletionProvider {
         }
 
         // Sort: directories first, then files, alphabetically within each group
-        suggestions.sort_by(|a, b| {
-            match (a.item_type, b.item_type) {
-                (CompletionItemType::Directory, CompletionItemType::Directory) |
-                (CompletionItemType::File, CompletionItemType::File) |
-                (CompletionItemType::Symlink, CompletionItemType::Symlink) => {
-                    a.text.to_lowercase().cmp(&b.text.to_lowercase())
-                }
-                (CompletionItemType::Directory, _) => std::cmp::Ordering::Less,
-                (_, CompletionItemType::Directory) => std::cmp::Ordering::Greater,
-                _ => a.text.to_lowercase().cmp(&b.text.to_lowercase()),
+        suggestions.sort_by(|a, b| match (a.item_type, b.item_type) {
+            (CompletionItemType::Directory, CompletionItemType::Directory)
+            | (CompletionItemType::File, CompletionItemType::File)
+            | (CompletionItemType::Symlink, CompletionItemType::Symlink) => {
+                a.text.to_lowercase().cmp(&b.text.to_lowercase())
             }
+            (CompletionItemType::Directory, _) => std::cmp::Ordering::Less,
+            (_, CompletionItemType::Directory) => std::cmp::Ordering::Greater,
+            _ => a.text.to_lowercase().cmp(&b.text.to_lowercase()),
         });
 
         // Limit suggestions
@@ -213,7 +213,7 @@ impl CompletionProvider {
         }
 
         let path = Path::new(prefix);
-        
+
         // Handle tilde expansion
         let expanded_path = if prefix.starts_with('~') {
             if let Some(home) = env::var_os("HOME") {
@@ -234,7 +234,8 @@ impl CompletionProvider {
         } else {
             // Split the last component
             if let Some(parent) = expanded_path.parent() {
-                let filename = expanded_path.file_name()
+                let filename = expanded_path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("")
                     .to_string();
@@ -247,7 +248,8 @@ impl CompletionProvider {
 
     /// Refresh the command cache if it's stale
     fn refresh_command_cache_if_needed(&mut self) -> Result<()> {
-        let should_refresh = self.cache_updated
+        let should_refresh = self
+            .cache_updated
             .map(|updated| updated.elapsed() > self.cache_timeout)
             .unwrap_or(true);
 
@@ -272,8 +274,10 @@ impl CompletionProvider {
                             {
                                 use std::os::unix::fs::PermissionsExt;
                                 if let Ok(metadata) = entry.metadata() {
-                                    if metadata.is_file() && (metadata.permissions().mode() & 0o111 != 0)
-                                        && !commands.contains(&filename) {
+                                    if metadata.is_file()
+                                        && (metadata.permissions().mode() & 0o111 != 0)
+                                        && !commands.contains(&filename)
+                                    {
                                         commands.push(filename);
                                     }
                                 }
@@ -284,11 +288,11 @@ impl CompletionProvider {
                                 // On Windows, check for common executable extensions
                                 if let Ok(metadata) = entry.metadata() {
                                     if metadata.is_file() {
-                                        let is_executable = filename.ends_with(".exe") ||
-                                            filename.ends_with(".bat") ||
-                                            filename.ends_with(".cmd") ||
-                                            filename.ends_with(".ps1");
-                                        
+                                        let is_executable = filename.ends_with(".exe")
+                                            || filename.ends_with(".bat")
+                                            || filename.ends_with(".cmd")
+                                            || filename.ends_with(".ps1");
+
                                         if is_executable && !commands.contains(&filename) {
                                             commands.push(filename);
                                         }
@@ -318,37 +322,49 @@ impl CompletionProvider {
     /// Get list of common shell built-in commands
     fn get_shell_builtins() -> Vec<String> {
         vec![
-            "cd", "ls", "pwd", "echo", "cat", "grep", "sed", "awk",
-            "find", "which", "whereis", "man", "help", "exit", "source",
-            "alias", "unalias", "export", "set", "unset", "history",
-            "pushd", "popd", "dirs", "fg", "bg", "jobs", "kill",
-            "clear", "printf", "read", "test", "true", "false",
-        ].into_iter().map(String::from).collect()
+            "cd", "ls", "pwd", "echo", "cat", "grep", "sed", "awk", "find", "which", "whereis",
+            "man", "help", "exit", "source", "alias", "unalias", "export", "set", "unset",
+            "history", "pushd", "popd", "dirs", "fg", "bg", "jobs", "kill", "clear", "printf",
+            "read", "test", "true", "false",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect()
     }
 
     /// Get list of common commands for empty input
     fn get_common_commands(&mut self) -> Vec<CompletionItem> {
         let common = vec![
-            "ls", "cd", "pwd", "cat", "echo", "grep", "find", "mkdir",
-            "rm", "cp", "mv", "touch", "chmod", "chown", "ps", "top",
-            "git", "vim", "nano", "make", "curl", "wget", "ssh", "scp",
+            "ls", "cd", "pwd", "cat", "echo", "grep", "find", "mkdir", "rm", "cp", "mv", "touch",
+            "chmod", "chown", "ps", "top", "git", "vim", "nano", "make", "curl", "wget", "ssh",
+            "scp",
         ];
 
-        common.into_iter().map(|cmd| CompletionItem {
-            text: cmd.to_string(),
-            label: cmd.to_string(),
-            item_type: CompletionItemType::Command,
-            description: None,
-        }).collect()
+        common
+            .into_iter()
+            .map(|cmd| CompletionItem {
+                text: cmd.to_string(),
+                label: cmd.to_string(),
+                item_type: CompletionItemType::Command,
+                description: None,
+            })
+            .collect()
     }
 
     /// Get command-specific argument completions (for special cases like cd)
-    pub fn get_argument_completions(&self, command: &str, arg: &str, working_dir: &Path) -> Result<CompletionResult> {
+    pub fn get_argument_completions(
+        &self,
+        command: &str,
+        arg: &str,
+        working_dir: &Path,
+    ) -> Result<CompletionResult> {
         match command {
             "cd" | "pushd" => {
                 // Only show directories for cd
                 let mut result = self.complete_path(arg, working_dir)?;
-                result.suggestions.retain(|item| item.item_type == CompletionItemType::Directory);
+                result
+                    .suggestions
+                    .retain(|item| item.item_type == CompletionItemType::Directory);
                 Ok(result)
             }
             _ => self.complete_path(arg, working_dir),
@@ -388,7 +404,11 @@ impl CompletionResult {
         let mut common = String::new();
 
         for (i, ch) in first.chars().enumerate() {
-            if self.suggestions.iter().all(|s| s.text.chars().nth(i) == Some(ch)) {
+            if self
+                .suggestions
+                .iter()
+                .all(|s| s.text.chars().nth(i) == Some(ch))
+            {
                 common.push(ch);
             } else {
                 break;
@@ -466,4 +486,3 @@ mod tests {
         assert_eq!(result.get_common_prefix(), Some("test".to_string()));
     }
 }
-

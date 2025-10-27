@@ -19,8 +19,7 @@ use mosaicterm::error::Result;
 use app::MosaicTermApp;
 
 /// Application configuration
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct AppArgs {
     /// Configuration file path
     config_path: Option<PathBuf>,
@@ -135,7 +134,9 @@ fn main() -> Result<()> {
     });
 
     // Initialize logging based on debug flag
-    let log_level = if args.debug || env::var("MOSAICTERM_DEBUG").is_ok_and(|v| v == "1" || v.to_lowercase() == "true") {
+    let log_level = if args.debug
+        || env::var("MOSAICTERM_DEBUG").is_ok_and(|v| v == "1" || v.to_lowercase() == "true")
+    {
         "debug"
     } else {
         "info"
@@ -175,11 +176,8 @@ fn main() -> Result<()> {
     println!("   - Bright colored rectangles around everything");
     println!("   If you don't see these, the GUI window might be hidden!");
 
-    if let Err(e) = eframe::run_native(
-        "MosaicTerm",
-        native_options,
-        Box::new(|_cc| Box::new(app)),
-    ) {
+    if let Err(e) = eframe::run_native("MosaicTerm", native_options, Box::new(|_cc| Box::new(app)))
+    {
         error!("💥 Application failed: {}", e);
         process::exit(1);
     }
@@ -192,7 +190,9 @@ fn main() -> Result<()> {
 fn load_configuration(args: &AppArgs) -> Result<RuntimeConfig> {
     info!("⚙️  Loading configuration...");
 
-    let config_path = args.config_path.clone()
+    let config_path = args
+        .config_path
+        .clone()
         .or_else(|| env::var("MOSAICTERM_CONFIG").ok().map(PathBuf::from));
 
     let mut runtime_config = if let Some(path) = &config_path {
@@ -242,7 +242,6 @@ fn create_application(_args: &AppArgs, runtime_config: RuntimeConfig) -> Result<
     Ok(app)
 }
 
-
 /// Create native options for the application window
 fn create_native_options(args: &AppArgs) -> Result<eframe::NativeOptions> {
     info!("🖼️  Setting up window...");
@@ -270,7 +269,8 @@ fn create_native_options(args: &AppArgs) -> Result<eframe::NativeOptions> {
     }
 
     // Additional window configuration
-    options.viewport = options.viewport
+    options.viewport = options
+        .viewport
         .with_resizable(true)
         .with_maximized(false)
         .with_fullscreen(false);
@@ -281,7 +281,6 @@ fn create_native_options(args: &AppArgs) -> Result<eframe::NativeOptions> {
     debug!("Window setup complete");
     Ok(options)
 }
-
 
 /// Create window icon
 fn create_window_icon() -> egui::IconData {
@@ -354,7 +353,6 @@ fn load_or_create_window_icon() -> egui::IconData {
     // Fallback
     create_window_icon()
 }
-
 
 #[cfg(test)]
 mod tests {

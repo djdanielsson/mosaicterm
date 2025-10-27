@@ -3,9 +3,9 @@
 //! This module manages the scrollable history region that displays
 //! past command blocks in the MosaicTerm interface.
 
+use crate::models::CommandBlock;
 use eframe::egui;
 use std::collections::HashMap;
-use crate::models::CommandBlock;
 
 /// Scrollable history component
 pub struct ScrollableHistory {
@@ -128,7 +128,12 @@ impl ScrollableHistory {
 
     /// Render command blocks with enhanced scrolling
     /// Returns information about context menu state: (block_id, position) if a context menu should be shown
-    pub fn render_command_blocks(&mut self, ui: &mut egui::Ui, command_blocks: &[CommandBlock], blocks_renderer: &mut crate::ui::CommandBlocks) -> Option<(String, egui::Pos2)> {
+    pub fn render_command_blocks(
+        &mut self,
+        ui: &mut egui::Ui,
+        command_blocks: &[CommandBlock],
+        blocks_renderer: &mut crate::ui::CommandBlocks,
+    ) -> Option<(String, egui::Pos2)> {
         // Calculate total content height for command blocks
         self.calculate_command_blocks_height(command_blocks);
 
@@ -145,7 +150,6 @@ impl ScrollableHistory {
         });
 
         let mut context_menu_info = None;
-
 
         scroll_area.show(ui, |ui| {
             ui.vertical(|ui| {
@@ -211,11 +215,8 @@ impl ScrollableHistory {
         // Block container
         let block_rect = ui.available_rect_before_wrap();
         let block_response = ui.allocate_rect(
-            egui::Rect::from_min_size(
-                block_rect.min,
-                egui::vec2(block_rect.width(), height)
-            ),
-            egui::Sense::click()
+            egui::Rect::from_min_size(block_rect.min, egui::vec2(block_rect.width(), height)),
+            egui::Sense::click(),
         );
 
         // Handle hover and selection
@@ -237,20 +238,28 @@ impl ScrollableHistory {
             egui::Color32::from_rgb(60, 60, 80)
         };
 
-        ui.painter().rect_stroke(block_response.rect, 4.0, egui::Stroke::new(1.0, border_color));
+        ui.painter().rect_stroke(
+            block_response.rect,
+            4.0,
+            egui::Stroke::new(1.0, border_color),
+        );
 
         // Block content
         ui.allocate_ui_at_rect(block_response.rect.shrink(8.0), |ui| {
             ui.vertical(|ui| {
                 // Block header with index
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!("[{}]", index + 1))
-                        .font(egui::FontId::monospace(10.0))
-                        .color(egui::Color32::LIGHT_GRAY));
+                    ui.label(
+                        egui::RichText::new(format!("[{}]", index + 1))
+                            .font(egui::FontId::monospace(10.0))
+                            .color(egui::Color32::LIGHT_GRAY),
+                    );
 
-                    ui.label(egui::RichText::new(block)
-                        .font(egui::FontId::monospace(12.0))
-                        .color(egui::Color32::WHITE));
+                    ui.label(
+                        egui::RichText::new(block)
+                            .font(egui::FontId::monospace(12.0))
+                            .color(egui::Color32::WHITE),
+                    );
                 });
             });
         });
@@ -267,24 +276,28 @@ impl ScrollableHistory {
 
         // Scrollbar area
         let scrollbar_rect = egui::Rect::from_min_max(
-            egui::pos2(available_rect.max.x - self.scrollbar_config.width, available_rect.min.y),
-            available_rect.max
+            egui::pos2(
+                available_rect.max.x - self.scrollbar_config.width,
+                available_rect.min.y,
+            ),
+            available_rect.max,
         );
 
         // Scrollbar background
-        ui.painter().rect_filled(
-            scrollbar_rect,
-            0.0,
-            self.scrollbar_config.background_color
-        );
+        ui.painter()
+            .rect_filled(scrollbar_rect, 0.0, self.scrollbar_config.background_color);
 
         // Calculate handle size and position
-        let handle_height = (self.viewport_height / self.total_height).min(1.0) * scrollbar_rect.height();
+        let handle_height =
+            (self.viewport_height / self.total_height).min(1.0) * scrollbar_rect.height();
         let handle_y = self.scroll_position * (scrollbar_rect.height() - handle_height);
 
         let handle_rect = egui::Rect::from_min_max(
             egui::pos2(scrollbar_rect.min.x, scrollbar_rect.min.y + handle_y),
-            egui::pos2(scrollbar_rect.max.x, scrollbar_rect.min.y + handle_y + handle_height)
+            egui::pos2(
+                scrollbar_rect.max.x,
+                scrollbar_rect.min.y + handle_y + handle_height,
+            ),
         );
 
         // Handle interaction
@@ -353,7 +366,9 @@ impl ScrollableHistory {
     fn calculate_command_block_height(&self, block: &CommandBlock) -> f32 {
         // Estimate height based on command and output content
         let command_lines = (block.command.len() as f32 / 80.0).ceil().max(1.0);
-        let output_lines = block.output.iter()
+        let output_lines = block
+            .output
+            .iter()
             .map(|line| (line.text.len() as f32 / 80.0).ceil().max(1.0))
             .sum::<f32>();
 
@@ -427,8 +442,7 @@ impl ScrollableHistory {
     /// Scroll by a delta amount
     pub fn scroll_by(&mut self, delta: f32) {
         if self.smooth_scrolling {
-            let target_pos = (self.scroll_position + delta / self.total_height)
-                .clamp(0.0, 1.0);
+            let target_pos = (self.scroll_position + delta / self.total_height).clamp(0.0, 1.0);
             self.animate_to_position(target_pos);
         } else {
             let position_delta = delta / self.total_height;
@@ -523,7 +537,8 @@ impl ScrollableHistory {
             position: self.scroll_position,
             scrolling: self.scroll_velocity.abs() > 0.01,
             scrollbar_visible: self.needs_scrollbar(),
-            content_offset: self.scroll_position * (self.total_height - self.viewport_height).max(0.0),
+            content_offset: self.scroll_position
+                * (self.total_height - self.viewport_height).max(0.0),
         }
     }
 

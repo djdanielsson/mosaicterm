@@ -4,11 +4,11 @@
 //! This is a core domain entity that encapsulates command execution
 //! results with ANSI formatting support.
 
-use std::time::Duration;
-use std::path::PathBuf;
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::time::Duration;
+use uuid::Uuid;
 
 use crate::models::OutputLine;
 

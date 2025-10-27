@@ -3,12 +3,12 @@
 //! Handles loading and saving configuration files from various locations
 //! with support for multiple formats and fallback mechanisms.
 
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::fs;
-use std::env;
-use crate::error::{Error, Result};
 use super::Config;
+use crate::error::{Error, Result};
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Configuration file loader
 pub struct ConfigLoader {
@@ -95,13 +95,17 @@ impl ConfigLoader {
             }
             Ok(config)
         } else {
-            Err(Error::Other("No configuration file found and create_default is false".to_string()))
+            Err(Error::Other(
+                "No configuration file found and create_default is false".to_string(),
+            ))
         }
     }
 
     /// Save configuration to the current path or default location
     pub fn save(&self, config: &Config) -> Result<PathBuf> {
-        let path = self.current_path.clone()
+        let path = self
+            .current_path
+            .clone()
             .unwrap_or_else(Self::get_default_config_path);
 
         // Ensure parent directory exists
@@ -149,7 +153,11 @@ impl ConfigLoader {
                         Ok(config) => return Ok(Some((config_path, config))),
                         Err(e) => {
                             // Log warning but continue searching
-                            eprintln!("Failed to load config from {}: {}", config_path.display(), e);
+                            eprintln!(
+                                "Failed to load config from {}: {}",
+                                config_path.display(),
+                                e
+                            );
                             continue;
                         }
                     }
@@ -165,19 +173,13 @@ impl ConfigLoader {
         let content = fs::read_to_string(path)?;
 
         match format {
-            ConfigFormat::Toml => {
-                toml::from_str(&content)
-                    .map_err(|e| Error::Other(format!("Failed to parse TOML config: {}", e)))
-            }
-            ConfigFormat::Json => {
-                serde_json::from_str(&content)
-                    .map_err(|e| Error::Other(format!("Failed to parse JSON config: {}", e)))
-            }
+            ConfigFormat::Toml => toml::from_str(&content)
+                .map_err(|e| Error::Other(format!("Failed to parse TOML config: {}", e))),
+            ConfigFormat::Json => serde_json::from_str(&content)
+                .map_err(|e| Error::Other(format!("Failed to parse JSON config: {}", e))),
             #[cfg(feature = "yaml")]
-            ConfigFormat::Yaml => {
-                serde_yaml::from_str(&content)
-                    .map_err(|e| Error::Other(format!("Failed to parse YAML config: {}", e)))
-            }
+            ConfigFormat::Yaml => serde_yaml::from_str(&content)
+                .map_err(|e| Error::Other(format!("Failed to parse YAML config: {}", e))),
         }
     }
 
@@ -324,7 +326,9 @@ mod tests {
         let paths = ConfigLoader::get_search_paths();
         assert!(!paths.is_empty());
         // Should contain user config directory
-        assert!(paths.iter().any(|p| p.to_string_lossy().contains("mosaicterm")));
+        assert!(paths
+            .iter()
+            .any(|p| p.to_string_lossy().contains("mosaicterm")));
     }
 
     #[test]
@@ -339,8 +343,20 @@ mod tests {
         let loader = ConfigLoader::new();
         let base = PathBuf::from("test");
 
-        assert_eq!(loader.get_config_path_for_format(&base, ConfigFormat::Toml).extension().unwrap(), "toml");
-        assert_eq!(loader.get_config_path_for_format(&base, ConfigFormat::Json).extension().unwrap(), "json");
+        assert_eq!(
+            loader
+                .get_config_path_for_format(&base, ConfigFormat::Toml)
+                .extension()
+                .unwrap(),
+            "toml"
+        );
+        assert_eq!(
+            loader
+                .get_config_path_for_format(&base, ConfigFormat::Json)
+                .extension()
+                .unwrap(),
+            "json"
+        );
     }
 
     #[test]
@@ -371,7 +387,9 @@ mod tests {
         assert!(config_path.exists());
 
         // Load config
-        let loaded = loader.load_config_file(&config_path, ConfigFormat::Toml).unwrap();
+        let loaded = loader
+            .load_config_file(&config_path, ConfigFormat::Toml)
+            .unwrap();
 
         // Compare (simplified check)
         assert_eq!(config.ui.font_size, loaded.ui.font_size);

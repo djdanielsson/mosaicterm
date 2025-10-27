@@ -5,8 +5,8 @@
 //! along with the actual text content.
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 /// ANSI escape sequence representation
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,14 +28,18 @@ impl AnsiCode {
 
     /// Check if this is a color code
     pub fn is_color_code(&self) -> bool {
-        self.code.contains("[3") || self.code.contains("[4") ||
-        self.code.contains("[9") || self.code.contains("[10")
+        self.code.contains("[3")
+            || self.code.contains("[4")
+            || self.code.contains("[9")
+            || self.code.contains("[10")
     }
 
     /// Check if this is a formatting code (bold, italic, etc.)
     pub fn is_formatting_code(&self) -> bool {
-        self.code.contains("[1") || self.code.contains("[2") ||
-        self.code.contains("[4") || self.code.contains("[7")
+        self.code.contains("[1")
+            || self.code.contains("[2")
+            || self.code.contains("[4")
+            || self.code.contains("[7")
     }
 
     /// Check if this is a reset code
@@ -153,12 +157,18 @@ impl OutputLine {
 
     /// Get all color codes in this line
     pub fn get_color_codes(&self) -> Vec<&AnsiCode> {
-        self.ansi_codes.iter().filter(|code| code.is_color_code()).collect()
+        self.ansi_codes
+            .iter()
+            .filter(|code| code.is_color_code())
+            .collect()
     }
 
     /// Get all formatting codes in this line
     pub fn get_formatting_codes(&self) -> Vec<&AnsiCode> {
-        self.ansi_codes.iter().filter(|code| code.is_formatting_code()).collect()
+        self.ansi_codes
+            .iter()
+            .filter(|code| code.is_formatting_code())
+            .collect()
     }
 
     /// Check if this line has color formatting
@@ -250,7 +260,7 @@ mod tests {
     fn test_line_formatting_detection() {
         let mut line = OutputLine::new("test".to_string(), 0);
         line.ansi_codes.push(AnsiCode::new("\x1b[31m")); // Color
-        line.ansi_codes.push(AnsiCode::new("\x1b[1m"));  // Bold
+        line.ansi_codes.push(AnsiCode::new("\x1b[1m")); // Bold
 
         assert!(line.has_ansi_formatting());
         assert!(line.has_colors());

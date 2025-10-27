@@ -2,8 +2,8 @@
 //!
 //! Displays auto-completion suggestions in a popup window below the input field.
 
+use crate::completion::{CompletionItem, CompletionResult};
 use eframe::egui;
-use crate::completion::{CompletionResult, CompletionItem};
 
 /// Completion popup state and rendering
 #[derive(Debug)]
@@ -54,7 +54,8 @@ impl CompletionPopup {
 
     /// Get selected completion item
     pub fn get_selected_item(&self) -> Option<&CompletionItem> {
-        self.completion_result.as_ref()
+        self.completion_result
+            .as_ref()
             .and_then(|result| result.suggestions.get(self.selected_index))
     }
 
@@ -97,10 +98,7 @@ impl CompletionPopup {
         let mut selected_completion = None;
 
         // Calculate popup position below the input field
-        let popup_pos = egui::pos2(
-            input_rect.left(),
-            input_rect.bottom() + 5.0,
-        );
+        let popup_pos = egui::pos2(input_rect.left(), input_rect.bottom() + 5.0);
 
         // Create popup window
         let _window_response = egui::Window::new("Completions")
@@ -122,14 +120,18 @@ impl CompletionPopup {
             .show(ctx, |ui| {
                 // Header with count
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!("📋 {} suggestions", result.len()))
-                        .font(egui::FontId::proportional(12.0))
-                        .color(egui::Color32::from_rgb(160, 160, 200)));
-                    
+                    ui.label(
+                        egui::RichText::new(format!("📋 {} suggestions", result.len()))
+                            .font(egui::FontId::proportional(12.0))
+                            .color(egui::Color32::from_rgb(160, 160, 200)),
+                    );
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(egui::RichText::new("Tab: select  ↑↓: navigate  Esc: close")
-                            .font(egui::FontId::proportional(10.0))
-                            .color(egui::Color32::from_rgb(120, 120, 140)));
+                        ui.label(
+                            egui::RichText::new("Tab: select  ↑↓: navigate  Esc: close")
+                                .font(egui::FontId::proportional(10.0))
+                                .color(egui::Color32::from_rgb(120, 120, 140)),
+                        );
                     });
                 });
 
@@ -148,80 +150,91 @@ impl CompletionPopup {
                     .max_height(dynamic_height)
                     .auto_shrink([false; 2])
                     .id_source("completion_scroll");
-                
+
                 scroll_area.show(ui, |ui| {
-                        // Show all suggestions, not just first 10
-                        for (idx, item) in result.suggestions.iter().enumerate() {
-                            let is_selected = idx == self.selected_index;
-                            
-                            // Create completion item frame
-                            let item_frame = if is_selected {
-                                egui::Frame::none()
-                                    .fill(egui::Color32::from_rgb(60, 80, 120))
-                                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 150, 255)))
-                                    .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                    .rounding(egui::Rounding::same(4.0))
-                            } else {
-                                egui::Frame::none()
-                                    .fill(egui::Color32::from_rgb(40, 40, 55))
-                                    .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                    .rounding(egui::Rounding::same(4.0))
-                            };
+                    // Show all suggestions, not just first 10
+                    for (idx, item) in result.suggestions.iter().enumerate() {
+                        let is_selected = idx == self.selected_index;
 
-                            let response = item_frame.show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    // Icon
-                                    ui.label(egui::RichText::new(item.get_icon())
-                                        .font(egui::FontId::proportional(14.0)));
-                                    
-                                    ui.add_space(6.0);
+                        // Create completion item frame
+                        let item_frame = if is_selected {
+                            egui::Frame::none()
+                                .fill(egui::Color32::from_rgb(60, 80, 120))
+                                .stroke(egui::Stroke::new(
+                                    1.0,
+                                    egui::Color32::from_rgb(100, 150, 255),
+                                ))
+                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                .rounding(egui::Rounding::same(4.0))
+                        } else {
+                            egui::Frame::none()
+                                .fill(egui::Color32::from_rgb(40, 40, 55))
+                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                                .rounding(egui::Rounding::same(4.0))
+                        };
 
-                                    // Completion text
-                                    let text_color = if is_selected {
-                                        egui::Color32::from_rgb(255, 255, 255)
-                                    } else {
-                                        egui::Color32::from_rgb(200, 200, 220)
-                                    };
+                        let response = item_frame.show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                // Icon
+                                ui.label(
+                                    egui::RichText::new(item.get_icon())
+                                        .font(egui::FontId::proportional(14.0)),
+                                );
 
-                                    ui.label(egui::RichText::new(&item.label)
+                                ui.add_space(6.0);
+
+                                // Completion text
+                                let text_color = if is_selected {
+                                    egui::Color32::from_rgb(255, 255, 255)
+                                } else {
+                                    egui::Color32::from_rgb(200, 200, 220)
+                                };
+
+                                ui.label(
+                                    egui::RichText::new(&item.label)
                                         .font(egui::FontId::monospace(13.0))
-                                        .color(text_color));
+                                        .color(text_color),
+                                );
 
-                                    // Description (if any)
-                                    if let Some(desc) = &item.description {
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            ui.label(egui::RichText::new(desc)
-                                                .font(egui::FontId::proportional(11.0))
-                                                .color(egui::Color32::from_rgb(140, 140, 160)));
-                                        });
-                                    }
-                                });
+                                // Description (if any)
+                                if let Some(desc) = &item.description {
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                egui::RichText::new(desc)
+                                                    .font(egui::FontId::proportional(11.0))
+                                                    .color(egui::Color32::from_rgb(140, 140, 160)),
+                                            );
+                                        },
+                                    );
+                                }
                             });
+                        });
 
-                            // Scroll to selected item
-                            if is_selected {
-                                ui.scroll_to_rect(response.response.rect, Some(egui::Align::Center));
-                            }
-
-                            // Handle mouse clicks
-                            if response.response.clicked() {
-                                selected_completion = Some(item.text.clone());
-                            }
-
-                            // Handle hover to update selection
-                            if response.response.hovered() && !is_selected {
-                                self.selected_index = idx;
-                            }
-
-                            ui.add_space(2.0);
+                        // Scroll to selected item
+                        if is_selected {
+                            ui.scroll_to_rect(response.response.rect, Some(egui::Align::Center));
                         }
 
-                    });
+                        // Handle mouse clicks
+                        if response.response.clicked() {
+                            selected_completion = Some(item.text.clone());
+                        }
+
+                        // Handle hover to update selection
+                        if response.response.hovered() && !is_selected {
+                            self.selected_index = idx;
+                        }
+
+                        ui.add_space(2.0);
+                    }
+                });
             });
 
         // Handle mouse clicks within the popup
         // Keyboard is handled in app.rs to prevent flickering
-        
+
         selected_completion
     }
 }
@@ -235,7 +248,7 @@ impl Default for CompletionPopup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::{CompletionType, CompletionItemType};
+    use crate::completion::{CompletionItemType, CompletionType};
 
     #[test]
     fn test_completion_popup_creation() {
@@ -248,16 +261,14 @@ mod tests {
     #[test]
     fn test_show_hide() {
         let mut popup = CompletionPopup::new();
-        
+
         let result = CompletionResult {
-            suggestions: vec![
-                CompletionItem {
-                    text: "test".to_string(),
-                    label: "test".to_string(),
-                    item_type: CompletionItemType::File,
-                    description: None,
-                }
-            ],
+            suggestions: vec![CompletionItem {
+                text: "test".to_string(),
+                label: "test".to_string(),
+                item_type: CompletionItemType::File,
+                description: None,
+            }],
             prefix: "te".to_string(),
             completion_type: CompletionType::Path,
         };
@@ -272,7 +283,7 @@ mod tests {
     #[test]
     fn test_navigation() {
         let mut popup = CompletionPopup::new();
-        
+
         let result = CompletionResult {
             suggestions: vec![
                 CompletionItem {
@@ -299,22 +310,21 @@ mod tests {
         };
 
         popup.show(result, egui::pos2(0.0, 0.0));
-        
+
         assert_eq!(popup.selected_index, 0);
-        
+
         popup.select_next();
         assert_eq!(popup.selected_index, 1);
-        
+
         popup.select_next();
         assert_eq!(popup.selected_index, 2);
-        
+
         popup.select_previous();
         assert_eq!(popup.selected_index, 1);
-        
+
         // Wrap around
         popup.select_next();
         popup.select_next();
         assert_eq!(popup.selected_index, 0);
     }
 }
-

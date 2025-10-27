@@ -37,8 +37,7 @@ impl PromptFormatter {
             .or_else(|_| env::var("USERPROFILE"))
             .unwrap_or_else(|_| "/".to_string());
 
-        let shell = env::var("SHELL")
-            .unwrap_or_else(|_| "sh".to_string());
+        let shell = env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
 
         // Format PWD (with tilde expansion for home directory)
         let pwd = if let Ok(stripped) = working_dir.strip_prefix(&home) {
@@ -161,4 +160,3 @@ mod tests {
         assert_eq!(formatter.format(), "$USER@$HOSTNAME:$PWD$ ");
     }
 }
-

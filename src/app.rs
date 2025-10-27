@@ -1,20 +1,20 @@
 //! Main application structure and state management
 
-use eframe::egui;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{info, error, debug, warn};
-use futures::executor;
 use arboard::Clipboard;
+use eframe::egui;
+use futures::executor;
+use mosaicterm::completion::CompletionProvider;
+use mosaicterm::config::{prompt::PromptFormatter, RuntimeConfig};
+use mosaicterm::error::Result;
+use mosaicterm::execution::DirectExecutor;
+use mosaicterm::models::{CommandBlock, ExecutionStatus};
+use mosaicterm::models::{ShellType as ModelShellType, TerminalSession};
 use mosaicterm::pty::PtyManager;
 use mosaicterm::terminal::{Terminal, TerminalFactory};
-use mosaicterm::execution::DirectExecutor;
-use mosaicterm::models::{TerminalSession, ShellType as ModelShellType};
-use mosaicterm::ui::{InputPrompt, ScrollableHistory, CommandBlocks, CompletionPopup};
-use mosaicterm::models::{CommandBlock, ExecutionStatus};
-use mosaicterm::config::{RuntimeConfig, prompt::PromptFormatter};
-use mosaicterm::error::Result;
-use mosaicterm::completion::CompletionProvider;
+use mosaicterm::ui::{CommandBlocks, CompletionPopup, InputPrompt, ScrollableHistory};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tracing::{debug, error, info, warn};
 
 /// Main MosaicTerm application
 pub struct MosaicTermApp {
@@ -59,8 +59,6 @@ pub struct AppState {
     status_message: Option<String>,
 }
 
-
-
 impl Default for AppState {
     fn default() -> Self {
         Self {
@@ -71,7 +69,6 @@ impl Default for AppState {
         }
     }
 }
-
 
 impl Default for MosaicTermApp {
     fn default() -> Self {
@@ -96,7 +93,10 @@ impl MosaicTermApp {
         let completion_popup = CompletionPopup::new();
 
         let runtime_config = RuntimeConfig::new().unwrap_or_else(|e| {
-            warn!("Failed to create runtime config: {}, using minimal config", e);
+            warn!(
+                "Failed to create runtime config: {}, using minimal config",
+                e
+            );
             // For now, panic on config creation failure - this should be handled better
             panic!("Failed to create runtime config: {}", e);
         });
@@ -181,12 +181,11 @@ impl MosaicTermApp {
         app
     }
 
-
     /// Initialize the terminal session
     /// Restart the PTY session (useful after killing interactive programs)
     pub async fn restart_pty_session(&mut self) -> Result<()> {
         info!("Restarting PTY session");
-        
+
         // Terminate the old PTY if it exists
         if let Some(terminal) = &self.terminal {
             if let Some(handle) = terminal.pty_handle() {
@@ -194,13 +193,13 @@ impl MosaicTermApp {
                 let _ = pty_manager.terminate_pty(handle).await;
             }
         }
-        
+
         // Clear the old terminal
         self.terminal = None;
-        
+
         // Re-initialize the terminal with the same configuration
         self.initialize_terminal().await?;
-        
+
         Ok(())
     }
 
@@ -213,21 +212,21 @@ impl MosaicTermApp {
             ModelShellType::Zsh => ModelShellType::Zsh,
             ModelShellType::Fish => ModelShellType::Fish,
             // Map other shell types to supported ones or use Other variant
-            ModelShellType::Ksh |
-            ModelShellType::Csh |
-            ModelShellType::Tcsh |
-            ModelShellType::Dash |
-            ModelShellType::PowerShell |
-            ModelShellType::Cmd => ModelShellType::Bash, // Default to bash
+            ModelShellType::Ksh
+            | ModelShellType::Csh
+            | ModelShellType::Tcsh
+            | ModelShellType::Dash
+            | ModelShellType::PowerShell
+            | ModelShellType::Cmd => ModelShellType::Bash, // Default to bash
             ModelShellType::Other => ModelShellType::Bash, // Default to bash for unknown shells
         };
 
         // Create terminal session configuration
         let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
-        
+
         // Create environment with prompt suppression
         let mut environment: std::collections::HashMap<String, String> = std::env::vars().collect();
-        
+
         // Suppress shell prompts by setting PS1 to empty for bash/zsh
         // This prevents prompts from appearing in output at all
         match shell_type {
@@ -236,35 +235,35 @@ impl MosaicTermApp {
                 environment.insert("PS2".to_string(), "".to_string()); // Also suppress continuation prompt
                 environment.insert("PS3".to_string(), "".to_string()); // Suppress select prompt
                 environment.insert("PS4".to_string(), "".to_string()); // Suppress debug prompt
-                // Prevent shells from being 'interactive' which can trigger config loading
+                                                                       // Prevent shells from being 'interactive' which can trigger config loading
                 environment.insert("TERM".to_string(), "dumb".to_string());
-            },
+            }
             ModelShellType::Fish => {
                 // For fish shell, we can disable the prompt via function
                 environment.insert("fish_prompt".to_string(), "".to_string());
                 environment.insert("TERM".to_string(), "dumb".to_string());
-            },
+            }
             ModelShellType::Ksh => {
                 environment.insert("PS1".to_string(), "".to_string());
                 environment.insert("TERM".to_string(), "dumb".to_string());
-            },
+            }
             ModelShellType::Csh | ModelShellType::Tcsh => {
                 environment.insert("prompt".to_string(), "".to_string());
                 environment.insert("TERM".to_string(), "dumb".to_string());
-            },
+            }
             ModelShellType::Dash => {
                 environment.insert("PS1".to_string(), "".to_string());
                 environment.insert("TERM".to_string(), "dumb".to_string());
-            },
+            }
             ModelShellType::PowerShell => {
                 // PowerShell doesn't have PS1, but we can set a minimal prompt
                 environment.insert("PROMPT".to_string(), "".to_string());
                 environment.insert("TERM".to_string(), "dumb".to_string());
-            },
+            }
             ModelShellType::Cmd => {
                 // Windows CMD doesn't have environment-based prompt suppression
                 environment.insert("TERM".to_string(), "dumb".to_string());
-            },
+            }
             ModelShellType::Other => {
                 // For unknown shells, try PS1 suppression as fallback
                 environment.insert("PS1".to_string(), "".to_string());
@@ -274,12 +273,8 @@ impl MosaicTermApp {
                 environment.insert("TERM".to_string(), "dumb".to_string());
             }
         }
-        
-        let session = TerminalSession::with_environment(
-            shell_type,
-            working_dir,
-            environment
-        );
+
+        let session = TerminalSession::with_environment(shell_type, working_dir, environment);
 
         // Create and initialize terminal
         let terminal = self.terminal_factory.create_and_initialize(session).await?;
@@ -305,7 +300,7 @@ impl MosaicTermApp {
         if self.is_interactive_command(&command) {
             warn!("Interactive command detected: {}", command);
             self.set_status_message(Some(format!(
-                "⚠️  '{}' is an interactive program and may not work correctly in block mode", 
+                "⚠️  '{}' is an interactive program and may not work correctly in block mode",
                 self.get_command_name(&command)
             )));
         }
@@ -316,23 +311,26 @@ impl MosaicTermApp {
         // Check if we should use direct execution (faster, cleaner)
         if DirectExecutor::should_use_direct_execution(&command) {
             info!("Using direct execution for command: {}", command);
-            
+
             // For now, fallback to PTY execution to avoid async issues
             // TODO: Implement proper async execution in background thread
             info!("Temporarily falling back to PTY execution");
         }
 
         info!("Using PTY execution for command: {}", command);
-        
+
         // Create command block and add to history first
-        let working_dir = self.terminal.as_ref()
+        let working_dir = self
+            .terminal
+            .as_ref()
             .map(|t| t.get_working_directory().to_path_buf())
-            .unwrap_or_else(|| std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("/")));
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"))
+            });
         let mut command_block = CommandBlock::new(command.clone(), working_dir.clone());
         command_block.mark_running();
         self.command_history.push(command_block);
-        
+
         // Record command execution time for timeout detection
         self.last_command_time = Some(std::time::Instant::now());
 
@@ -359,24 +357,26 @@ impl MosaicTermApp {
         Ok(())
     }
 
-
     /// Update working directory if command is a cd command
     fn update_working_directory_if_cd(&mut self, command: &str) {
         let trimmed = command.trim();
-        
+
         // Parse cd command (handle various forms: cd, cd -, cd ~, cd /path, etc.)
-        if !trimmed.starts_with("cd") && !trimmed.starts_with("pushd") && !trimmed.starts_with("popd") {
+        if !trimmed.starts_with("cd")
+            && !trimmed.starts_with("pushd")
+            && !trimmed.starts_with("popd")
+        {
             return;
         }
-        
+
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
         if parts.is_empty() || (parts[0] != "cd" && parts[0] != "pushd" && parts[0] != "popd") {
             return;
         }
-        
+
         if let Some(terminal) = &mut self.terminal {
             let current_dir = terminal.get_working_directory().to_path_buf();
-            
+
             let new_dir = if parts.len() == 1 || (parts[0] == "cd" && parts.len() == 1) {
                 // cd with no arguments goes to home
                 if let Some(home) = std::env::var_os("HOME") {
@@ -408,7 +408,7 @@ impl MosaicTermApp {
                 // cd relative/path
                 current_dir.join(parts[1])
             };
-            
+
             // Canonicalize and update if valid
             if let Ok(canonical) = new_dir.canonicalize() {
                 if canonical.is_dir() {
@@ -426,7 +426,10 @@ impl MosaicTermApp {
         if let Some(terminal) = &self.terminal {
             let working_dir = terminal.get_working_directory();
             let rendered_prompt = self.prompt_formatter.render(working_dir);
-            debug!("Updated prompt to: '{}' (working_dir: {:?})", rendered_prompt, working_dir);
+            debug!(
+                "Updated prompt to: '{}' (working_dir: {:?})",
+                rendered_prompt, working_dir
+            );
             self.input_prompt.set_prompt(&rendered_prompt);
         }
     }
@@ -434,32 +437,42 @@ impl MosaicTermApp {
     /// Check if a command is interactive (TUI-based) and may not work well in block mode
     fn is_interactive_command(&self, command: &str) -> bool {
         let cmd_name = self.get_command_name(command);
-        
+
         // List of known interactive TUI programs
         let interactive_programs = vec![
-            "vim", "vi", "nvim", "emacs", "nano", "pico",  // Text editors
-            "htop", "top", "atop", "iotop",                 // System monitors
-            "less", "more",                                  // Pagers
-            "man",                                           // Manual pager
-            "tmux", "screen",                                // Terminal multiplexers
-            "mutt", "alpine",                                // Email clients
-            "mc", "ranger", "nnn",                           // File managers
-            "tig",                                           // Git TUI
-            "gitui",                                         // Git TUI
-            "nethack", "cmatrix",                            // Games/fun
-            "menuconfig",                                    // Config menus
+            "vim",
+            "vi",
+            "nvim",
+            "emacs",
+            "nano",
+            "pico", // Text editors
+            "htop",
+            "top",
+            "atop",
+            "iotop", // System monitors
+            "less",
+            "more", // Pagers
+            "man",  // Manual pager
+            "tmux",
+            "screen", // Terminal multiplexers
+            "mutt",
+            "alpine", // Email clients
+            "mc",
+            "ranger",
+            "nnn",   // File managers
+            "tig",   // Git TUI
+            "gitui", // Git TUI
+            "nethack",
+            "cmatrix",    // Games/fun
+            "menuconfig", // Config menus
         ];
-        
+
         interactive_programs.iter().any(|&prog| cmd_name == prog)
     }
 
     /// Extract the command name from a command line
     fn get_command_name(&self, command: &str) -> String {
-        command
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .to_string()
+        command.split_whitespace().next().unwrap_or("").to_string()
     }
 
     /// Update application state
@@ -477,7 +490,6 @@ impl MosaicTermApp {
         debug!("UI components updated");
     }
 
-
     /// Set status message
     pub fn set_status_message(&mut self, message: Option<String>) {
         self.state.status_message = message;
@@ -486,15 +498,19 @@ impl MosaicTermApp {
     /// Render context menu for command blocks
     fn render_context_menu(&mut self, ctx: &egui::Context) {
         // Check if we have an active context menu
-        if let Some(block_id) = &self.command_blocks.interaction_state().context_menu_block.clone() {
+        if let Some(block_id) = &self
+            .command_blocks
+            .interaction_state()
+            .context_menu_block
+            .clone()
+        {
             if let Some(menu_pos) = self.command_blocks.interaction_state().context_menu_pos {
                 // Find the command block and extract data we need
                 if let Some(block) = self.command_history.iter().find(|b| &b.id == block_id) {
                     let command = block.command.clone();
                     let status = block.status;
-                    let output_lines: Vec<String> = block.output.iter()
-                        .map(|line| line.text.clone())
-                        .collect();
+                    let output_lines: Vec<String> =
+                        block.output.iter().map(|line| line.text.clone()).collect();
 
                     // Create context menu
                     let mut menu_open = true;
@@ -509,13 +525,16 @@ impl MosaicTermApp {
                             // Rerun command
                             if ui.button("🔄 Rerun Command").clicked() {
                                 // Execute the same command again
-                                let _ = futures::executor::block_on(self.handle_command_input(command.clone()));
+                                let _ = futures::executor::block_on(
+                                    self.handle_command_input(command.clone()),
+                                );
                                 menu_open = false;
                             }
 
                             // Kill running command (only if still running)
                             if status == ExecutionStatus::Running
-                                && ui.button("❌ Kill Command").clicked() {
+                                && ui.button("❌ Kill Command").clicked()
+                            {
                                 self.handle_interrupt_command();
                                 menu_open = false;
                             }
@@ -552,7 +571,9 @@ impl MosaicTermApp {
 
                     // Close menu if clicked outside or if an action was taken
                     if !menu_open {
-                        self.command_blocks.interaction_state_mut().context_menu_block = None;
+                        self.command_blocks
+                            .interaction_state_mut()
+                            .context_menu_block = None;
                         self.command_blocks.interaction_state_mut().context_menu_pos = None;
                     }
 
@@ -560,9 +581,12 @@ impl MosaicTermApp {
                     if ctx.input(|i| i.pointer.any_click()) {
                         if let Some(mouse_pos) = ctx.input(|i| i.pointer.hover_pos()) {
                             // Check if click is outside the menu area (rough approximation)
-                            let menu_rect = egui::Rect::from_min_size(menu_pos, egui::vec2(150.0, 120.0));
+                            let menu_rect =
+                                egui::Rect::from_min_size(menu_pos, egui::vec2(150.0, 120.0));
                             if !menu_rect.contains(mouse_pos) {
-                                self.command_blocks.interaction_state_mut().context_menu_block = None;
+                                self.command_blocks
+                                    .interaction_state_mut()
+                                    .context_menu_block = None;
                                 self.command_blocks.interaction_state_mut().context_menu_pos = None;
                             }
                         }
@@ -588,7 +612,10 @@ impl eframe::App for MosaicTermApp {
         }
 
         // Initialize terminal on first startup
-        if self.terminal.is_none() && !self.state.terminal_ready && !self.state.initialization_attempted {
+        if self.terminal.is_none()
+            && !self.state.terminal_ready
+            && !self.state.initialization_attempted
+        {
             self.state.initialization_attempted = true;
             info!("Initializing terminal session...");
 
@@ -624,14 +651,14 @@ impl eframe::App for MosaicTermApp {
             let history_height = available_height - input_height - 20.0; // Leave some margin
 
             // Layout from bottom to top: input at bottom, then history above it
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 // FIXED INPUT AREA AT BOTTOM - This stays static
                 ui.allocate_ui_with_layout(
                     egui::Vec2::new(ui.available_width(), input_height),
                     egui::Layout::left_to_right(egui::Align::LEFT),
                     |ui| {
                         self.render_fixed_input_area(ui);
-                    }
+                    },
                 );
 
                 // HISTORY AREA ABOVE INPUT - Scrollable, with commands stacking from newest to oldest
@@ -640,7 +667,7 @@ impl eframe::App for MosaicTermApp {
                     egui::Layout::top_down(egui::Align::LEFT),
                     |ui| {
                         self.render_command_history_area(ui);
-                    }
+                    },
                 );
             });
         });
@@ -692,14 +719,12 @@ impl MosaicTermApp {
         style.spacing.button_padding = egui::vec2(8.0, 4.0);
 
         // Set font size for better readability
-        style.text_styles.insert(
-            egui::TextStyle::Body,
-            egui::FontId::monospace(12.0)
-        );
-        style.text_styles.insert(
-            egui::TextStyle::Monospace,
-            egui::FontId::monospace(11.0)
-        );
+        style
+            .text_styles
+            .insert(egui::TextStyle::Body, egui::FontId::monospace(12.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.0));
 
         // Apply the style
         ctx.set_style(style);
@@ -786,12 +811,21 @@ impl MosaicTermApp {
 
                                 match kill(Pid::from_raw(pid as i32), NixSignal::SIGINT) {
                                     Ok(_) => {
-                                        info!("Sent SIGINT to process {} (PID: {})", handle_id, pid);
+                                        info!(
+                                            "Sent SIGINT to process {} (PID: {})",
+                                            handle_id, pid
+                                        );
                                         Ok(())
                                     }
                                     Err(e) => {
-                                        error!("Failed to send SIGINT to process {}: {}", handle_id, e);
-                                        Err(mosaicterm::error::Error::Other(format!("Signal failed: {}", e)))
+                                        error!(
+                                            "Failed to send SIGINT to process {}: {}",
+                                            handle_id, e
+                                        );
+                                        Err(mosaicterm::error::Error::Other(format!(
+                                            "Signal failed: {}",
+                                            e
+                                        )))
                                     }
                                 }
                             }
@@ -801,11 +835,17 @@ impl MosaicTermApp {
                                 // Windows doesn't support SIGINT, terminate the process
                                 match pty_manager.terminate_pty(pty_handle).await {
                                     Ok(_) => {
-                                        info!("Terminated Windows process {} (PID: {})", handle_id, pid);
+                                        info!(
+                                            "Terminated Windows process {} (PID: {})",
+                                            handle_id, pid
+                                        );
                                         Ok(())
                                     }
                                     Err(e) => {
-                                        error!("Failed to terminate Windows process {}: {}", handle_id, e);
+                                        error!(
+                                            "Failed to terminate Windows process {}: {}",
+                                            handle_id, e
+                                        );
                                         Err(e)
                                     }
                                 }
@@ -813,31 +853,39 @@ impl MosaicTermApp {
 
                             #[cfg(not(any(unix, windows)))]
                             {
-                                Err(mosaicterm::error::Error::Other("Signal handling not supported on this platform".to_string()))
+                                Err(mosaicterm::error::Error::Other(
+                                    "Signal handling not supported on this platform".to_string(),
+                                ))
                             }
                         } else {
                             error!("No PID found for PTY handle {}", handle_id);
-                            Err(mosaicterm::error::Error::Other("No PID available".to_string()))
+                            Err(mosaicterm::error::Error::Other(
+                                "No PID available".to_string(),
+                            ))
                         }
                     } else {
                         error!("Failed to get PTY info for handle {}", handle_id);
-                        Err(mosaicterm::error::Error::Other("Failed to get PTY info".to_string()))
+                        Err(mosaicterm::error::Error::Other(
+                            "Failed to get PTY info".to_string(),
+                        ))
                     }
                 });
 
                 match result {
                     Ok(_) => {
                         info!("Interrupt signal sent successfully");
-                        
+
                         // Check if the command is interactive first (before mutable borrow)
-                        let is_interactive = self.command_history.last()
+                        let is_interactive = self
+                            .command_history
+                            .last()
                             .map(|block| self.is_interactive_command(&block.command))
                             .unwrap_or(false);
-                        
+
                         // Mark the last command as cancelled
                         if let Some(block) = self.command_history.last_mut() {
                             block.mark_cancelled();
-                            
+
                             if is_interactive {
                                 self.set_status_message(Some(
                                     "Interactive program cancelled. Note: terminal may show artifacts.".to_string()
@@ -848,29 +896,36 @@ impl MosaicTermApp {
                         } else {
                             self.set_status_message(Some("Command cancelled".to_string()));
                         }
-                        
+
                         // Clear the command time so new commands can be submitted
                         self.last_command_time = None;
-                        
+
                         // For interactive programs, we need to restart the PTY session
                         // because the shell can get into a corrupted state
                         if is_interactive {
                             info!("Restarting PTY session after interactive program cancel");
-                            self.set_status_message(Some("Restarting shell session...".to_string()));
-                            
+                            self.set_status_message(Some(
+                                "Restarting shell session...".to_string(),
+                            ));
+
                             // Restart the PTY in a background task
                             let result = futures::executor::block_on(async {
                                 self.restart_pty_session().await
                             });
-                            
+
                             match result {
                                 Ok(_) => {
                                     info!("PTY session restarted successfully");
-                                    self.set_status_message(Some("Shell session restarted. You can continue.".to_string()));
+                                    self.set_status_message(Some(
+                                        "Shell session restarted. You can continue.".to_string(),
+                                    ));
                                 }
                                 Err(e) => {
                                     error!("Failed to restart PTY session: {}", e);
-                                    self.set_status_message(Some("Failed to restart shell. Try restarting the app.".to_string()));
+                                    self.set_status_message(Some(
+                                        "Failed to restart shell. Try restarting the app."
+                                            .to_string(),
+                                    ));
                                 }
                             }
                         }
@@ -889,7 +944,6 @@ impl MosaicTermApp {
             self.set_status_message(Some("Terminal not ready".to_string()));
         }
     }
-
 
     /// Handle screen clearing (Ctrl+L)
     fn handle_clear_screen(&mut self) {
@@ -961,17 +1015,22 @@ impl MosaicTermApp {
         // Create a fixed input block with clear visual boundaries
         let input_frame = egui::Frame::none()
             .fill(egui::Color32::from_rgb(25, 25, 35))
-            .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 100, 150)))
+            .stroke(egui::Stroke::new(
+                2.0,
+                egui::Color32::from_rgb(100, 100, 150),
+            ))
             .inner_margin(egui::Margin::symmetric(15.0, 10.0))
             .outer_margin(egui::Margin::symmetric(5.0, 5.0));
 
         let frame_response = input_frame.show(ui, |ui| {
             ui.vertical(|ui| {
                 // Input prompt label - use the custom prompt from config
-                ui.label(egui::RichText::new(self.input_prompt.prompt_text())
-                    .font(egui::FontId::monospace(16.0))
-                    .color(egui::Color32::from_rgb(100, 200, 100))
-                    .strong());
+                ui.label(
+                    egui::RichText::new(self.input_prompt.prompt_text())
+                        .font(egui::FontId::monospace(16.0))
+                        .color(egui::Color32::from_rgb(100, 200, 100))
+                        .strong(),
+                );
 
                 // Get current input for display
                 let old_input = self.input_prompt.current_input().to_string();
@@ -982,7 +1041,7 @@ impl MosaicTermApp {
                 let escape_pressed = ui.input(|i| i.key_pressed(egui::Key::Escape));
                 let up_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowUp));
                 let down_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowDown));
-                
+
                 // Input field - take full width
                 // We set .lock_focus(true) to prevent Tab from moving focus away
                 let input_response = ui.add(
@@ -991,24 +1050,25 @@ impl MosaicTermApp {
                         .desired_width(f32::INFINITY)
                         .hint_text("Type a command and press Enter...")
                         .margin(egui::Vec2::new(8.0, 6.0))
-                        .lock_focus(true)  // Prevent Tab from changing focus
+                        .lock_focus(true), // Prevent Tab from changing focus
                 );
-                
+
                 // Store input rect for positioning completion popup
                 let input_rect = input_response.rect;
-                
+
                 // Always ensure the input keeps focus
                 input_response.request_focus();
 
                 // Check if input changed (for filtering)
                 let input_changed = old_input != current_input;
-                
+
                 // Update the input prompt with the current input
                 self.input_prompt.set_input(current_input.clone());
-                
+
                 // If completion was just applied, move cursor to end
                 if self.completion_just_applied {
-                    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), input_response.id) {
+                    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), input_response.id)
+                    {
                         let ccursor = egui::text::CCursor::new(current_input.len());
                         state.set_ccursor_range(Some(egui::text::CCursorRange::one(ccursor)));
                         state.store(ui.ctx(), input_response.id);
@@ -1025,15 +1085,23 @@ impl MosaicTermApp {
                         self.completion_popup.select_previous();
                     } else if escape_pressed {
                         self.completion_popup.hide();
-                } else if input_changed {
-                    // Update completions when typing
-                    let working_dir = self.terminal.as_ref()
-                        .map(|t| t.get_working_directory().to_path_buf())
-                        .unwrap_or_else(|| std::env::current_dir()
-                            .unwrap_or_else(|_| std::path::PathBuf::from("/")));
-                    if let Ok(result) = self.completion_provider.get_completions(&current_input, &working_dir) {
+                    } else if input_changed {
+                        // Update completions when typing
+                        let working_dir = self
+                            .terminal
+                            .as_ref()
+                            .map(|t| t.get_working_directory().to_path_buf())
+                            .unwrap_or_else(|| {
+                                std::env::current_dir()
+                                    .unwrap_or_else(|_| std::path::PathBuf::from("/"))
+                            });
+                        if let Ok(result) = self
+                            .completion_provider
+                            .get_completions(&current_input, &working_dir)
+                        {
                             if !result.is_empty() {
-                                let popup_pos = egui::pos2(input_rect.left(), input_rect.bottom() + 5.0);
+                                let popup_pos =
+                                    egui::pos2(input_rect.left(), input_rect.bottom() + 5.0);
                                 self.completion_popup.show(result, popup_pos);
                             } else {
                                 self.completion_popup.hide();
@@ -1057,11 +1125,13 @@ impl MosaicTermApp {
                     // Check if completion popup is visible
                     if self.completion_popup.is_visible() {
                         // Select completion
-                        let selected_text = self.completion_popup.get_selected_item()
+                        let selected_text = self
+                            .completion_popup
+                            .get_selected_item()
                             .map(|item| item.text.clone());
                         if let Some(text) = selected_text {
                             self.apply_completion(&text);
-                            self.completion_just_applied = true;  // Flag for cursor positioning
+                            self.completion_just_applied = true; // Flag for cursor positioning
                         }
                         self.completion_popup.hide();
                     } else if !current_input.trim().is_empty() {
@@ -1084,36 +1154,46 @@ impl MosaicTermApp {
             if let Some(selected_text) = self.completion_popup.render(ui.ctx(), input_rect) {
                 // Apply the selected completion
                 self.apply_completion(&selected_text);
-                self.completion_just_applied = true;  // Flag for cursor positioning
+                self.completion_just_applied = true; // Flag for cursor positioning
                 self.completion_popup.hide();
             }
         }
     }
-    
+
     /// Handle tab key press for completions
     fn handle_tab_completion(&mut self, input: &str, input_rect: egui::Rect) {
         let now = std::time::Instant::now();
-        
+
         // Check if this is a double-tab (within 500ms)
-        let is_double_tab = self.last_tab_press
+        let is_double_tab = self
+            .last_tab_press
             .map(|last| now.duration_since(last).as_millis() < 500)
             .unwrap_or(false);
-        
-        debug!("Tab pressed! Input: '{}', Double-tab: {}", input, is_double_tab);
-        
+
+        debug!(
+            "Tab pressed! Input: '{}', Double-tab: {}",
+            input, is_double_tab
+        );
+
         self.last_tab_press = Some(now);
-        
+
         // Show completions on double-tab
         if is_double_tab {
-            let working_dir = self.terminal.as_ref()
+            let working_dir = self
+                .terminal
+                .as_ref()
                 .map(|t| t.get_working_directory().to_path_buf())
-                .unwrap_or_else(|| std::env::current_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("/")));
-            
+                .unwrap_or_else(|| {
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"))
+                });
+
             debug!("Getting completions for '{}' in {:?}", input, working_dir);
-            
+
             // Get completions
-            if let Ok(result) = self.completion_provider.get_completions(input, &working_dir) {
+            if let Ok(result) = self
+                .completion_provider
+                .get_completions(input, &working_dir)
+            {
                 debug!("Got {} completions", result.len());
                 if !result.is_empty() {
                     // Position popup below input
@@ -1129,12 +1209,12 @@ impl MosaicTermApp {
         }
         // First tab does nothing - wait for double-tab
     }
-    
+
     /// Apply a completion to the input
     fn apply_completion(&mut self, completion: &str) {
         let current_input = self.input_prompt.current_input();
         let parts: Vec<&str> = current_input.split_whitespace().collect();
-        
+
         let new_input = if parts.len() <= 1 {
             // Completing command - add space after
             format!("{} ", completion)
@@ -1150,7 +1230,7 @@ impl MosaicTermApp {
                 format!("{} ", result)
             }
         };
-        
+
         self.input_prompt.set_input(new_input);
     }
 
@@ -1165,18 +1245,24 @@ impl MosaicTermApp {
 
             status_frame.show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("MosaicTerm")
-                        .font(egui::FontId::proportional(16.0))
-                        .color(egui::Color32::from_rgb(200, 200, 255))
-                        .strong());
+                    ui.label(
+                        egui::RichText::new("MosaicTerm")
+                            .font(egui::FontId::proportional(16.0))
+                            .color(egui::Color32::from_rgb(200, 200, 255))
+                            .strong(),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(egui::RichText::new("Ready")
-                            .font(egui::FontId::proportional(12.0))
-                            .color(egui::Color32::from_rgb(150, 255, 150)));
+                        ui.label(
+                            egui::RichText::new("Ready")
+                                .font(egui::FontId::proportional(12.0))
+                                .color(egui::Color32::from_rgb(150, 255, 150)),
+                        );
                         ui.separator();
-                        ui.label(egui::RichText::new(format!("History: {}", self.command_history.len()))
-                            .font(egui::FontId::monospace(12.0))
-                            .color(egui::Color32::from_rgb(200, 200, 200)));
+                        ui.label(
+                            egui::RichText::new(format!("History: {}", self.command_history.len()))
+                                .font(egui::FontId::monospace(12.0))
+                                .color(egui::Color32::from_rgb(200, 200, 200)),
+                        );
                     });
                 });
             });
@@ -1189,10 +1275,15 @@ impl MosaicTermApp {
                     ui.vertical(|ui| {
                         // Commands appear in execution order: oldest at top, newest at bottom
                         for (i, block) in self.command_history.iter().enumerate() {
-                            if let Some((block_id, pos)) = Self::render_single_command_block_static(ui, block, i) {
+                            if let Some((block_id, pos)) =
+                                Self::render_single_command_block_static(ui, block, i)
+                            {
                                 // Right-click detected, show context menu
-                                self.command_blocks.interaction_state_mut().context_menu_block = Some(block_id);
-                                self.command_blocks.interaction_state_mut().context_menu_pos = Some(pos);
+                                self.command_blocks
+                                    .interaction_state_mut()
+                                    .context_menu_block = Some(block_id);
+                                self.command_blocks.interaction_state_mut().context_menu_pos =
+                                    Some(pos);
                             }
                         }
 
@@ -1200,14 +1291,18 @@ impl MosaicTermApp {
                         if self.command_history.is_empty() {
                             ui.add_space(50.0);
                             ui.vertical_centered(|ui| {
-                                ui.label(egui::RichText::new("🎉 Welcome to MosaicTerm!")
-                                    .font(egui::FontId::proportional(24.0))
-                                    .color(egui::Color32::from_rgb(255, 200, 100))
-                                    .strong());
+                                ui.label(
+                                    egui::RichText::new("🎉 Welcome to MosaicTerm!")
+                                        .font(egui::FontId::proportional(24.0))
+                                        .color(egui::Color32::from_rgb(255, 200, 100))
+                                        .strong(),
+                                );
                                 ui.add_space(10.0);
-                                ui.label(egui::RichText::new("Type a command in the input area below")
-                                    .font(egui::FontId::proportional(16.0))
-                                    .color(egui::Color32::from_rgb(200, 200, 255)));
+                                ui.label(
+                                    egui::RichText::new("Type a command in the input area below")
+                                        .font(egui::FontId::proportional(16.0))
+                                        .color(egui::Color32::from_rgb(200, 200, 255)),
+                                );
                             });
                         }
                     });
@@ -1216,7 +1311,11 @@ impl MosaicTermApp {
     }
 
     /// Render a single command block (static version to avoid borrow checker issues)
-    fn render_single_command_block_static(ui: &mut egui::Ui, block: &CommandBlock, _index: usize) -> Option<(String, egui::Pos2)> {
+    fn render_single_command_block_static(
+        ui: &mut egui::Ui,
+        block: &CommandBlock,
+        _index: usize,
+    ) -> Option<(String, egui::Pos2)> {
         let block_frame = egui::Frame::none()
             .fill(egui::Color32::from_rgb(45, 45, 55))
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 80, 100)))
@@ -1227,23 +1326,37 @@ impl MosaicTermApp {
             ui.vertical(|ui| {
                 // Command header with timestamp and status
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(&block.command)
-                        .font(egui::FontId::monospace(14.0))
-                        .color(egui::Color32::from_rgb(200, 200, 255)));
+                    ui.label(
+                        egui::RichText::new(&block.command)
+                            .font(egui::FontId::monospace(14.0))
+                            .color(egui::Color32::from_rgb(200, 200, 255)),
+                    );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Status indicator
                         let (status_text, status_color) = match block.status {
-                            ExecutionStatus::Running => ("Running", egui::Color32::from_rgb(255, 200, 0)),
-                            ExecutionStatus::Completed => ("Done", egui::Color32::from_rgb(0, 255, 100)),
-                            ExecutionStatus::Failed => ("Failed", egui::Color32::from_rgb(255, 100, 100)),
-                            ExecutionStatus::Cancelled => ("Cancelled", egui::Color32::from_rgb(255, 165, 0)),
-                            ExecutionStatus::Pending => ("Pending", egui::Color32::from_rgb(150, 150, 150)),
+                            ExecutionStatus::Running => {
+                                ("Running", egui::Color32::from_rgb(255, 200, 0))
+                            }
+                            ExecutionStatus::Completed => {
+                                ("Done", egui::Color32::from_rgb(0, 255, 100))
+                            }
+                            ExecutionStatus::Failed => {
+                                ("Failed", egui::Color32::from_rgb(255, 100, 100))
+                            }
+                            ExecutionStatus::Cancelled => {
+                                ("Cancelled", egui::Color32::from_rgb(255, 165, 0))
+                            }
+                            ExecutionStatus::Pending => {
+                                ("Pending", egui::Color32::from_rgb(150, 150, 150))
+                            }
                         };
 
-                        ui.label(egui::RichText::new(status_text)
-                            .font(egui::FontId::proportional(12.0))
-                            .color(status_color));
+                        ui.label(
+                            egui::RichText::new(status_text)
+                                .font(egui::FontId::proportional(12.0))
+                                .color(status_color),
+                        );
                     });
                 });
 
@@ -1256,19 +1369,24 @@ impl MosaicTermApp {
                         .inner_margin(egui::Margin::symmetric(8.0, 6.0));
 
                     output_frame.show(ui, |ui| {
-                        for line in block.output.iter() { // Show all output lines
-                            ui.label(egui::RichText::new(&line.text)
-                                .font(egui::FontId::monospace(12.0))
-                                .color(egui::Color32::from_rgb(180, 180, 200)));
+                        for line in block.output.iter() {
+                            // Show all output lines
+                            ui.label(
+                                egui::RichText::new(&line.text)
+                                    .font(egui::FontId::monospace(12.0))
+                                    .color(egui::Color32::from_rgb(180, 180, 200)),
+                            );
                         }
                     });
                 }
 
                 // Timestamp
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new(format!("{}", block.timestamp.format("%H:%M:%S")))
-                        .font(egui::FontId::monospace(10.0))
-                        .color(egui::Color32::from_rgb(120, 120, 140)));
+                    ui.label(
+                        egui::RichText::new(format!("{}", block.timestamp.format("%H:%M:%S")))
+                            .font(egui::FontId::monospace(10.0))
+                            .color(egui::Color32::from_rgb(120, 120, 140)),
+                    );
                 });
             });
         });
@@ -1283,7 +1401,6 @@ impl MosaicTermApp {
         None
     }
 
-
     /// Handle async operations (called from update) - SIMPLIFIED VERSION
     fn handle_async_operations(&mut self, _ctx: &egui::Context) {
         // SIMPLIFIED: Poll PTY output and add to current command (no complex prompt detection)
@@ -1293,9 +1410,15 @@ impl MosaicTermApp {
                     if let Ok(data) = pty_manager.try_read_output_now(handle) {
                         if !data.is_empty() {
                             // Process output
-                            debug!("PTY read {} bytes: {:?}", data.len(), String::from_utf8_lossy(&data));
+                            debug!(
+                                "PTY read {} bytes: {:?}",
+                                data.len(),
+                                String::from_utf8_lossy(&data)
+                            );
                             let _ = futures::executor::block_on(async {
-                                _terminal.process_output(&data, mosaicterm::terminal::StreamType::Stdout).await
+                                _terminal
+                                    .process_output(&data, mosaicterm::terminal::StreamType::Stdout)
+                                    .await
                             });
 
                             // Add output to current command block
@@ -1309,18 +1432,19 @@ impl MosaicTermApp {
                                         last_block.add_output_line(line.clone());
                                     }
                                 }
-                                
+
                                 // Also handle partial data (no newlines) as immediate output
                                 if !has_ready_lines {
                                     let text = String::from_utf8_lossy(&data);
                                     debug!("Processing partial data: '{}'", text.trim());
-                                    
+
                                     let trimmed_text = text.trim();
-                                    
+
                                     // Since we've suppressed prompts at the source, we can add any non-empty text
                                     // that's not the command echo
-                                    if !trimmed_text.is_empty() && 
-                                       trimmed_text != last_block.command.trim() {
+                                    if !trimmed_text.is_empty()
+                                        && trimmed_text != last_block.command.trim()
+                                    {
                                         // Add partial data as a line immediately
                                         let partial_line = mosaicterm::models::OutputLine {
                                             text: trimmed_text.to_string(),
@@ -1329,46 +1453,53 @@ impl MosaicTermApp {
                                             timestamp: chrono::Utc::now(),
                                         };
                                         last_block.add_output_line(partial_line);
-                                        debug!("Added partial data as output line: '{}'", trimmed_text);
+                                        debug!(
+                                            "Added partial data as output line: '{}'",
+                                            trimmed_text
+                                        );
                                     }
                                 }
-                                
+
                                 // Intelligent completion detection
                                 if let Some(start_time) = self.last_command_time {
                                     let elapsed_ms = start_time.elapsed().as_millis();
 
                                     // Check if command might be interactive/long-running
-                                    let is_interactive_command = last_block.command.contains("top") ||
-                                                                 last_block.command.contains("htop") ||
-                                                                 last_block.command.contains("vim") ||
-                                                                 last_block.command.contains("nano") ||
-                                                                 last_block.command.contains("less") ||
-                                                                 last_block.command.contains("man") ||
-                                                                 last_block.command.starts_with("ssh ") ||
-                                                                 last_block.command.contains(" | ") ||
-                                                                 last_block.command.contains(" > ") ||
-                                                                 last_block.command.contains(" >> ");
+                                    let is_interactive_command = last_block.command.contains("top")
+                                        || last_block.command.contains("htop")
+                                        || last_block.command.contains("vim")
+                                        || last_block.command.contains("nano")
+                                        || last_block.command.contains("less")
+                                        || last_block.command.contains("man")
+                                        || last_block.command.starts_with("ssh ")
+                                        || last_block.command.contains(" | ")
+                                        || last_block.command.contains(" > ")
+                                        || last_block.command.contains(" >> ");
 
                                     if is_interactive_command {
                                         // For interactive commands, use a longer timeout (10 seconds)
                                         // or wait for explicit interruption
                                         if elapsed_ms > 10000 {
                                             // Mark as completed after 10 seconds for safety
-                                            last_block.mark_completed(std::time::Duration::from_millis(
-                                                elapsed_ms.try_into().unwrap_or(10000)
-                                            ));
+                                            last_block.mark_completed(
+                                                std::time::Duration::from_millis(
+                                                    elapsed_ms.try_into().unwrap_or(10000),
+                                                ),
+                                            );
                                             self.last_command_time = None;
                                         }
                                         // Don't mark as completed - let it run
                                     } else {
                                         // For regular commands, complete quickly if they produce output
                                         // Since we suppressed prompts, check for common completion indicators
-                                        let has_completion_indicators = ready_lines.iter().any(|line| {
-                                            line.text.contains("exit code") ||
-                                            line.text.contains("finished") ||
-                                            line.text.contains("completed") ||
-                                            line.text.trim().is_empty() && ready_lines.len() > 1
-                                        });
+                                        let has_completion_indicators =
+                                            ready_lines.iter().any(|line| {
+                                                line.text.contains("exit code")
+                                                    || line.text.contains("finished")
+                                                    || line.text.contains("completed")
+                                                    || line.text.trim().is_empty()
+                                                        && ready_lines.len() > 1
+                                            });
 
                                         // Most commands complete immediately after producing output
                                         // Only keep them running if they explicitly need to be long-running
@@ -1377,9 +1508,11 @@ impl MosaicTermApp {
                                                              (!last_block.output.is_empty() && elapsed_ms > 10); // Fast completion for commands with output
 
                                         if should_complete {
-                                            last_block.mark_completed(std::time::Duration::from_millis(
-                                                elapsed_ms.try_into().unwrap_or(100)
-                                            ));
+                                            last_block.mark_completed(
+                                                std::time::Duration::from_millis(
+                                                    elapsed_ms.try_into().unwrap_or(100),
+                                                ),
+                                            );
                                             self.last_command_time = None;
                                         }
                                     }
@@ -1404,14 +1537,12 @@ mod tests {
         assert!(!app.state.terminal_ready);
     }
 
-
     #[test]
     fn test_app_state() {
         let state = AppState::default();
         assert_eq!(state.title, "MosaicTerm");
         assert!(!state.terminal_ready);
     }
-
 
     #[test]
     fn test_status_message() {
@@ -1422,5 +1553,4 @@ mod tests {
         app.set_status_message(None);
         assert!(app.state.status_message.is_none());
     }
-
 }

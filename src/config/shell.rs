@@ -3,13 +3,13 @@
 //! Detects and configures shell environments for MosaicTerm,
 //! including shell type detection, configuration file parsing, and environment setup.
 
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::env;
-use std::fs;
 use crate::error::{Error, Result};
 use crate::models::ShellType;
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// Shell configuration manager
 #[derive(Debug, Clone)]
@@ -39,7 +39,6 @@ pub struct ShellConfig {
     /// Prompt detection patterns
     pub prompt_patterns: Vec<String>,
 }
-
 
 impl ShellManager {
     /// Create a new shell manager
@@ -127,13 +126,11 @@ impl ShellManager {
                 "~/.config/fish/config.fish".to_string(),
                 "/etc/fish/config.fish".to_string(),
             ],
-            environment_variables: std::collections::HashMap::from([
-                ("SHELL".to_string(), "/bin/fish".to_string()),
-            ]),
-            prompt_patterns: vec![
-                r"^> $".to_string(),
-                r"^\[.*\]> $".to_string(),
-            ],
+            environment_variables: std::collections::HashMap::from([(
+                "SHELL".to_string(),
+                "/bin/fish".to_string(),
+            )]),
+            prompt_patterns: vec![r"^> $".to_string(), r"^\[.*\]> $".to_string()],
         });
 
         // PowerShell configuration
@@ -147,15 +144,12 @@ impl ShellManager {
                 "powershell".into(),
             ],
             default_args: vec!["-NoLogo".to_string()],
-            config_files: vec![
-                "~/.config/powershell/Microsoft.PowerShell_profile.ps1".to_string(),
-            ],
-            environment_variables: std::collections::HashMap::from([
-                ("SHELL".to_string(), "/usr/bin/pwsh".to_string()),
-            ]),
-            prompt_patterns: vec![
-                r"^PS .*> $".to_string(),
-            ],
+            config_files: vec!["~/.config/powershell/Microsoft.PowerShell_profile.ps1".to_string()],
+            environment_variables: std::collections::HashMap::from([(
+                "SHELL".to_string(),
+                "/usr/bin/pwsh".to_string(),
+            )]),
+            prompt_patterns: vec![r"^PS .*> $".to_string()],
         });
     }
 
@@ -220,7 +214,6 @@ impl ShellManager {
     /// Detect shell from parent process (Unix only)
     #[cfg(unix)]
     fn detect_from_parent_process(&self) -> Option<ShellType> {
-
         // Try to get parent process information
         if let Ok(output) = Command::new("ps")
             .arg("-p")
@@ -247,17 +240,21 @@ impl ShellManager {
 
     /// Get configuration for a specific shell type
     pub fn get_shell_config(&self, shell_type: ShellType) -> Option<&ShellConfig> {
-        self.shells.iter().find(|config| config.shell_type == shell_type)
+        self.shells
+            .iter()
+            .find(|config| config.shell_type == shell_type)
     }
 
     /// Get current shell configuration
     pub fn current_shell_config(&self) -> Option<&ShellConfig> {
-        self.current_shell.and_then(|shell_type| self.get_shell_config(shell_type))
+        self.current_shell
+            .and_then(|shell_type| self.get_shell_config(shell_type))
     }
 
     /// Get all available shells
     pub fn available_shells(&self) -> Vec<ShellType> {
-        self.shells.iter()
+        self.shells
+            .iter()
             .filter(|config| self.is_shell_available(config))
             .map(|config| config.shell_type)
             .collect()
@@ -285,7 +282,9 @@ impl ShellManager {
     /// Get the best available shell path
     pub fn get_shell_path(&self, shell_type: ShellType) -> Option<&Path> {
         if let Some(config) = self.get_shell_config(shell_type) {
-            config.executable_paths.iter()
+            config
+                .executable_paths
+                .iter()
                 .find(|path| {
                     if path.is_absolute() {
                         path.exists()
@@ -311,8 +310,12 @@ impl ShellManager {
 
     /// Load shell configuration files
     pub fn load_shell_config(&self, shell_type: ShellType) -> Result<ShellEnvironment> {
-        let config = self.get_shell_config(shell_type)
-            .ok_or_else(|| Error::Other(format!("Shell configuration not found for {:?}", shell_type)))?;
+        let config = self.get_shell_config(shell_type).ok_or_else(|| {
+            Error::Other(format!(
+                "Shell configuration not found for {:?}",
+                shell_type
+            ))
+        })?;
 
         let mut environment = std::collections::HashMap::new();
 
@@ -357,7 +360,11 @@ impl ShellManager {
     }
 
     /// Parse shell configuration content
-    fn parse_shell_config(&self, shell_type: ShellType, content: &str) -> Result<std::collections::HashMap<String, String>> {
+    fn parse_shell_config(
+        &self,
+        shell_type: ShellType,
+        content: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
         let mut environment = std::collections::HashMap::new();
 
         match shell_type {
@@ -377,7 +384,11 @@ impl ShellManager {
     }
 
     /// Parse Bash/Zsh configuration
-    fn parse_bash_zsh_config(&self, content: &str, environment: &mut std::collections::HashMap<String, String>) -> Result<()> {
+    fn parse_bash_zsh_config(
+        &self,
+        content: &str,
+        environment: &mut std::collections::HashMap<String, String>,
+    ) -> Result<()> {
         let lines: Vec<&str> = content.lines().collect();
 
         for line in lines {
@@ -420,7 +431,11 @@ impl ShellManager {
     }
 
     /// Parse Fish configuration
-    fn parse_fish_config(&self, content: &str, environment: &mut std::collections::HashMap<String, String>) -> Result<()> {
+    fn parse_fish_config(
+        &self,
+        content: &str,
+        environment: &mut std::collections::HashMap<String, String>,
+    ) -> Result<()> {
         let lines: Vec<&str> = content.lines().collect();
 
         for line in lines {
@@ -434,7 +449,8 @@ impl ShellManager {
             // Parse set statements
             if line.starts_with("set ") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 3 && parts[1] == "-x" { // export variable
+                if parts.len() >= 3 && parts[1] == "-x" {
+                    // export variable
                     let var_name = parts[2];
                     let value = parts.get(3).unwrap_or(&"").to_string();
                     environment.insert(var_name.to_string(), value);
@@ -446,7 +462,11 @@ impl ShellManager {
     }
 
     /// Parse generic configuration
-    fn parse_generic_config(&self, content: &str, environment: &mut std::collections::HashMap<String, String>) -> Result<()> {
+    fn parse_generic_config(
+        &self,
+        content: &str,
+        environment: &mut std::collections::HashMap<String, String>,
+    ) -> Result<()> {
         let lines: Vec<&str> = content.lines().collect();
 
         for line in lines {
@@ -460,7 +480,10 @@ impl ShellManager {
             // Parse simple variable assignments
             if let Some(eq_pos) = line.find('=') {
                 let var_name = line[..eq_pos].trim();
-                let value = line[eq_pos + 1..].trim().trim_matches('"').trim_matches('\'');
+                let value = line[eq_pos + 1..]
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'');
                 environment.insert(var_name.to_string(), value.to_string());
             }
         }
@@ -557,7 +580,18 @@ pub mod utils {
 
     /// Check if shell supports certain features
     pub fn shell_supports_feature(shell_type: ShellType, feature: ShellFeature) -> bool {
-        matches!((shell_type, feature), (ShellType::Bash | ShellType::Zsh, ShellFeature::Scripting) | (ShellType::Fish, ShellFeature::Scripting) | (ShellType::PowerShell, ShellFeature::Scripting) | (ShellType::Bash | ShellType::Zsh | ShellType::Fish, ShellFeature::Colors) | (ShellType::PowerShell, ShellFeature::Colors) | (_, ShellFeature::Interactive))
+        matches!(
+            (shell_type, feature),
+            (ShellType::Bash | ShellType::Zsh, ShellFeature::Scripting)
+                | (ShellType::Fish, ShellFeature::Scripting)
+                | (ShellType::PowerShell, ShellFeature::Scripting)
+                | (
+                    ShellType::Bash | ShellType::Zsh | ShellType::Fish,
+                    ShellFeature::Colors
+                )
+                | (ShellType::PowerShell, ShellFeature::Colors)
+                | (_, ShellFeature::Interactive)
+        )
     }
 
     /// Validate shell configuration
@@ -567,13 +601,17 @@ pub mod utils {
         }
 
         if config.executable_paths.is_empty() {
-            return Err(Error::Other("Shell must have at least one executable path".to_string()));
+            return Err(Error::Other(
+                "Shell must have at least one executable path".to_string(),
+            ));
         }
 
         for path in &config.executable_paths {
             if let Some(path_str) = path.to_str() {
                 if path_str.is_empty() {
-                    return Err(Error::Other("Shell executable path cannot be empty".to_string()));
+                    return Err(Error::Other(
+                        "Shell executable path cannot be empty".to_string(),
+                    ));
                 }
             }
         }
@@ -609,10 +647,22 @@ mod tests {
     fn test_shell_detection_from_path() {
         let manager = ShellManager::new();
 
-        assert_eq!(manager.detect_shell_from_path("/bin/bash"), Some(ShellType::Bash));
-        assert_eq!(manager.detect_shell_from_path("/usr/bin/zsh"), Some(ShellType::Zsh));
-        assert_eq!(manager.detect_shell_from_path("/bin/fish"), Some(ShellType::Fish));
-        assert_eq!(manager.detect_shell_from_path("/usr/bin/pwsh"), Some(ShellType::PowerShell));
+        assert_eq!(
+            manager.detect_shell_from_path("/bin/bash"),
+            Some(ShellType::Bash)
+        );
+        assert_eq!(
+            manager.detect_shell_from_path("/usr/bin/zsh"),
+            Some(ShellType::Zsh)
+        );
+        assert_eq!(
+            manager.detect_shell_from_path("/bin/fish"),
+            Some(ShellType::Fish)
+        );
+        assert_eq!(
+            manager.detect_shell_from_path("/usr/bin/pwsh"),
+            Some(ShellType::PowerShell)
+        );
         assert_eq!(manager.detect_shell_from_path("/unknown/shell"), None);
     }
 
@@ -640,9 +690,14 @@ export EDITOR="vim"
 HOME="/home/user"
 "#;
 
-        manager.parse_bash_zsh_config(config_content, &mut environment).unwrap();
+        manager
+            .parse_bash_zsh_config(config_content, &mut environment)
+            .unwrap();
 
-        assert_eq!(environment.get("PATH"), Some(&"/usr/local/bin:$PATH".to_string()));
+        assert_eq!(
+            environment.get("PATH"),
+            Some(&"/usr/local/bin:$PATH".to_string())
+        );
         assert_eq!(environment.get("EDITOR"), Some(&"vim".to_string()));
         assert_eq!(environment.get("HOME"), Some(&"/home/user".to_string()));
     }
@@ -658,10 +713,22 @@ HOME="/home/user"
 
     #[test]
     fn test_shell_feature_support() {
-        assert!(utils::shell_supports_feature(ShellType::Bash, ShellFeature::Scripting));
-        assert!(utils::shell_supports_feature(ShellType::Bash, ShellFeature::Colors));
-        assert!(utils::shell_supports_feature(ShellType::Bash, ShellFeature::Interactive));
-        assert!(!utils::shell_supports_feature(ShellType::Other, ShellFeature::Scripting));
+        assert!(utils::shell_supports_feature(
+            ShellType::Bash,
+            ShellFeature::Scripting
+        ));
+        assert!(utils::shell_supports_feature(
+            ShellType::Bash,
+            ShellFeature::Colors
+        ));
+        assert!(utils::shell_supports_feature(
+            ShellType::Bash,
+            ShellFeature::Interactive
+        ));
+        assert!(!utils::shell_supports_feature(
+            ShellType::Other,
+            ShellFeature::Scripting
+        ));
     }
 
     #[test]
@@ -695,7 +762,10 @@ HOME="/home/user"
     fn test_default_shell_for_platform() {
         let shell_type = utils::default_shell_for_platform();
         // Should return a valid shell type
-        assert!(matches!(shell_type, ShellType::Bash | ShellType::Zsh | ShellType::Fish | ShellType::PowerShell));
+        assert!(matches!(
+            shell_type,
+            ShellType::Bash | ShellType::Zsh | ShellType::Fish | ShellType::PowerShell
+        ));
     }
 
     #[test]

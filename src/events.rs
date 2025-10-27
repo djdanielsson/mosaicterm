@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, broadcast};
+use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, info};
 
 use crate::error::{Error, Result};
@@ -74,7 +74,11 @@ pub enum TerminalEvent {
     /// Terminal output received
     Output { id: String, data: Vec<u8> },
     /// Terminal command executed
-    CommandExecuted { id: String, command: String, success: bool },
+    CommandExecuted {
+        id: String,
+        command: String,
+        success: bool,
+    },
     /// Terminal title changed
     TitleChanged { id: String, title: String },
     /// Terminal bell triggered
@@ -110,9 +114,17 @@ pub enum CommandEvent {
     /// Command started
     Started { id: String, command: String },
     /// Command completed
-    Completed { id: String, command: String, exit_code: Option<i32> },
+    Completed {
+        id: String,
+        command: String,
+        exit_code: Option<i32>,
+    },
     /// Command failed
-    Failed { id: String, command: String, error: String },
+    Failed {
+        id: String,
+        command: String,
+        error: String,
+    },
     /// Command interrupted
     Interrupted { id: String, command: String },
     /// Command history updated
@@ -120,7 +132,10 @@ pub enum CommandEvent {
     /// Command suggestion requested
     SuggestionRequested { partial: String },
     /// Command suggestion provided
-    SuggestionProvided { partial: String, suggestions: Vec<String> },
+    SuggestionProvided {
+        partial: String,
+        suggestions: Vec<String>,
+    },
 }
 
 /// Configuration events
@@ -131,7 +146,11 @@ pub enum ConfigEvent {
     /// Configuration saved
     Saved { path: String },
     /// Configuration changed
-    Changed { key: String, old_value: String, new_value: String },
+    Changed {
+        key: String,
+        old_value: String,
+        new_value: String,
+    },
     /// Configuration reset
     Reset,
     /// Configuration validation failed
@@ -148,7 +167,11 @@ pub enum SystemEvent {
     /// Memory warning
     MemoryWarning { used: u64, available: u64 },
     /// Disk space warning
-    DiskSpaceWarning { path: String, used: u64, available: u64 },
+    DiskSpaceWarning {
+        path: String,
+        used: u64,
+        available: u64,
+    },
     /// Network status changed
     NetworkChanged { connected: bool },
     /// System theme changed
@@ -178,7 +201,6 @@ pub struct EventProcessor {
     processing_task: Option<tokio::task::JoinHandle<()>>,
 }
 
-
 impl EventBus {
     /// Create new event bus
     pub fn new() -> Result<Self> {
@@ -197,22 +219,28 @@ impl EventBus {
 
     /// Publish an event
     pub fn publish(&self, envelope: EventEnvelope) -> Result<()> {
-        debug!("Publishing event: {} from {}", envelope.event_type, envelope.source);
+        debug!(
+            "Publishing event: {} from {}",
+            envelope.event_type, envelope.source
+        );
 
         // Publish to specific event channel
         if let Some(channel) = self.channels.get(&envelope.event_type) {
-            channel.sender.send(envelope.clone())
+            channel
+                .sender
+                .send(envelope.clone())
                 .map_err(|e| Error::Other(format!("Failed to send event: {}", e)))?;
         }
 
         // Publish to broadcast channel for system events
         if let EventPayload::System(_) = &envelope.payload {
-            let _ = self.broadcast_tx.send(envelope.payload.clone().into_system_event());
+            let _ = self
+                .broadcast_tx
+                .send(envelope.payload.clone().into_system_event());
         }
 
         Ok(())
     }
-
 
     /// Get broadcast receiver for system events
     pub fn subscribe_broadcast(&self) -> broadcast::Receiver<SystemEvent> {
@@ -221,16 +249,13 @@ impl EventBus {
 
     /// Shutdown the event bus
     pub fn shutdown(&self) -> Result<()> {
-        self.shutdown_tx.send(())
+        self.shutdown_tx
+            .send(())
             .map_err(|e| Error::Other(format!("Failed to send shutdown signal: {}", e)))
     }
 
     /// Create event envelope
-    pub fn create_envelope(
-        event_type: &str,
-        payload: EventPayload,
-        source: &str,
-    ) -> EventEnvelope {
+    pub fn create_envelope(event_type: &str, payload: EventPayload, source: &str) -> EventEnvelope {
         EventEnvelope {
             id: generate_event_id(),
             event_type: event_type.to_string(),
@@ -326,7 +351,6 @@ impl EventProcessor {
         Ok(())
     }
 }
-
 
 /// Generate unique event ID
 fn generate_event_id() -> String {
@@ -428,69 +452,167 @@ mod tests {
 
     #[test]
     fn test_terminal_event_variants() {
-        assert!(matches!(TerminalEvent::Created { id: "test".to_string() },
-                        TerminalEvent::Created { .. }));
-        assert!(matches!(TerminalEvent::Destroyed { id: "test".to_string() },
-                        TerminalEvent::Destroyed { .. }));
-        assert!(matches!(TerminalEvent::Output { id: "test".to_string(), data: vec![] },
-                        TerminalEvent::Output { .. }));
+        assert!(matches!(
+            TerminalEvent::Created {
+                id: "test".to_string()
+            },
+            TerminalEvent::Created { .. }
+        ));
+        assert!(matches!(
+            TerminalEvent::Destroyed {
+                id: "test".to_string()
+            },
+            TerminalEvent::Destroyed { .. }
+        ));
+        assert!(matches!(
+            TerminalEvent::Output {
+                id: "test".to_string(),
+                data: vec![]
+            },
+            TerminalEvent::Output { .. }
+        ));
     }
 
     #[test]
     fn test_ui_event_variants() {
-        assert!(matches!(UiEvent::ThemeChanged { theme_name: "dark".to_string() },
-                        UiEvent::ThemeChanged { .. }));
-        assert!(matches!(UiEvent::WindowResized { width: 800.0, height: 600.0 },
-                        UiEvent::WindowResized { .. }));
-        assert!(matches!(UiEvent::KeyPressed { key: "a".to_string(), modifiers: vec![] },
-                        UiEvent::KeyPressed { .. }));
+        assert!(matches!(
+            UiEvent::ThemeChanged {
+                theme_name: "dark".to_string()
+            },
+            UiEvent::ThemeChanged { .. }
+        ));
+        assert!(matches!(
+            UiEvent::WindowResized {
+                width: 800.0,
+                height: 600.0
+            },
+            UiEvent::WindowResized { .. }
+        ));
+        assert!(matches!(
+            UiEvent::KeyPressed {
+                key: "a".to_string(),
+                modifiers: vec![]
+            },
+            UiEvent::KeyPressed { .. }
+        ));
     }
 
     #[test]
     fn test_command_event_variants() {
-        assert!(matches!(CommandEvent::Started { id: "test".to_string(), command: "ls".to_string() },
-                        CommandEvent::Started { .. }));
-        assert!(matches!(CommandEvent::Completed { id: "test".to_string(), command: "ls".to_string(), exit_code: Some(0) },
-                        CommandEvent::Completed { .. }));
-        assert!(matches!(CommandEvent::Failed { id: "test".to_string(), command: "invalid".to_string(), error: "error".to_string() },
-                        CommandEvent::Failed { .. }));
+        assert!(matches!(
+            CommandEvent::Started {
+                id: "test".to_string(),
+                command: "ls".to_string()
+            },
+            CommandEvent::Started { .. }
+        ));
+        assert!(matches!(
+            CommandEvent::Completed {
+                id: "test".to_string(),
+                command: "ls".to_string(),
+                exit_code: Some(0)
+            },
+            CommandEvent::Completed { .. }
+        ));
+        assert!(matches!(
+            CommandEvent::Failed {
+                id: "test".to_string(),
+                command: "invalid".to_string(),
+                error: "error".to_string()
+            },
+            CommandEvent::Failed { .. }
+        ));
     }
 
     #[test]
     fn test_config_event_variants() {
-        assert!(matches!(ConfigEvent::Loaded { path: "/config".to_string() },
-                        ConfigEvent::Loaded { .. }));
-        assert!(matches!(ConfigEvent::Changed { key: "theme".to_string(), old_value: "light".to_string(), new_value: "dark".to_string() },
-                        ConfigEvent::Changed { .. }));
-        assert!(matches!(ConfigEvent::ValidationFailed { errors: vec!["error".to_string()] },
-                        ConfigEvent::ValidationFailed { .. }));
+        assert!(matches!(
+            ConfigEvent::Loaded {
+                path: "/config".to_string()
+            },
+            ConfigEvent::Loaded { .. }
+        ));
+        assert!(matches!(
+            ConfigEvent::Changed {
+                key: "theme".to_string(),
+                old_value: "light".to_string(),
+                new_value: "dark".to_string()
+            },
+            ConfigEvent::Changed { .. }
+        ));
+        assert!(matches!(
+            ConfigEvent::ValidationFailed {
+                errors: vec!["error".to_string()]
+            },
+            ConfigEvent::ValidationFailed { .. }
+        ));
     }
 
     #[test]
     fn test_system_event_variants() {
-        assert!(matches!(SystemEvent::ApplicationStarted, SystemEvent::ApplicationStarted));
-        assert!(matches!(SystemEvent::ApplicationShutdown, SystemEvent::ApplicationShutdown));
-        assert!(matches!(SystemEvent::MemoryWarning { used: 100, available: 1000 },
-                        SystemEvent::MemoryWarning { .. }));
-        assert!(matches!(SystemEvent::Error { message: "test".to_string(), component: "test".to_string() },
-                        SystemEvent::Error { .. }));
+        assert!(matches!(
+            SystemEvent::ApplicationStarted,
+            SystemEvent::ApplicationStarted
+        ));
+        assert!(matches!(
+            SystemEvent::ApplicationShutdown,
+            SystemEvent::ApplicationShutdown
+        ));
+        assert!(matches!(
+            SystemEvent::MemoryWarning {
+                used: 100,
+                available: 1000
+            },
+            SystemEvent::MemoryWarning { .. }
+        ));
+        assert!(matches!(
+            SystemEvent::Error {
+                message: "test".to_string(),
+                component: "test".to_string()
+            },
+            SystemEvent::Error { .. }
+        ));
     }
 
     #[test]
     fn test_event_payload_variants() {
-        let terminal_event = TerminalEvent::Created { id: "test".to_string() };
-        let ui_event = UiEvent::ThemeChanged { theme_name: "dark".to_string() };
-        let command_event = CommandEvent::Started { id: "test".to_string(), command: "ls".to_string() };
-        let config_event = ConfigEvent::Loaded { path: "/config".to_string() };
+        let terminal_event = TerminalEvent::Created {
+            id: "test".to_string(),
+        };
+        let ui_event = UiEvent::ThemeChanged {
+            theme_name: "dark".to_string(),
+        };
+        let command_event = CommandEvent::Started {
+            id: "test".to_string(),
+            command: "ls".to_string(),
+        };
+        let config_event = ConfigEvent::Loaded {
+            path: "/config".to_string(),
+        };
         let system_event = SystemEvent::ApplicationStarted;
         let custom_event = serde_json::json!({"test": "value"});
 
-        assert!(matches!(EventPayload::Terminal(terminal_event), EventPayload::Terminal(_)));
+        assert!(matches!(
+            EventPayload::Terminal(terminal_event),
+            EventPayload::Terminal(_)
+        ));
         assert!(matches!(EventPayload::Ui(ui_event), EventPayload::Ui(_)));
-        assert!(matches!(EventPayload::Command(command_event), EventPayload::Command(_)));
-        assert!(matches!(EventPayload::Config(config_event), EventPayload::Config(_)));
-        assert!(matches!(EventPayload::System(system_event), EventPayload::System(_)));
-        assert!(matches!(EventPayload::Custom(custom_event), EventPayload::Custom(_)));
+        assert!(matches!(
+            EventPayload::Command(command_event),
+            EventPayload::Command(_)
+        ));
+        assert!(matches!(
+            EventPayload::Config(config_event),
+            EventPayload::Config(_)
+        ));
+        assert!(matches!(
+            EventPayload::System(system_event),
+            EventPayload::System(_)
+        ));
+        assert!(matches!(
+            EventPayload::Custom(custom_event),
+            EventPayload::Custom(_)
+        ));
     }
 
     #[test]
@@ -507,7 +629,7 @@ mod tests {
 
         let response = original.create_response(
             EventPayload::System(SystemEvent::ApplicationShutdown),
-            "server"
+            "server",
         );
 
         assert_eq!(response.event_type, "request_response");

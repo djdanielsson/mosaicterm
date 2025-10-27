@@ -4,8 +4,8 @@
 //! PTY master reads/writes to async code using channels.
 
 use crate::error::{Error, Result};
-use tokio::sync::mpsc::UnboundedReceiver;
 use std::sync::mpsc::Sender as StdSender;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 /// PTY I/O streams wrapper
 pub struct PtyStreams {
@@ -17,8 +17,14 @@ pub struct PtyStreams {
 
 impl PtyStreams {
     /// Create new PTY streams from channels
-    pub fn from_channels(output_rx: UnboundedReceiver<Vec<u8>>, input_tx: StdSender<Vec<u8>>) -> Self {
-        Self { output_rx, input_tx }
+    pub fn from_channels(
+        output_rx: UnboundedReceiver<Vec<u8>>,
+        input_tx: StdSender<Vec<u8>>,
+    ) -> Self {
+        Self {
+            output_rx,
+            input_tx,
+        }
     }
 
     /// Write data to the PTY stdin

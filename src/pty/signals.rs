@@ -3,8 +3,8 @@
 //! Manages signal handling for PTY processes, including sending
 //! signals like SIGINT, SIGTERM, and SIGKILL for process control.
 
-use std::collections::HashMap;
 use crate::error::{Error, Result};
+use std::collections::HashMap;
 
 /// Signal types that can be sent to PTY processes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,7 +81,9 @@ impl SignalHandler {
 
     /// Send a signal to a PTY process
     pub async fn send_signal(&self, handle_id: &str, signal: Signal) -> Result<()> {
-        let pid = self.process_handles.get(handle_id)
+        let pid = self
+            .process_handles
+            .get(handle_id)
             .ok_or_else(|| Error::Other(format!("Process {} not registered", handle_id)))?;
 
         self.send_signal_to_pid(*pid, signal).await
@@ -102,7 +104,9 @@ impl SignalHandler {
 
         #[cfg(not(any(unix, windows)))]
         {
-            Err(Error::Other(format!("Signal handling not supported on this platform")))
+            Err(Error::Other(format!(
+                "Signal handling not supported on this platform"
+            )))
         }
     }
 
@@ -191,11 +195,16 @@ impl SignalHandler {
             Signal::Kill => {
                 // Use Windows API to terminate process
                 // This is a simplified implementation
-                Err(Error::Other("Signal sending not fully implemented on Windows".to_string()))
+                Err(Error::Other(
+                    "Signal sending not fully implemented on Windows".to_string(),
+                ))
             }
             _ => {
                 // Other signals not applicable on Windows
-                Err(Error::Other(format!("Signal {:?} not supported on Windows", signal)))
+                Err(Error::Other(format!(
+                    "Signal {:?} not supported on Windows",
+                    signal
+                )))
             }
         }
     }
@@ -215,12 +224,12 @@ impl SignalHandler {
     fn check_windows_process(&self, pid: u32) -> bool {
         // Windows process checking implementation using WinAPI
         use std::process::Command;
-        
+
         // Use tasklist command to check if process exists
         let output = Command::new("tasklist")
             .args(&["/FI", &format!("PID eq {}", pid)])
             .output();
-            
+
         match output {
             Ok(output) => {
                 let output_str = String::from_utf8_lossy(&output.stdout);
@@ -268,7 +277,10 @@ pub mod utils {
     }
 
     /// Terminate all registered processes gracefully
-    pub async fn terminate_all_gracefully(handler: &SignalHandler, handle_ids: &[String]) -> Vec<Result<()>> {
+    pub async fn terminate_all_gracefully(
+        handler: &SignalHandler,
+        handle_ids: &[String],
+    ) -> Vec<Result<()>> {
         let mut results = Vec::new();
         for id in handle_ids {
             results.push(handler.terminate_gracefully(id).await);

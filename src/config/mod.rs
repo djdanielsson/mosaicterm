@@ -6,14 +6,14 @@
 
 #[allow(unexpected_cfgs)]
 pub mod loader;
-pub mod theme;
-pub mod shell;
 pub mod prompt;
+pub mod shell;
+pub mod theme;
 
+use crate::config::shell::ShellManager;
+use crate::config::theme::ThemeManager;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use crate::config::theme::ThemeManager;
-use crate::config::shell::ShellManager;
 
 /// Main configuration structure for MosaicTerm
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -213,8 +213,7 @@ pub enum BellStyle {
 }
 
 /// Runtime configuration manager
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     /// Current configuration
     config: Config,
@@ -337,8 +336,7 @@ impl RuntimeConfig {
 
     /// Get current theme
     pub fn current_theme(&self) -> Result<&theme::Theme, Box<dyn std::error::Error>> {
-        self.theme_manager.current_theme()
-            .map_err(|e| e.into())
+        self.theme_manager.current_theme().map_err(|e| e.into())
     }
 
     /// Get current shell configuration
@@ -386,23 +384,19 @@ pub mod utils {
     }
 
     /// Create a default configuration file content
-    pub fn create_default_config_content(format: loader::ConfigFormat) -> Result<String, Box<dyn std::error::Error>> {
+    pub fn create_default_config_content(
+        format: loader::ConfigFormat,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let config = Config::default();
 
         match format {
-            loader::ConfigFormat::Toml => {
-                toml::to_string_pretty(&config)
-                    .map_err(|e| format!("Failed to serialize TOML: {}", e).into())
-            }
-            loader::ConfigFormat::Json => {
-                serde_json::to_string_pretty(&config)
-                    .map_err(|e| format!("Failed to serialize JSON: {}", e).into())
-            }
+            loader::ConfigFormat::Toml => toml::to_string_pretty(&config)
+                .map_err(|e| format!("Failed to serialize TOML: {}", e).into()),
+            loader::ConfigFormat::Json => serde_json::to_string_pretty(&config)
+                .map_err(|e| format!("Failed to serialize JSON: {}", e).into()),
             #[cfg(feature = "yaml")]
-            loader::ConfigFormat::Yaml => {
-                serde_yaml::to_string(&config)
-                    .map_err(|e| format!("Failed to serialize YAML: {}", e).into())
-            }
+            loader::ConfigFormat::Yaml => serde_yaml::to_string(&config)
+                .map_err(|e| format!("Failed to serialize YAML: {}", e).into()),
         }
     }
 
@@ -418,12 +412,32 @@ pub mod utils {
 
     fn merge_ui_configs(base: UiConfig, overlay: UiConfig) -> UiConfig {
         UiConfig {
-            font_family: if overlay.font_family.is_empty() { base.font_family } else { overlay.font_family },
-            font_size: if overlay.font_size == 0 { base.font_size } else { overlay.font_size },
-            scrollback_lines: if overlay.scrollback_lines == 0 { base.scrollback_lines } else { overlay.scrollback_lines },
-            theme_name: if overlay.theme_name.is_empty() { base.theme_name } else { overlay.theme_name },
+            font_family: if overlay.font_family.is_empty() {
+                base.font_family
+            } else {
+                overlay.font_family
+            },
+            font_size: if overlay.font_size == 0 {
+                base.font_size
+            } else {
+                overlay.font_size
+            },
+            scrollback_lines: if overlay.scrollback_lines == 0 {
+                base.scrollback_lines
+            } else {
+                overlay.scrollback_lines
+            },
+            theme_name: if overlay.theme_name.is_empty() {
+                base.theme_name
+            } else {
+                overlay.theme_name
+            },
             smooth_scrolling: overlay.smooth_scrolling,
-            animation_duration_ms: if overlay.animation_duration_ms == 0 { base.animation_duration_ms } else { overlay.animation_duration_ms },
+            animation_duration_ms: if overlay.animation_duration_ms == 0 {
+                base.animation_duration_ms
+            } else {
+                overlay.animation_duration_ms
+            },
             show_line_numbers: overlay.show_line_numbers,
             word_wrap: overlay.word_wrap,
         }
@@ -432,14 +446,34 @@ pub mod utils {
     fn merge_terminal_configs(base: TerminalConfig, overlay: TerminalConfig) -> TerminalConfig {
         TerminalConfig {
             shell_type: overlay.shell_type,
-            shell_path: if overlay.shell_path.as_os_str().is_empty() { base.shell_path } else { overlay.shell_path },
-            shell_args: if overlay.shell_args.is_empty() { base.shell_args } else { overlay.shell_args },
+            shell_path: if overlay.shell_path.as_os_str().is_empty() {
+                base.shell_path
+            } else {
+                overlay.shell_path
+            },
+            shell_args: if overlay.shell_args.is_empty() {
+                base.shell_args
+            } else {
+                overlay.shell_args
+            },
             working_directory: overlay.working_directory.or(base.working_directory),
-            dimensions: if overlay.dimensions == (0, 0) { base.dimensions } else { overlay.dimensions },
+            dimensions: if overlay.dimensions == (0, 0) {
+                base.dimensions
+            } else {
+                overlay.dimensions
+            },
             mouse_support: overlay.mouse_support,
-            scrollback_buffer: if overlay.scrollback_buffer == 0 { base.scrollback_buffer } else { overlay.scrollback_buffer },
+            scrollback_buffer: if overlay.scrollback_buffer == 0 {
+                base.scrollback_buffer
+            } else {
+                overlay.scrollback_buffer
+            },
             bell_style: overlay.bell_style,
-            prompt_format: if overlay.prompt_format.is_empty() { base.prompt_format } else { overlay.prompt_format },
+            prompt_format: if overlay.prompt_format.is_empty() {
+                base.prompt_format
+            } else {
+                overlay.prompt_format
+            },
         }
     }
 
@@ -451,9 +485,17 @@ pub mod utils {
                 merged
             },
             inherit_env: overlay.inherit_env,
-            buffer_size: if overlay.buffer_size == 0 { base.buffer_size } else { overlay.buffer_size },
+            buffer_size: if overlay.buffer_size == 0 {
+                base.buffer_size
+            } else {
+                overlay.buffer_size
+            },
             raw_mode: overlay.raw_mode,
-            timeout_ms: if overlay.timeout_ms == 0 { base.timeout_ms } else { overlay.timeout_ms },
+            timeout_ms: if overlay.timeout_ms == 0 {
+                base.timeout_ms
+            } else {
+                overlay.timeout_ms
+            },
         }
     }
 
@@ -504,8 +546,14 @@ mod tests {
 
     #[test]
     fn test_get_config_format() {
-        assert_eq!(utils::get_config_format(Path::new("config.toml")), Some(loader::ConfigFormat::Toml));
-        assert_eq!(utils::get_config_format(Path::new("config.json")), Some(loader::ConfigFormat::Json));
+        assert_eq!(
+            utils::get_config_format(Path::new("config.toml")),
+            Some(loader::ConfigFormat::Toml)
+        );
+        assert_eq!(
+            utils::get_config_format(Path::new("config.json")),
+            Some(loader::ConfigFormat::Json)
+        );
         assert_eq!(utils::get_config_format(Path::new("config.txt")), None);
     }
 

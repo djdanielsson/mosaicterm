@@ -3,18 +3,18 @@
 //! Handles the creation and spawning of pseudoterminal processes
 //! using the portable-pty crate for cross-platform compatibility.
 
+use portable_pty::{native_pty_system, CommandBuilder, PtyPair, PtySize};
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::Stdio;
-use std::io::{Read, Write};
 use std::sync::mpsc::channel;
 use std::thread;
-use portable_pty::{native_pty_system, CommandBuilder, PtyPair, PtySize};
 use tokio::sync::mpsc::unbounded_channel;
 
+use super::streams::PtyStreams;
 use crate::error::{Error, Result};
 use crate::models::PtyProcess;
-use super::streams::PtyStreams;
 
 /// Spawn a new PTY process with the given command and environment
 pub async fn spawn_pty_process(
@@ -72,9 +72,13 @@ pub async fn spawn_pty_process(
 /// Create PTY streams from a PTY pair
 fn create_pty_streams(pair: PtyPair) -> Result<PtyStreams> {
     // Bridge blocking PTY I/O to async via channels and a background thread
-    let mut master_reader = pair.master.try_clone_reader()
+    let mut master_reader = pair
+        .master
+        .try_clone_reader()
         .map_err(|e| Error::Other(format!("Failed to clone PTY reader: {}", e)))?;
-    let mut master_writer = pair.master.take_writer()
+    let mut master_writer = pair
+        .master
+        .take_writer()
         .map_err(|e| Error::Other(format!("Failed to take PTY writer: {}", e)))?;
 
     // Channel: PTY output -> async consumer
@@ -163,7 +167,10 @@ pub fn validate_command(command: &str) -> Result<()> {
         .status()
     {
         Ok(status) if status.success() => Ok(()),
-        _ => Err(Error::Other(format!("Command '{}' not found in PATH", command))),
+        _ => Err(Error::Other(format!(
+            "Command '{}' not found in PATH",
+            command
+        ))),
     }
 }
 
@@ -193,7 +200,10 @@ pub fn get_user_shell() -> String {
 }
 
 /// Get effective environment for process spawning
-pub fn get_effective_environment(custom_env: &HashMap<String, String>, inherit: bool) -> HashMap<String, String> {
+pub fn get_effective_environment(
+    custom_env: &HashMap<String, String>,
+    inherit: bool,
+) -> HashMap<String, String> {
     let mut env = if inherit {
         std::env::vars().collect()
     } else {
@@ -265,12 +275,7 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_pty_process_validation() {
         // Test with invalid command
-        let result = spawn_pty_process(
-            "/nonexistent/command",
-            &[],
-            &HashMap::new(),
-            None,
-        ).await;
+        let result = spawn_pty_process("/nonexistent/command", &[], &HashMap::new(), None).await;
 
         assert!(result.is_err());
     }
@@ -279,12 +284,7 @@ mod tests {
     async fn test_spawn_pty_process_success() {
         // Test with valid command - this might fail in CI environments
         // where PTY support is limited, so we'll make it non-critical
-        let result = spawn_pty_process(
-            "echo",
-            &["test".to_string()],
-            &HashMap::new(),
-            None,
-        ).await;
+        let result = spawn_pty_process("echo", &["test".to_string()], &HashMap::new(), None).await;
 
         // In some environments (like CI), PTY spawning might fail
         // So we'll just ensure it doesn't panic

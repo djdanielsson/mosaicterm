@@ -3,8 +3,8 @@
 //! Handles command input, validation, and sending commands to the PTY process.
 
 use crate::error::Result;
-use crate::pty::{PtyHandle, PtyManager};
 use crate::models::CommandBlock;
+use crate::pty::{PtyHandle, PtyManager};
 
 /// Command input processor
 #[derive(Debug)]
@@ -47,8 +47,8 @@ impl CommandInputProcessor {
         match ch {
             '\n' | '\r' => self.process_enter(),
             '\t' => self.process_tab(),
-            '\x7f' => self.process_backspace(), // DEL
-            '\x08' => self.process_backspace(), // BS
+            '\x7f' => self.process_backspace(),    // DEL
+            '\x08' => self.process_backspace(),    // BS
             '\x1b' => InputResult::EscapeSequence, // ESC - handle sequences separately
             ch if ch.is_control() => InputResult::ControlChar(ch),
             ch => self.insert_char(ch),
@@ -214,7 +214,8 @@ impl CommandInputProcessor {
     fn get_completion_suggestions(&self) -> Vec<String> {
         // Basic implementation - could be enhanced with actual shell completion
         let prefix = &self.current_command[..self.cursor_position];
-        self.command_history.iter()
+        self.command_history
+            .iter()
             .filter(|cmd| cmd.starts_with(prefix))
             .take(10)
             .cloned()
@@ -246,17 +247,20 @@ impl CommandInputProcessor {
         let command_with_newline = format!("{}\n", command);
 
         // Send to PTY
-        manager.send_input(handle, command_with_newline.as_bytes()).await?;
+        manager
+            .send_input(handle, command_with_newline.as_bytes())
+            .await?;
 
         Ok(())
     }
 
     /// Create command block from command string
-    pub fn create_command_block(&self, command: &str, working_directory: &std::path::Path) -> CommandBlock {
-        CommandBlock::new(
-            command.to_string(),
-            working_directory.to_path_buf(),
-        )
+    pub fn create_command_block(
+        &self,
+        command: &str,
+        working_directory: &std::path::Path,
+    ) -> CommandBlock {
+        CommandBlock::new(command.to_string(), working_directory.to_path_buf())
     }
 
     /// Get current command text
@@ -298,7 +302,9 @@ impl CommandInputProcessor {
         let command_with_newline = format!("{}\n", sanitized_command);
 
         // Send to PTY
-        pty_manager.send_input(handle, command_with_newline.as_bytes()).await?;
+        pty_manager
+            .send_input(handle, command_with_newline.as_bytes())
+            .await?;
 
         // Add to history
         self.add_to_history(sanitized_command);
@@ -319,7 +325,9 @@ impl CommandInputProcessor {
     /// Validate a command before execution
     fn validate_command(command: &str) -> Result<()> {
         if command.is_empty() {
-            return Err(crate::error::Error::Other("Command cannot be empty".to_string()));
+            return Err(crate::error::Error::Other(
+                "Command cannot be empty".to_string(),
+            ));
         }
 
         // Basic validation - could be extended
@@ -374,8 +382,8 @@ impl Default for CommandInputProcessor {
 
 /// Command validation utilities
 pub mod validation {
-    use regex::Regex;
     use crate::error::{Error, Result};
+    use regex::Regex;
 
     /// Validate command before execution
     pub fn validate_command(command: &str) -> Result<()> {
@@ -393,7 +401,10 @@ pub mod validation {
 
         for pattern in &dangerous_patterns {
             if Regex::new(pattern).unwrap().is_match(command) {
-                return Err(Error::Other(format!("Potentially dangerous command: {}", command)));
+                return Err(Error::Other(format!(
+                    "Potentially dangerous command: {}",
+                    command
+                )));
             }
         }
 
@@ -403,7 +414,8 @@ pub mod validation {
     /// Sanitize command input
     pub fn sanitize_command(command: &str) -> String {
         // Remove null bytes and other problematic characters
-        command.chars()
+        command
+            .chars()
             .filter(|&c| c != '\0' && !c.is_control() || c == '\n' || c == '\t')
             .collect()
     }
