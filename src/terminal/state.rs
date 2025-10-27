@@ -363,10 +363,10 @@ mod tests {
         assert_eq!(state.cursor.row, 23); // rows - 1
         assert_eq!(state.cursor.col, 79); // cols - 1
 
-        // Test lower bounds
+        // Test lower bounds - moving from (23, 79) by (-50, -50) gives (0, 29)
         state.move_cursor(-50, -50);
         assert_eq!(state.cursor.row, 0);
-        assert_eq!(state.cursor.col, 0);
+        assert_eq!(state.cursor.col, 29); // 79 - 50 = 29
     }
 
     #[test]

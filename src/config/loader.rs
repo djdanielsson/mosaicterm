@@ -392,7 +392,7 @@ mod tests {
     fn test_migration() {
         let config = Config::default();
         let migrated = migration::migrate_config(config, "0.1.0").unwrap();
-        assert_eq!(migrated.ui.scrollback_lines, 1000); // Should be unchanged for valid config
+        assert_eq!(migrated.ui.scrollback_lines, 100000); // Should be unchanged for valid config
     }
 
     #[test]

@@ -469,7 +469,7 @@ mod tests {
         prompt.set_input("new command".to_string());
 
         assert_eq!(prompt.current_input(), "new command");
-        assert_eq!(prompt.cursor_position(), 12);
+        assert_eq!(prompt.cursor_position(), 11); // "new command" is 11 chars
         assert_eq!(prompt.history_position(), None);
     }
 

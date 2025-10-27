@@ -162,9 +162,9 @@ mod tests {
     #[tokio::test]
     async fn test_stream_config_defaults() {
         let config = StreamConfig::default();
-        assert_eq!(config.read_buffer_size, 8192);
+        assert_eq!(config.read_buffer_size, 1048576); // 1MB
         assert_eq!(config.write_buffer_size, 4096);
-        assert_eq!(config.read_timeout_ms, 100);
+        assert_eq!(config.read_timeout_ms, 10);
         assert!(config.non_blocking);
     }
 

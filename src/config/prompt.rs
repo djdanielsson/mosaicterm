@@ -56,6 +56,14 @@ impl PromptFormatter {
             pwd
         };
 
+        // Support escaped variables ($$VAR -> $VAR) - must be done BEFORE substitution
+        // Use a temporary marker to avoid double substitution
+        result = result.replace("$$USER", "\x00USER\x00");
+        result = result.replace("$$HOSTNAME", "\x00HOSTNAME\x00");
+        result = result.replace("$$PWD", "\x00PWD\x00");
+        result = result.replace("$$HOME", "\x00HOME\x00");
+        result = result.replace("$$SHELL", "\x00SHELL\x00");
+
         // Substitute variables
         result = result.replace("$USER", &user);
         result = result.replace("$HOSTNAME", &hostname);
@@ -63,12 +71,12 @@ impl PromptFormatter {
         result = result.replace("$HOME", &home);
         result = result.replace("$SHELL", &shell);
 
-        // Support escaped variables ($$VAR -> $VAR)
-        result = result.replace("$$USER", "$USER");
-        result = result.replace("$$HOSTNAME", "$HOSTNAME");
-        result = result.replace("$$PWD", "$PWD");
-        result = result.replace("$$HOME", "$HOME");
-        result = result.replace("$$SHELL", "$SHELL");
+        // Restore escaped variables
+        result = result.replace("\x00USER\x00", "$USER");
+        result = result.replace("\x00HOSTNAME\x00", "$HOSTNAME");
+        result = result.replace("\x00PWD\x00", "$PWD");
+        result = result.replace("\x00HOME\x00", "$HOME");
+        result = result.replace("\x00SHELL\x00", "$SHELL");
 
         result
     }

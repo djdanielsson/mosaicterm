@@ -537,8 +537,12 @@ mod tests {
 
         terminal.resize(50, 120);
 
-        let status = terminal.status();
-        assert_eq!(status.cursor_position.1, 120); // cols
+        // Check dimensions were updated
+        assert_eq!(terminal.state.dimensions.rows, 50);
+        assert_eq!(terminal.state.dimensions.cols, 120);
+        // Cursor position should remain unchanged
+        assert_eq!(terminal.state.cursor.row, 0);
+        assert_eq!(terminal.state.cursor.col, 0);
     }
 
     #[test]

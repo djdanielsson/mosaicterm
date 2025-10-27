@@ -565,6 +565,7 @@ mod tests {
     #[test]
     fn test_scroll_to_positions() {
         let mut history = ScrollableHistory::new();
+        history.smooth_scrolling = false; // Disable smooth scrolling for immediate position update
 
         history.scroll_to(0.5);
         assert_eq!(history.scroll_position, 0.5);
@@ -579,6 +580,7 @@ mod tests {
     #[test]
     fn test_scroll_by() {
         let mut history = ScrollableHistory::new();
+        history.smooth_scrolling = false; // Disable smooth scrolling for immediate position update
         history.total_height = 1000.0;
         history.viewport_height = 100.0;
 
