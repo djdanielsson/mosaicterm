@@ -32,8 +32,6 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.74.0"  # Minimum version that supports lock file v4
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
@@ -48,23 +46,22 @@ jobs:
         if: matrix.os != 'windows-latest'
         run: |
           cd target/release
-          tar czf ../../mosaicterm-${{ matrix.name }}.tar.gz mosaicterm
+          tar czf mosaicterm-${{ matrix.name }}.tar.gz mosaicterm
           cd ../..
 
       - name: Package for Windows
         if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
           cd target/release
-          7z a ../../mosaicterm-${{ matrix.name }}.zip mosaicterm.exe
+          Compress-Archive -Path mosaicterm.exe -DestinationPath mosaicterm-${{ matrix.name }}.zip
           cd ../..
 
       - name: Upload release assets
         uses: actions/upload-artifact@v4
         with:
           name: mosaicterm-${{ matrix.name }}
-          path: |
-            mosaicterm-*.tar.gz
-            mosaicterm-*.zip
+          path: target/release/mosaicterm-${{ matrix.name }}.*
 
   publish:
     name: Publish Release
@@ -84,6 +81,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -112,8 +110,7 @@ jobs:
             ### Windows
             Extract `mosaicterm-windows-x64.zip` and run `mosaicterm.exe`
           files: |
-            artifacts/mosaicterm-linux-x64/mosaicterm-linux-x64.tar.gz
-            artifacts/mosaicterm-macos-x64/mosaicterm-macos-x64.tar.gz
-            artifacts/mosaicterm-windows-x64/mosaicterm-windows-x64.zip
+            artifacts/**/mosaicterm-*.tar.gz
+            artifacts/**/mosaicterm-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

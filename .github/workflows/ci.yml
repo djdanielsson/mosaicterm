@@ -27,7 +27,6 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.74.0"  # Minimum version that supports lock file v4
           components: rustfmt, clippy
 
       - name: Cache dependencies
@@ -43,7 +42,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Run clippy
-        run: cargo clippy
+        run: cargo clippy -- -D warnings
 
       - name: Check documentation
         run: cargo doc --no-deps
