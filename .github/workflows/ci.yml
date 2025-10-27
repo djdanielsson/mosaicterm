@@ -82,7 +82,7 @@ jobs:
       - name: Setup Rust (MSRV)
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.78"  # Minimum version that reliably supports Cargo.lock v4
+          toolchain: "1.90"  # Match development toolchain version
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
