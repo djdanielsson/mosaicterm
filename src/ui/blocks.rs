@@ -244,6 +244,9 @@ impl CommandBlocks {
             ExecutionStatus::Failed => {
                 ui.colored_label(egui::Color32::from_rgb(255, 100, 100), "● Failed");
             }
+            ExecutionStatus::Cancelled => {
+                ui.colored_label(egui::Color32::from_rgb(255, 165, 0), "● Cancelled");
+            }
             ExecutionStatus::Pending => {
                 ui.colored_label(egui::Color32::from_rgb(150, 150, 150), "● Pending");
             }
@@ -360,6 +363,7 @@ impl CommandBlocks {
             ExecutionStatus::Completed => StatusIcon::Success,
             ExecutionStatus::Running => StatusIcon::Running,
             ExecutionStatus::Pending => StatusIcon::Unknown,
+            ExecutionStatus::Cancelled => StatusIcon::Error, // Orange-ish icon
             _ => StatusIcon::Error,
         };
 

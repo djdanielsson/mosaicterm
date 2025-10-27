@@ -183,6 +183,27 @@ impl MosaicTermApp {
 
 
     /// Initialize the terminal session
+    /// Restart the PTY session (useful after killing interactive programs)
+    pub async fn restart_pty_session(&mut self) -> Result<()> {
+        info!("Restarting PTY session");
+        
+        // Terminate the old PTY if it exists
+        if let Some(terminal) = &self.terminal {
+            if let Some(handle) = terminal.pty_handle() {
+                let mut pty_manager = self.pty_manager.lock().await;
+                let _ = pty_manager.terminate_pty(handle).await;
+            }
+        }
+        
+        // Clear the old terminal
+        self.terminal = None;
+        
+        // Re-initialize the terminal with the same configuration
+        self.initialize_terminal().await?;
+        
+        Ok(())
+    }
+
     pub async fn initialize_terminal(&mut self) -> Result<()> {
         info!("Initializing terminal session");
 
@@ -279,6 +300,15 @@ impl MosaicTermApp {
         }
 
         info!("Processing command: {}", command);
+
+        // Check if this is an interactive command and warn the user
+        if self.is_interactive_command(&command) {
+            warn!("Interactive command detected: {}", command);
+            self.set_status_message(Some(format!(
+                "⚠️  '{}' is an interactive program and may not work correctly in block mode", 
+                self.get_command_name(&command)
+            )));
+        }
 
         // Check if this is a cd command and update working directory
         self.update_working_directory_if_cd(&command);
@@ -399,6 +429,37 @@ impl MosaicTermApp {
             debug!("Updated prompt to: '{}' (working_dir: {:?})", rendered_prompt, working_dir);
             self.input_prompt.set_prompt(&rendered_prompt);
         }
+    }
+
+    /// Check if a command is interactive (TUI-based) and may not work well in block mode
+    fn is_interactive_command(&self, command: &str) -> bool {
+        let cmd_name = self.get_command_name(command);
+        
+        // List of known interactive TUI programs
+        let interactive_programs = vec![
+            "vim", "vi", "nvim", "emacs", "nano", "pico",  // Text editors
+            "htop", "top", "atop", "iotop",                 // System monitors
+            "less", "more",                                  // Pagers
+            "man",                                           // Manual pager
+            "tmux", "screen",                                // Terminal multiplexers
+            "mutt", "alpine",                                // Email clients
+            "mc", "ranger", "nnn",                           // File managers
+            "tig",                                           // Git TUI
+            "gitui",                                         // Git TUI
+            "nethack", "cmatrix",                            // Games/fun
+            "menuconfig",                                    // Config menus
+        ];
+        
+        interactive_programs.iter().any(|&prog| cmd_name == prog)
+    }
+
+    /// Extract the command name from a command line
+    fn get_command_name(&self, command: &str) -> String {
+        command.trim()
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_string()
     }
 
     /// Update application state
@@ -768,7 +829,52 @@ impl MosaicTermApp {
                 match result {
                     Ok(_) => {
                         info!("Interrupt signal sent successfully");
-                        self.set_status_message(Some("Command interrupted".to_string()));
+                        
+                        // Check if the command is interactive first (before mutable borrow)
+                        let is_interactive = self.command_history.last()
+                            .map(|block| self.is_interactive_command(&block.command))
+                            .unwrap_or(false);
+                        
+                        // Mark the last command as cancelled
+                        if let Some(block) = self.command_history.last_mut() {
+                            block.mark_cancelled();
+                            
+                            if is_interactive {
+                                self.set_status_message(Some(
+                                    "Interactive program cancelled. Note: terminal may show artifacts.".to_string()
+                                ));
+                            } else {
+                                self.set_status_message(Some("Command cancelled".to_string()));
+                            }
+                        } else {
+                            self.set_status_message(Some("Command cancelled".to_string()));
+                        }
+                        
+                        // Clear the command time so new commands can be submitted
+                        self.last_command_time = None;
+                        
+                        // For interactive programs, we need to restart the PTY session
+                        // because the shell can get into a corrupted state
+                        if is_interactive {
+                            info!("Restarting PTY session after interactive program cancel");
+                            self.set_status_message(Some("Restarting shell session...".to_string()));
+                            
+                            // Restart the PTY in a background task
+                            let result = futures::executor::block_on(async {
+                                self.restart_pty_session().await
+                            });
+                            
+                            match result {
+                                Ok(_) => {
+                                    info!("PTY session restarted successfully");
+                                    self.set_status_message(Some("Shell session restarted. You can continue.".to_string()));
+                                }
+                                Err(e) => {
+                                    error!("Failed to restart PTY session: {}", e);
+                                    self.set_status_message(Some("Failed to restart shell. Try restarting the app.".to_string()));
+                                }
+                            }
+                        }
                     }
                     Err(e) => {
                         error!("Failed to interrupt command: {}", e);
@@ -784,6 +890,7 @@ impl MosaicTermApp {
             self.set_status_message(Some("Terminal not ready".to_string()));
         }
     }
+
 
     /// Handle screen clearing (Ctrl+L)
     fn handle_clear_screen(&mut self) {
@@ -1133,6 +1240,7 @@ impl MosaicTermApp {
                             ExecutionStatus::Running => ("Running", egui::Color32::from_rgb(255, 200, 0)),
                             ExecutionStatus::Completed => ("Done", egui::Color32::from_rgb(0, 255, 100)),
                             ExecutionStatus::Failed => ("Failed", egui::Color32::from_rgb(255, 100, 100)),
+                            ExecutionStatus::Cancelled => ("Cancelled", egui::Color32::from_rgb(255, 165, 0)),
                             ExecutionStatus::Pending => ("Pending", egui::Color32::from_rgb(150, 150, 150)),
                         };
 

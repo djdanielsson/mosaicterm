@@ -23,6 +23,8 @@ pub enum ExecutionStatus {
     Completed,
     /// Command failed with an error
     Failed,
+    /// Command was cancelled by user
+    Cancelled,
 }
 
 impl Default for ExecutionStatus {
@@ -91,6 +93,12 @@ impl CommandBlock {
         self.status = ExecutionStatus::Failed;
         self.execution_time = Some(execution_time);
         self.exit_code = Some(exit_code);
+    }
+
+    /// Mark the command as cancelled
+    pub fn mark_cancelled(&mut self) {
+        self.status = ExecutionStatus::Cancelled;
+        self.exit_code = Some(130); // Standard exit code for SIGINT
     }
 
     /// Add output line to the block
