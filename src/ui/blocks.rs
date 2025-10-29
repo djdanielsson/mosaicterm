@@ -234,7 +234,7 @@ impl CommandBlocks {
             ExecutionStatus::Completed => {
                 if let Some(exit_code) = block.exit_code {
                     if exit_code == 0 {
-                        ui.colored_label(egui::Color32::from_rgb(0, 255, 100), "● Success");
+                        ui.colored_label(egui::Color32::from_rgb(0, 255, 100), "● Completed");
                     } else {
                         ui.colored_label(
                             egui::Color32::from_rgb(255, 100, 100),

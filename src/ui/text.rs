@@ -287,24 +287,81 @@ impl AnsiTextRenderer {
         current_bg_color: &mut egui::Color32,
         current_font: &mut egui::FontId,
     ) {
-        // Parse ANSI code to determine formatting
-        // This is a simplified implementation - would need proper ANSI parsing
-        if ansi_code.code.contains("[0") {
-            // Reset
-            *current_color = self.color_scheme.default_text;
-            *current_bg_color = self.color_scheme.default_background;
-            *current_font =
-                egui::FontId::new(self.font_config.size, self.font_config.family.clone());
-        } else if ansi_code.code.contains("[1") {
-            // Bold - make brighter
-            let r = (current_color.r() as f32 * 1.2).min(255.0) as u8;
-            let g = (current_color.g() as f32 * 1.2).min(255.0) as u8;
-            let b = (current_color.b() as f32 * 1.2).min(255.0) as u8;
-            *current_color = egui::Color32::from_rgb(r, g, b);
-        } else if ansi_code.code.contains("[3") {
-            // Foreground color - simplified parsing
-            if let Some(&color) = self.color_scheme.ansi_colors.get(&AnsiColor::Red) {
-                *current_color = color;
+        // Parse ANSI codes properly using regex to extract color codes
+        use regex::Regex;
+        
+        // Extract numeric codes from the ANSI sequence like \x1b[31m or \x1b[1;32m
+        let code_regex = Regex::new(r"\x1b\[([0-9;]+)m").unwrap();
+        
+        if let Some(captures) = code_regex.captures(&ansi_code.code) {
+            if let Some(codes_str) = captures.get(1) {
+                // Split by semicolon and parse each code
+                for code_str in codes_str.as_str().split(';') {
+                    if let Ok(code) = code_str.parse::<u8>() {
+                        match code {
+                            0 => {
+                                // Reset all formatting
+                                *current_color = self.color_scheme.default_text;
+                                *current_bg_color = self.color_scheme.default_background;
+                                *current_font = egui::FontId::new(self.font_config.size, self.font_config.family.clone());
+                            }
+                            1 => {
+                                // Bold - make color brighter (egui doesn't have separate bold fonts)
+                                // We simulate bold by making the color more vibrant
+                                let r = (current_color.r() as f32 * 1.2).min(255.0) as u8;
+                                let g = (current_color.g() as f32 * 1.2).min(255.0) as u8;
+                                let b = (current_color.b() as f32 * 1.2).min(255.0) as u8;
+                                *current_color = egui::Color32::from_rgb(r, g, b);
+                            }
+                            2 => {
+                                // Dim - reduce brightness
+                                let r = (current_color.r() as f32 * 0.7) as u8;
+                                let g = (current_color.g() as f32 * 0.7) as u8;
+                                let b = (current_color.b() as f32 * 0.7) as u8;
+                                *current_color = egui::Color32::from_rgb(r, g, b);
+                            }
+                            // Standard foreground colors (30-37)
+                            30 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::Black).copied().unwrap_or(egui::Color32::BLACK),
+                            31 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::Red).copied().unwrap_or(egui::Color32::RED),
+                            32 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::Green).copied().unwrap_or(egui::Color32::GREEN),
+                            33 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::Yellow).copied().unwrap_or(egui::Color32::YELLOW),
+                            34 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::Blue).copied().unwrap_or(egui::Color32::BLUE),
+                            35 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::Magenta).copied().unwrap_or(egui::Color32::from_rgb(255, 0, 255)),
+                            36 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::Cyan).copied().unwrap_or(egui::Color32::from_rgb(0, 255, 255)),
+                            37 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::White).copied().unwrap_or(egui::Color32::WHITE),
+                            // Standard background colors (40-47)
+                            40 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::Black).copied().unwrap_or(egui::Color32::BLACK),
+                            41 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::Red).copied().unwrap_or(egui::Color32::RED),
+                            42 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::Green).copied().unwrap_or(egui::Color32::GREEN),
+                            43 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::Yellow).copied().unwrap_or(egui::Color32::YELLOW),
+                            44 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::Blue).copied().unwrap_or(egui::Color32::BLUE),
+                            45 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::Magenta).copied().unwrap_or(egui::Color32::from_rgb(255, 0, 255)),
+                            46 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::Cyan).copied().unwrap_or(egui::Color32::from_rgb(0, 255, 255)),
+                            47 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::White).copied().unwrap_or(egui::Color32::WHITE),
+                            // Bright foreground colors (90-97)
+                            90 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightBlack).copied().unwrap_or(egui::Color32::DARK_GRAY),
+                            91 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightRed).copied().unwrap_or(egui::Color32::LIGHT_RED),
+                            92 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightGreen).copied().unwrap_or(egui::Color32::LIGHT_GREEN),
+                            93 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightYellow).copied().unwrap_or(egui::Color32::LIGHT_YELLOW),
+                            94 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightBlue).copied().unwrap_or(egui::Color32::LIGHT_BLUE),
+                            95 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightMagenta).copied().unwrap_or(egui::Color32::from_rgb(255, 100, 255)),
+                            96 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightCyan).copied().unwrap_or(egui::Color32::from_rgb(100, 255, 255)),
+                            97 => *current_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightWhite).copied().unwrap_or(egui::Color32::WHITE),
+                            // Bright background colors (100-107)
+                            100 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightBlack).copied().unwrap_or(egui::Color32::DARK_GRAY),
+                            101 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightRed).copied().unwrap_or(egui::Color32::LIGHT_RED),
+                            102 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightGreen).copied().unwrap_or(egui::Color32::LIGHT_GREEN),
+                            103 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightYellow).copied().unwrap_or(egui::Color32::LIGHT_YELLOW),
+                            104 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightBlue).copied().unwrap_or(egui::Color32::LIGHT_BLUE),
+                            105 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightMagenta).copied().unwrap_or(egui::Color32::from_rgb(255, 100, 255)),
+                            106 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightCyan).copied().unwrap_or(egui::Color32::from_rgb(100, 255, 255)),
+                            107 => *current_bg_color = self.color_scheme.ansi_colors.get(&AnsiColor::BrightWhite).copied().unwrap_or(egui::Color32::WHITE),
+                            _ => {
+                                // Unknown code, ignore
+                            }
+                        }
+                    }
+                }
             }
         }
     }
