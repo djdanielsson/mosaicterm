@@ -58,68 +58,68 @@ impl Terminal {
         }
     }
 
-/// Create terminal with specific shell type
-///
-/// # Arguments
-///
-/// * `session` - Terminal session configuration
-/// * `shell_type` - Type of shell (Bash, Zsh, Fish, etc.)
-/// * `pty_manager` - Shared PTY manager for process coordination
-///
-/// # Example
-///
-/// ```no_run
-/// use mosaicterm::terminal::Terminal;
-/// use mosaicterm::models::ShellType;
-/// use mosaicterm::pty::PtyManager;
-/// use std::sync::Arc;
-/// use tokio::sync::Mutex;
-///
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// // Note: TerminalSession is an internal type, create terminal directly
-/// let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
-/// // Terminal is typically created internally by MosaicTermApp
-/// # Ok(())
-/// # }
-/// ```
-pub fn with_shell(
-    session: TerminalSession,
-    shell_type: ShellType,
-    pty_manager: Arc<Mutex<PtyManager>>,
-) -> Self {
-    let mut terminal = Self::new(session, pty_manager);
-    terminal.prompt_detector = PromptDetector::with_shell(shell_type);
-    terminal
-}
+    /// Create terminal with specific shell type
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - Terminal session configuration
+    /// * `shell_type` - Type of shell (Bash, Zsh, Fish, etc.)
+    /// * `pty_manager` - Shared PTY manager for process coordination
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use mosaicterm::terminal::Terminal;
+    /// use mosaicterm::models::ShellType;
+    /// use mosaicterm::pty::PtyManager;
+    /// use std::sync::Arc;
+    /// use tokio::sync::Mutex;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Note: TerminalSession is an internal type, create terminal directly
+    /// let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
+    /// // Terminal is typically created internally by MosaicTermApp
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_shell(
+        session: TerminalSession,
+        shell_type: ShellType,
+        pty_manager: Arc<Mutex<PtyManager>>,
+    ) -> Self {
+        let mut terminal = Self::new(session, pty_manager);
+        terminal.prompt_detector = PromptDetector::with_shell(shell_type);
+        terminal
+    }
 
-/// Initialize terminal session with PTY
-///
-/// Spawns a new shell process in a pseudoterminal and prepares it for command execution.
-/// The shell is started with minimal configuration to ensure predictable behavior.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - PTY creation fails
-/// - Shell process cannot be spawned
-/// - Initial shell setup fails
-///
-/// # Example
-///
-/// ```no_run
-/// use mosaicterm::terminal::Terminal;
-/// use mosaicterm::pty::PtyManager;
-/// use std::sync::Arc;
-/// use tokio::sync::Mutex;
-///
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// // Note: Terminal initialization is handled internally by MosaicTermApp
-/// let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
-/// // Terminal sessions are managed automatically
-/// # Ok(())
-/// # }
-/// ```
-pub async fn initialize_session(&mut self) -> Result<()> {
+    /// Initialize terminal session with PTY
+    ///
+    /// Spawns a new shell process in a pseudoterminal and prepares it for command execution.
+    /// The shell is started with minimal configuration to ensure predictable behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - PTY creation fails
+    /// - Shell process cannot be spawned
+    /// - Initial shell setup fails
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use mosaicterm::terminal::Terminal;
+    /// use mosaicterm::pty::PtyManager;
+    /// use std::sync::Arc;
+    /// use tokio::sync::Mutex;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Note: Terminal initialization is handled internally by MosaicTermApp
+    /// let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
+    /// // Terminal sessions are managed automatically
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn initialize_session(&mut self) -> Result<()> {
         let mut pty_manager = self.pty_manager.lock().await;
 
         // Create PTY process for the terminal session
