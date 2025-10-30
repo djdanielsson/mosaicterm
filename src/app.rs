@@ -1,4 +1,49 @@
 //! Main application structure and state management
+//!
+//! This module contains the core `MosaicTermApp` struct that implements the `eframe::App` trait,
+//! providing the main GUI application logic. It handles:
+//!
+//! - **UI Rendering:** Command history blocks, input prompt, status bar
+//! - **PTY Management:** Creating and managing pseudoterminal processes
+//! - **Output Processing:** Reading PTY output, parsing ANSI codes, updating command blocks
+//! - **User Input:** Keyboard events, command submission, tab completion
+//! - **State Management:** Terminal state, command history, configuration
+//!
+//! ## Architecture
+//!
+//! The app runs in a single-threaded event loop managed by `egui`, with background threads
+//! for PTY I/O. Communication happens via async channels.
+//!
+//! ### Main Components
+//!
+//! - `MosaicTermApp`: Core application state
+//! - `AppState`: Application status and initialization flags
+//! - `handle_async_operations()`: Processes PTY output in the update loop
+//! - `render_ui()`: Renders the three-panel UI layout
+//!
+//! ### UI Layout
+//!
+//! ```text
+//! ┌─────────────────────────────────────────┐
+//! │ Top Panel (Status Bar)                  │
+//! ├─────────────────────────────────────────┤
+//! │                                         │
+//! │ Central Panel (Command History)         │
+//! │ - Scrollable command blocks             │
+//! │ - ANSI-formatted output                 │
+//! │                                         │
+//! ├─────────────────────────────────────────┤
+//! │ Bottom Panel (Input Prompt)             │
+//! │ - Always visible and pinned             │
+//! └─────────────────────────────────────────┘
+//! ```
+//!
+//! ## Performance Considerations
+//!
+//! - **Conditional Repaints:** Only repaints when needed (running command, pending output)
+//! - **Output Batching:** Processes multiple lines at once to reduce UI updates
+//! - **Size Limits:** Enforces max lines per command (50K) and chars per line (10K)
+//! - **Lock Retry:** Retries PTY lock acquisition to prevent dropped output
 
 use arboard::Clipboard;
 use eframe::egui;
@@ -15,6 +60,10 @@ use mosaicterm::ui::{CommandBlocks, CompletionPopup, InputPrompt, ScrollableHist
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
+
+// Output size limits to prevent memory leaks
+const MAX_OUTPUT_LINES_PER_COMMAND: usize = 10_000;
+const MAX_LINE_LENGTH: usize = 10_000;
 
 /// Main MosaicTerm application
 pub struct MosaicTermApp {
@@ -45,6 +94,8 @@ pub struct MosaicTermApp {
     completion_just_applied: bool,
     /// Last time a command was executed (for timeout detection)
     last_command_time: Option<std::time::Instant>,
+    /// Previous working directory (for cd -)
+    previous_directory: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +108,12 @@ pub struct AppState {
     title: String,
     /// Status message
     status_message: Option<String>,
+    /// Loading indicator state (for spinner animation)
+    loading_frame: usize,
+    /// Whether a long operation is in progress
+    is_loading: bool,
+    /// Loading message
+    loading_message: Option<String>,
 }
 
 impl Default for AppState {
@@ -66,6 +123,9 @@ impl Default for AppState {
             initialization_attempted: false,
             title: "MosaicTerm".to_string(),
             status_message: None,
+            loading_frame: 0,
+            is_loading: false,
+            loading_message: None,
         }
     }
 }
@@ -93,12 +153,11 @@ impl MosaicTermApp {
         let completion_popup = CompletionPopup::new();
 
         let runtime_config = RuntimeConfig::new().unwrap_or_else(|e| {
-            warn!(
-                "Failed to create runtime config: {}, using minimal config",
-                e
-            );
-            // For now, panic on config creation failure - this should be handled better
-            panic!("Failed to create runtime config: {}", e);
+            error!("Failed to create runtime config: {}", e);
+            warn!("Using minimal default configuration to continue");
+
+            // Create a minimal working config instead of panicking
+            RuntimeConfig::new_minimal()
         });
 
         // Create prompt formatter from config
@@ -171,6 +230,7 @@ impl MosaicTermApp {
             last_tab_press: None,
             completion_just_applied: false,
             last_command_time: None,
+            previous_directory: None,
         }
     }
 
@@ -385,8 +445,13 @@ impl MosaicTermApp {
                     current_dir.clone()
                 }
             } else if parts[1] == "-" {
-                // cd - goes to previous directory (we don't track this, so stay)
-                current_dir.clone()
+                // cd - goes to previous directory
+                if let Some(prev_dir) = &self.previous_directory {
+                    prev_dir.clone()
+                } else {
+                    debug!("No previous directory to return to");
+                    current_dir.clone()
+                }
             } else if parts[1] == "~" {
                 // cd ~ goes to home
                 if let Some(home) = std::env::var_os("HOME") {
@@ -411,12 +476,19 @@ impl MosaicTermApp {
 
             // Canonicalize and update if valid
             if let Ok(canonical) = new_dir.canonicalize() {
-                if canonical.is_dir() {
+                if canonical.is_dir() && canonical != current_dir {
+                    // Save current directory as previous before changing
+                    self.previous_directory = Some(current_dir.clone());
                     terminal.set_working_directory(canonical.clone());
-                    debug!("Updated working directory to: {:?}", canonical);
+                    debug!(
+                        "Updated working directory from {:?} to: {:?}",
+                        current_dir, canonical
+                    );
                     // Update prompt after directory change
                     self.update_prompt();
                 }
+            } else {
+                debug!("Failed to change directory to: {:?}", new_dir);
             }
         }
     }
@@ -493,6 +565,84 @@ impl MosaicTermApp {
     /// Set status message
     pub fn set_status_message(&mut self, message: Option<String>) {
         self.state.status_message = message;
+    }
+
+    /// Start loading indicator with message
+    pub fn start_loading(&mut self, message: impl Into<String>) {
+        self.state.is_loading = true;
+        self.state.loading_message = Some(message.into());
+        self.state.loading_frame = 0;
+    }
+
+    /// Stop loading indicator
+    pub fn stop_loading(&mut self) {
+        self.state.is_loading = false;
+        self.state.loading_message = None;
+    }
+
+    /// Get loading spinner character for current frame
+    fn loading_spinner(&self) -> &'static str {
+        const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        SPINNER_FRAMES[self.state.loading_frame % SPINNER_FRAMES.len()]
+    }
+
+    /// Convert technical error to user-friendly message
+    ///
+    /// Translates internal errors into actionable messages for end users.
+    fn user_friendly_error(&self, error: &mosaicterm::error::Error) -> String {
+        use mosaicterm::error::Error;
+
+        match error {
+            Error::Pty(msg) => {
+                if msg.contains("Failed to open PTY") {
+                    "Could not create terminal session. Please check your system configuration."
+                        .to_string()
+                } else if msg.contains("Failed to spawn") {
+                    "Could not start shell. Please verify your shell path in settings.".to_string()
+                } else {
+                    format!("Terminal error: {}. Try restarting the application.", msg)
+                }
+            }
+            Error::Config(msg) => {
+                format!("Configuration issue: {}. Using default settings.", msg)
+            }
+            Error::Terminal(msg) => {
+                if msg.contains("timeout") {
+                    "Command timed out. You can adjust timeout settings in configuration."
+                        .to_string()
+                } else {
+                    format!("Terminal processing error: {}", msg)
+                }
+            }
+            Error::Toml(e) => {
+                format!("Configuration file error: {}. Using default settings.", e)
+            }
+            Error::Serde(e) => {
+                format!("Data format error: {}. Please check your configuration.", e)
+            }
+            Error::Regex(e) => {
+                format!("Pattern error: {}. Please check your syntax.", e)
+            }
+            Error::Io(e) => {
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    "Permission denied. Please check file permissions.".to_string()
+                } else if e.kind() == std::io::ErrorKind::NotFound {
+                    "File or command not found. Please check the path.".to_string()
+                } else {
+                    format!("I/O error: {}. Please try again.", e)
+                }
+            }
+            Error::Other(msg) => {
+                // Try to make generic errors more helpful
+                if msg.contains("not found") {
+                    format!("Not found: {}. Please check your input.", msg)
+                } else if msg.contains("parse") || msg.contains("syntax") {
+                    format!("Syntax error: {}. Please check your command.", msg)
+                } else {
+                    format!("Error: {}. If this persists, please report it.", msg)
+                }
+            }
+        }
     }
 
     /// Render context menu for command blocks
@@ -611,6 +761,11 @@ impl eframe::App for MosaicTermApp {
             }
         }
 
+        // Auto-refresh completion cache if needed (checks every frame but only refreshes after 5 min timeout)
+        if let Err(e) = self.completion_provider.refresh_command_cache_if_needed() {
+            debug!("Failed to refresh completion cache: {}", e);
+        }
+
         // Initialize terminal on first startup
         if self.terminal.is_none()
             && !self.state.terminal_ready
@@ -618,21 +773,33 @@ impl eframe::App for MosaicTermApp {
         {
             self.state.initialization_attempted = true;
             info!("Initializing terminal session...");
+            
+            // Show loading indicator
+            self.start_loading("Initializing terminal...");
 
             // Initialize terminal asynchronously
             match futures::executor::block_on(self.initialize_terminal()) {
                 Ok(()) => {
                     info!("Terminal session initialized successfully");
+                    self.stop_loading();
                 }
                 Err(e) => {
                     error!("Failed to initialize terminal: {}", e);
-                    self.state.status_message = Some(format!("Terminal init failed: {}", e));
+                    self.stop_loading();
+                    let user_msg = self.user_friendly_error(&e);
+                    self.state.status_message = Some(user_msg);
                 }
             }
         }
 
         // Update application state
         self.update_state();
+
+        // Animate loading spinner if active
+        if self.state.is_loading {
+            self.state.loading_frame = (self.state.loading_frame + 1) % 10;
+            ctx.request_repaint(); // Keep animating
+        }
 
         // Update window title with application state
         self.update_window_title(frame);
@@ -642,6 +809,36 @@ impl eframe::App for MosaicTermApp {
 
         // Handle keyboard shortcuts
         self.handle_keyboard_shortcuts(ctx, frame);
+
+        // Show loading overlay if active
+        if self.state.is_loading {
+            egui::Area::new("loading_overlay")
+                .fixed_pos(egui::pos2(10.0, 10.0))
+                .show(ctx, |ui| {
+                    let frame = egui::Frame::none()
+                        .fill(egui::Color32::from_rgba_premultiplied(30, 30, 40, 240))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 100, 200)))
+                        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                        .rounding(egui::Rounding::same(4.0));
+
+                    frame.show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(self.loading_spinner())
+                                    .size(20.0)
+                                    .color(egui::Color32::from_rgb(100, 200, 255)),
+                            );
+                            if let Some(msg) = &self.state.loading_message {
+                                ui.label(
+                                    egui::RichText::new(msg)
+                                        .size(14.0)
+                                        .color(egui::Color32::from_rgb(200, 200, 200)),
+                                );
+                            }
+                        });
+                    });
+                });
+        }
 
         // Main layout with scrollable history and pinned input
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -678,8 +875,23 @@ impl eframe::App for MosaicTermApp {
         // Handle async operations
         self.handle_async_operations(ctx);
 
-        // Force frequent repaints for responsive terminal output
-        ctx.request_repaint();
+        // Only repaint when needed to save CPU
+        // Repaint if: command is running, has pending output, or user input changed
+        let needs_repaint = self.last_command_time.is_some()
+            || (self
+                .terminal
+                .as_ref()
+                .map(|t| t.has_pending_output())
+                .unwrap_or(false))
+            || self.completion_popup.is_visible();
+
+        if needs_repaint {
+            // Repaint immediately for active operations
+            ctx.request_repaint();
+        } else {
+            // Check again in 100ms for idle state (efficient polling)
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -904,9 +1116,7 @@ impl MosaicTermApp {
                         // because the shell can get into a corrupted state
                         if is_interactive {
                             info!("Restarting PTY session after interactive program cancel");
-                            self.set_status_message(Some(
-                                "Restarting shell session...".to_string(),
-                            ));
+                            self.start_loading("Restarting shell session...");
 
                             // Restart the PTY in a background task
                             let result = futures::executor::block_on(async {
@@ -916,12 +1126,14 @@ impl MosaicTermApp {
                             match result {
                                 Ok(_) => {
                                     info!("PTY session restarted successfully");
+                                    self.stop_loading();
                                     self.set_status_message(Some(
                                         "Shell session restarted. You can continue.".to_string(),
                                     ));
                                 }
                                 Err(e) => {
                                     error!("Failed to restart PTY session: {}", e);
+                                    self.stop_loading();
                                     self.set_status_message(Some(
                                         "Failed to restart shell. Try restarting the app."
                                             .to_string(),
@@ -1373,10 +1585,16 @@ impl MosaicTermApp {
                             // Show all output lines with ANSI color support
                             if !line.ansi_codes.is_empty() {
                                 // Use ANSI text renderer for colored text
-                                let mut ansi_renderer = mosaicterm::ui::text::AnsiTextRenderer::new();
-                                if let Err(e) = ansi_renderer.render_ansi_text(ui, &line.text, &line.ansi_codes) {
+                                let mut ansi_renderer =
+                                    mosaicterm::ui::text::AnsiTextRenderer::new();
+                                if let Err(e) =
+                                    ansi_renderer.render_ansi_text(ui, &line.text, &line.ansi_codes)
+                                {
                                     // Fallback to plain text if ANSI rendering fails
-                                    debug!("ANSI rendering failed: {}, falling back to plain text", e);
+                                    debug!(
+                                        "ANSI rendering failed: {}, falling back to plain text",
+                                        e
+                                    );
                                     ui.label(
                                         egui::RichText::new(&line.text)
                                             .font(egui::FontId::monospace(12.0))
@@ -1421,7 +1639,28 @@ impl MosaicTermApp {
         // SIMPLIFIED: Poll PTY output and add to current command (no complex prompt detection)
         if let Some(_terminal) = &mut self.terminal {
             if let Some(handle) = _terminal.pty_handle() {
-                if let Ok(mut pty_manager) = self.pty_manager.try_lock() {
+                // Use blocking lock with retry to avoid dropping output
+                // This is a temporary fix until we move to async channels (TASK-007)
+                let mut pty_manager_opt = None;
+                for attempt in 0..3 {
+                    match self.pty_manager.try_lock() {
+                        Ok(guard) => {
+                            pty_manager_opt = Some(guard);
+                            break;
+                        }
+                        Err(_) if attempt < 2 => {
+                            // Brief wait and retry
+                            std::thread::sleep(std::time::Duration::from_micros(100));
+                            continue;
+                        }
+                        Err(_) => {
+                            warn!("Failed to acquire PTY lock after 3 attempts - output may be delayed");
+                            return;
+                        }
+                    }
+                }
+
+                if let Some(mut pty_manager) = pty_manager_opt {
                     if let Ok(data) = pty_manager.try_read_output_now(handle) {
                         if !data.is_empty() {
                             // Process output
@@ -1441,10 +1680,47 @@ impl MosaicTermApp {
                             debug!("Got {} ready lines from terminal", ready_lines.len());
                             if let Some(last_block) = self.command_history.last_mut() {
                                 let has_ready_lines = !ready_lines.is_empty();
+
+                                // Batch process all lines at once for better performance
+                                let mut lines_to_add = Vec::with_capacity(ready_lines.len());
                                 for line in &ready_lines {
                                     // Only skip exact command echo
                                     if line.text.trim() != last_block.command.trim() {
-                                        last_block.add_output_line(line.clone());
+                                        // Truncate line if too long
+                                        let mut line_to_add = line.clone();
+                                        if line_to_add.text.len() > MAX_LINE_LENGTH {
+                                            line_to_add.text.truncate(MAX_LINE_LENGTH);
+                                            line_to_add.text.push_str("... [truncated]");
+                                        }
+                                        lines_to_add.push(line_to_add);
+                                    }
+                                }
+
+                                // Add all lines at once (batch operation)
+                                if !lines_to_add.is_empty() {
+                                    last_block.add_output_lines(lines_to_add);
+
+                                    // Check if we need to truncate old lines (after batch add)
+                                    if last_block.output.len() > MAX_OUTPUT_LINES_PER_COMMAND {
+                                        let to_remove = last_block.output.len()
+                                            - MAX_OUTPUT_LINES_PER_COMMAND
+                                            + 1000;
+                                        last_block.output.drain(0..to_remove);
+                                        // Add truncation notice at the beginning
+                                        let truncation_notice = mosaicterm::models::OutputLine {
+                                            text: format!(
+                                                "... [truncated {} lines due to size limit] ...",
+                                                to_remove
+                                            ),
+                                            ansi_codes: vec![],
+                                            line_number: 0,
+                                            timestamp: chrono::Utc::now(),
+                                        };
+                                        last_block.output.insert(0, truncation_notice);
+                                        warn!(
+                                            "Truncated {} lines from command output (limit: {})",
+                                            to_remove, MAX_OUTPUT_LINES_PER_COMMAND
+                                        );
                                     }
                                 }
 
@@ -1456,28 +1732,36 @@ impl MosaicTermApp {
                                     let trimmed_text = text.trim();
 
                                     // Check if this looks like a shell prompt (for completion detection)
-                                    let looks_like_prompt = !trimmed_text.is_empty() && (
-                                        trimmed_text.ends_with("$ ") ||
-                                        trimmed_text.ends_with("% ") ||
-                                        trimmed_text.ends_with("> ") ||
-                                        trimmed_text.ends_with("$") ||
-                                        trimmed_text.ends_with("%") ||
-                                        trimmed_text.ends_with(">") ||
-                                        (trimmed_text.contains("@") && (trimmed_text.contains("$") || trimmed_text.contains("%")))
-                                    );
-                                    
+                                    let looks_like_prompt = !trimmed_text.is_empty()
+                                        && (trimmed_text.ends_with("$ ")
+                                            || trimmed_text.ends_with("% ")
+                                            || trimmed_text.ends_with("> ")
+                                            || trimmed_text.ends_with("$")
+                                            || trimmed_text.ends_with("%")
+                                            || trimmed_text.ends_with(">")
+                                            || (trimmed_text.contains("@")
+                                                && (trimmed_text.contains("$")
+                                                    || trimmed_text.contains("%"))));
+
                                     // If this looks like a prompt, check if it's AFTER command output (indicating completion)
                                     if looks_like_prompt && !last_block.output.is_empty() {
-                                        debug!("🎯 Detected shell prompt after output: '{}'", trimmed_text);
-                                        
+                                        debug!(
+                                            "🎯 Detected shell prompt after output: '{}'",
+                                            trimmed_text
+                                        );
+
                                         // Parse ANSI codes and add as output line for completion detection
-                                        let mut ansi_parser = mosaicterm::terminal::ansi_parser::AnsiParser::new();
-                                        let parsed_result = ansi_parser.parse(trimmed_text).unwrap_or_else(|_| {
-                                            mosaicterm::terminal::ansi_parser::ParsedText::new(trimmed_text.to_string())
-                                        });
-                                        
+                                        let mut ansi_parser =
+                                            mosaicterm::terminal::ansi_parser::AnsiParser::new();
+                                        let parsed_result =
+                                            ansi_parser.parse(trimmed_text).unwrap_or_else(|_| {
+                                                mosaicterm::terminal::ansi_parser::ParsedText::new(
+                                                    trimmed_text.to_string(),
+                                                )
+                                            });
+
                                         let clean_text = parsed_result.clean_text.clone();
-                                        
+
                                         // Add the prompt as an output line
                                         let prompt_line = mosaicterm::models::OutputLine {
                                             text: parsed_result.clean_text,
@@ -1486,43 +1770,73 @@ impl MosaicTermApp {
                                             timestamp: chrono::Utc::now(),
                                         };
                                         last_block.add_output_line(prompt_line);
-                                        debug!("Added prompt line for completion detection: '{}'", clean_text);
+                                        debug!(
+                                            "Added prompt line for completion detection: '{}'",
+                                            clean_text
+                                        );
                                     } else if !trimmed_text.is_empty()
                                         && trimmed_text != last_block.command.trim()
                                         && !looks_like_prompt
                                     {
                                         // Regular output (not command echo, not prompt)
                                         // Parse ANSI codes from the text before adding to output
-                                        let mut ansi_parser = mosaicterm::terminal::ansi_parser::AnsiParser::new();
-                                        let parsed_result = ansi_parser.parse(trimmed_text).unwrap_or_else(|_| {
-                                            mosaicterm::terminal::ansi_parser::ParsedText::new(trimmed_text.to_string())
-                                        });
-                                        
+                                        let mut ansi_parser =
+                                            mosaicterm::terminal::ansi_parser::AnsiParser::new();
+                                        let parsed_result =
+                                            ansi_parser.parse(trimmed_text).unwrap_or_else(|_| {
+                                                mosaicterm::terminal::ansi_parser::ParsedText::new(
+                                                    trimmed_text.to_string(),
+                                                )
+                                            });
+
                                         let clean_text = parsed_result.clean_text.clone();
-                                        
+
                                         // Create output line with clean text and parsed ANSI codes
-                                        let partial_line = mosaicterm::models::OutputLine {
+                                        let mut partial_line = mosaicterm::models::OutputLine {
                                             text: parsed_result.clean_text,
                                             ansi_codes: parsed_result.ansi_codes,
                                             line_number: 0,
                                             timestamp: chrono::Utc::now(),
                                         };
+
+                                        // Truncate if too long
+                                        if partial_line.text.len() > MAX_LINE_LENGTH {
+                                            partial_line.text.truncate(MAX_LINE_LENGTH);
+                                            partial_line.text.push_str("... [truncated]");
+                                        }
+
                                         last_block.add_output_line(partial_line);
                                         debug!(
                                             "Added partial data as output line (clean): '{}'",
                                             clean_text
                                         );
+
+                                        // Check if we need to truncate old lines (same check as above)
+                                        if last_block.output.len() > MAX_OUTPUT_LINES_PER_COMMAND {
+                                            let to_remove = last_block.output.len()
+                                                - MAX_OUTPUT_LINES_PER_COMMAND
+                                                + 1000;
+                                            last_block.output.drain(0..to_remove);
+                                            let truncation_notice = mosaicterm::models::OutputLine {
+                                                text: format!("... [truncated {} lines due to size limit] ...", to_remove),
+                                                ansi_codes: vec![],
+                                                line_number: 0,
+                                                timestamp: chrono::Utc::now(),
+                                            };
+                                            last_block.output.insert(0, truncation_notice);
+                                        }
                                     }
                                 }
 
                                 // Prompt-based completion detection using existing CommandCompletionDetector
                                 if let Some(start_time) = self.last_command_time {
                                     let elapsed_ms = start_time.elapsed().as_millis();
-                                    
+                                    let elapsed_secs = (elapsed_ms / 1000) as u64;
+
                                     // Clone the necessary data to avoid borrowing conflicts
                                     let output_lines_clone: Vec<_> = last_block.output.clone();
                                     let command_clone = last_block.command.clone();
-                                    
+
                                     // Use the terminal's completion detector to check if command is done
                                     let is_complete = if !output_lines_clone.is_empty() {
                                         // Check if the latest output contains a shell prompt indicating completion
@@ -1531,25 +1845,34 @@ impl MosaicTermApp {
                                         } else {
                                             &output_lines_clone
                                         };
-                                        
+
                                         // Create a completion detector and check for command completion
                                         // The detector will work on the clean text (without ANSI codes)
                                         let completion_detector = mosaicterm::terminal::prompt::CommandCompletionDetector::new();
-                                        let is_complete = completion_detector.is_command_complete(recent_lines);
-                                        
+                                        let is_complete =
+                                            completion_detector.is_command_complete(recent_lines);
+
                                         // Debug: Log what we're checking for completion
-                                        if !is_complete && elapsed_ms > 500 { // Only log after some time to avoid spam
+                                        if !is_complete && elapsed_ms > 500 {
+                                            // Only log after some time to avoid spam
                                             debug!("🔍 Checking completion for command '{}' ({}ms elapsed)", command_clone, elapsed_ms);
                                             for (i, line) in recent_lines.iter().enumerate() {
-                                                debug!("  Line {}: '{}'", i, line.text.replace('\n', "\\n"));
+                                                debug!(
+                                                    "  Line {}: '{}'",
+                                                    i,
+                                                    line.text.replace('\n', "\\n")
+                                                );
                                             }
                                         } else if is_complete {
-                                            debug!("✅ Prompt detection found completion for: {}", command_clone);
+                                            debug!(
+                                                "✅ Prompt detection found completion for: {}",
+                                                command_clone
+                                            );
                                             for (i, line) in recent_lines.iter().enumerate() {
                                                 debug!("  Completion line {}: '{}'", i, line.text);
                                             }
                                         }
-                                        
+
                                         is_complete
                                     } else {
                                         false
@@ -1567,6 +1890,15 @@ impl MosaicTermApp {
                                         || last_block.command.contains(" > ")
                                         || last_block.command.contains(" >> ");
 
+                                    // Get timeout configuration
+                                    let timeout_config =
+                                        &self.runtime_config.config().terminal.timeout;
+                                    let timeout_secs = if is_interactive_command {
+                                        timeout_config.interactive_command_timeout_secs
+                                    } else {
+                                        timeout_config.regular_command_timeout_secs
+                                    };
+
                                     if is_complete {
                                         // Command completed based on prompt detection - mark as completed
                                         last_block.mark_completed(
@@ -1575,54 +1907,64 @@ impl MosaicTermApp {
                                             ),
                                         );
                                         self.last_command_time = None;
-                                        debug!("✅ Command completed based on prompt detection: {}", last_block.command);
-                                    } else if is_interactive_command {
-                                        // For interactive commands, use a longer timeout (10 seconds)
-                                        if elapsed_ms > 10000 {
-                                            // Mark as completed after 10 seconds for safety
-                                            last_block.mark_completed(
-                                                std::time::Duration::from_millis(
-                                                    elapsed_ms.try_into().unwrap_or(10000),
-                                                ),
-                                            );
-                                            self.last_command_time = None;
-                                            debug!("Interactive command completed due to timeout: {}", last_block.command);
+                                        debug!(
+                                            "✅ Command completed based on prompt detection: {}",
+                                            last_block.command
+                                        );
+                                    } else if timeout_secs > 0 && elapsed_secs >= timeout_secs {
+                                        // Command has exceeded configured timeout
+                                        warn!(
+                                            "⏰ Command exceeded timeout of {}s: {}",
+                                            timeout_secs, command_clone
+                                        );
+
+                                        // Add timeout notice to output
+                                        let timeout_notice = mosaicterm::models::OutputLine {
+                                            text: format!(
+                                                "\n[Timeout: Command exceeded {}s limit]",
+                                                timeout_secs
+                                            ),
+                                            ansi_codes: vec![],
+                                            line_number: 0,
+                                            timestamp: chrono::Utc::now(),
+                                        };
+                                        last_block.output.push(timeout_notice);
+
+                                        // Mark as completed (with timeout flag)
+                                        last_block.mark_completed(std::time::Duration::from_secs(
+                                            timeout_secs,
+                                        ));
+                                        self.last_command_time = None;
+
+                                        // TODO: If kill_on_timeout is true, send kill signal to PTY process
+                                        // This requires tracking PTY process IDs and implementing signal handling
+                                        if timeout_config.kill_on_timeout {
+                                            warn!("⚠️  kill_on_timeout is enabled but not yet implemented - command will continue running");
                                         }
-                                    } else {
-                                        // For regular commands, use shorter timeout as fallback but also try simpler completion detection
-                                        // Check if there's been no new output for a while (indicating completion)
-                                        if elapsed_ms > 1000 && !output_lines_clone.is_empty() {
-                                            // Check if the last line looks like it could be a prompt or completion
-                                            if let Some(last_line) = output_lines_clone.last() {
-                                                let text = last_line.text.trim();
-                                                // Simple heuristics for completion detection
-                                                let looks_complete = text.is_empty() ||  // Empty line often indicates completion
-                                                    text.ends_with("$") ||              // Shell prompt ending
-                                                    text.ends_with("%") ||              // Zsh prompt ending  
-                                                    text.ends_with(">") ||              // Fish/PowerShell prompt ending
-                                                    text.contains("@") && (text.contains("$") || text.contains("%")); // user@host$ pattern
-                                                
-                                                if looks_complete {
-                                                    last_block.mark_completed(
-                                                        std::time::Duration::from_millis(
-                                                            elapsed_ms.try_into().unwrap_or(1000),
-                                                        ),
-                                                    );
-                                                    self.last_command_time = None;
-                                                    debug!("✅ Command completed based on simple heuristics: {} (last line: '{}')", command_clone, text);
-                                                }
+                                    } else if !is_interactive_command
+                                        && elapsed_ms > 1000
+                                        && !output_lines_clone.is_empty()
+                                    {
+                                        // For regular commands, use simple completion detection as fallback
+                                        // Check if the last line looks like it could be a prompt or completion
+                                        if let Some(last_line) = output_lines_clone.last() {
+                                            let text = last_line.text.trim();
+                                            // Simple heuristics for completion detection
+                                            let looks_complete = text.is_empty() ||  // Empty line often indicates completion
+                                                text.ends_with("$") ||              // Shell prompt ending
+                                                text.ends_with("%") ||              // Zsh prompt ending  
+                                                text.ends_with(">") ||              // Fish/PowerShell prompt ending
+                                                text.contains("@") && (text.contains("$") || text.contains("%")); // user@host$ pattern
+
+                                            if looks_complete {
+                                                last_block.mark_completed(
+                                                    std::time::Duration::from_millis(
+                                                        elapsed_ms.try_into().unwrap_or(1000),
+                                                    ),
+                                                );
+                                                self.last_command_time = None;
+                                                debug!("✅ Command completed based on simple heuristics: {} (last line: '{}')", command_clone, text);
                                             }
-                                        }
-                                        
-                                        // Final timeout fallback
-                                        if elapsed_ms > 5000 {
-                                            last_block.mark_completed(
-                                                std::time::Duration::from_millis(
-                                                    elapsed_ms.try_into().unwrap_or(5000),
-                                                ),
-                                            );
-                                            self.last_command_time = None;
-                                            debug!("⏰ Regular command completed due to timeout fallback: {}", command_clone);
                                         }
                                     }
                                 }

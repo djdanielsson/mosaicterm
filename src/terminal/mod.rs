@@ -59,6 +59,29 @@ impl Terminal {
     }
 
     /// Create terminal with specific shell type
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - Terminal session configuration
+    /// * `shell_type` - Type of shell (Bash, Zsh, Fish, etc.)
+    /// * `pty_manager` - Shared PTY manager for process coordination
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use mosaicterm::terminal::{Terminal, TerminalSession};
+    /// use mosaicterm::models::ShellType;
+    /// use mosaicterm::pty::PtyManager;
+    /// use std::sync::Arc;
+    /// use tokio::sync::Mutex;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session = TerminalSession::new(ShellType::Bash, std::env::current_dir()?);
+    /// let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
+    /// let terminal = Terminal::with_shell(session, ShellType::Bash, pty_manager);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_shell(
         session: TerminalSession,
         shell_type: ShellType,
@@ -70,6 +93,33 @@ impl Terminal {
     }
 
     /// Initialize terminal session with PTY
+    ///
+    /// Spawns a new shell process in a pseudoterminal and prepares it for command execution.
+    /// The shell is started with minimal configuration to ensure predictable behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - PTY creation fails
+    /// - Shell process cannot be spawned
+    /// - Initial shell setup fails
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mosaicterm::terminal::{Terminal, TerminalSession};
+    /// # use mosaicterm::models::ShellType;
+    /// # use mosaicterm::pty::PtyManager;
+    /// # use std::sync::Arc;
+    /// # use tokio::sync::Mutex;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let session = TerminalSession::new(ShellType::Bash, std::env::current_dir()?);
+    /// # let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
+    /// let mut terminal = Terminal::new(session, pty_manager);
+    /// terminal.initialize_session().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn initialize_session(&mut self) -> Result<()> {
         let mut pty_manager = self.pty_manager.lock().await;
 
@@ -531,10 +581,11 @@ mod tests {
         let result = terminal.process_input("echo hello").await.unwrap();
 
         // Should not be ready yet (no newline)
-        match result {
-            InputResult::NoOp => {}
-            _ => panic!("Expected NoOp for incomplete command"),
-        }
+        assert!(
+            matches!(result, InputResult::NoOp),
+            "Expected NoOp for incomplete command, got {:?}",
+            result
+        );
     }
 
     #[tokio::test]
@@ -547,7 +598,7 @@ mod tests {
 
         match result {
             InputResult::CommandReady(cmd) => assert_eq!(cmd, "echo hello"),
-            _ => panic!("Expected CommandReady"),
+            other => panic!("Expected CommandReady, got {:?}", other),
         }
 
         assert_eq!(terminal.command_history().len(), 1);

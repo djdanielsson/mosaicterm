@@ -8,7 +8,7 @@
 
 use mosaicterm::error::Error;
 use mosaicterm::models::{CommandBlock, ExecutionStatus};
-use mosaicterm::ui::{CommandBlocks, ScrollableHistory, InputPrompt};
+use mosaicterm::ui::{CommandBlocks, InputPrompt, ScrollableHistory};
 use std::path::PathBuf;
 
 // Test command block rendering with success status
@@ -39,7 +39,10 @@ fn test_command_block_rendering_with_error_status() {
     let result = render_command_block(&block, &style);
 
     // Assert
-    assert!(result.is_ok(), "Error command block rendering should succeed");
+    assert!(
+        result.is_ok(),
+        "Error command block rendering should succeed"
+    );
     let rendered = result.unwrap();
     assert!(!rendered.command_area.text.is_empty());
     assert!(rendered.output_area.text.contains("command not found"));
@@ -50,7 +53,10 @@ fn test_command_block_rendering_with_error_status() {
 fn test_scrollable_history_with_multiple_blocks() {
     // Arrange
     let blocks = create_mock_command_blocks(5);
-    let viewport = Viewport { width: 800.0, height: 600.0 };
+    let viewport = Viewport {
+        width: 800.0,
+        height: 600.0,
+    };
     let scroll_position = 0.0;
 
     // Act
@@ -67,14 +73,20 @@ fn test_scrollable_history_with_multiple_blocks() {
 fn test_scrollable_history_with_scroll_position() {
     // Arrange
     let blocks = create_mock_command_blocks(10);
-    let viewport = Viewport { width: 800.0, height: 600.0 };
+    let viewport = Viewport {
+        width: 800.0,
+        height: 600.0,
+    };
     let scroll_position = 200.0; // Scrolled down
 
     // Act
     let result = calculate_visible_blocks(&blocks, &viewport, scroll_position);
 
     // Assert
-    assert!(result.is_ok(), "Scrolled visible blocks calculation should succeed");
+    assert!(
+        result.is_ok(),
+        "Scrolled visible blocks calculation should succeed"
+    );
     let visible = result.unwrap();
     assert!(visible.scroll_offset >= 0.0);
 }
@@ -120,7 +132,10 @@ fn test_ansi_color_rendering() {
 fn test_viewport_calculations() {
     // Arrange
     let blocks = create_mock_command_blocks(3);
-    let small_viewport = Viewport { width: 400.0, height: 200.0 };
+    let small_viewport = Viewport {
+        width: 400.0,
+        height: 200.0,
+    };
     let scroll_position = 0.0;
 
     // Act
@@ -138,7 +153,10 @@ fn test_viewport_calculations() {
 fn test_empty_command_history_rendering() {
     // Arrange
     let blocks = vec![];
-    let viewport = Viewport { width: 800.0, height: 600.0 };
+    let viewport = Viewport {
+        width: 800.0,
+        height: 600.0,
+    };
     let scroll_position = 0.0;
 
     // Act
@@ -153,11 +171,8 @@ fn test_empty_command_history_rendering() {
 // Helper functions with working implementations
 
 fn create_mock_command_block(command: &str, output: &str, success: bool) -> CommandBlock {
-    let mut block = CommandBlock::new(
-        command.to_string(),
-        PathBuf::from("/tmp")
-    );
-    
+    let mut block = CommandBlock::new(command.to_string(), PathBuf::from("/tmp"));
+
     // Add output
     if !output.is_empty() {
         for line in output.lines() {
@@ -169,14 +184,14 @@ fn create_mock_command_block(command: &str, output: &str, success: bool) -> Comm
             });
         }
     }
-    
+
     // Set status based on success
     if success {
         block.mark_completed(std::time::Duration::from_millis(100));
     } else {
-        block.mark_failed(std::time::Duration::from_millis(100));
+        block.mark_failed(std::time::Duration::from_millis(100), 1);
     }
-    
+
     block
 }
 
@@ -197,7 +212,9 @@ fn render_command_block(block: &CommandBlock, _style: &BlockStyle) -> Result<Ren
             height: 20.0,
         },
         output_area: RenderArea {
-            text: block.output.iter()
+            text: block
+                .output
+                .iter()
                 .map(|line| line.text.clone())
                 .collect::<Vec<_>>()
                 .join("\n"),
@@ -209,24 +226,26 @@ fn render_command_block(block: &CommandBlock, _style: &BlockStyle) -> Result<Ren
 
 fn create_mock_command_blocks(count: usize) -> Vec<CommandBlock> {
     (0..count)
-        .map(|i| create_mock_command_block(
-            &format!("command_{}", i),
-            &format!("output_{}", i),
-            true
-        ))
+        .map(|i| {
+            create_mock_command_block(&format!("command_{}", i), &format!("output_{}", i), true)
+        })
         .collect()
 }
 
-fn calculate_visible_blocks(blocks: &[CommandBlock], viewport: &Viewport, scroll_position: f32) -> Result<VisibleBlocks, Error> {
+fn calculate_visible_blocks(
+    blocks: &[CommandBlock],
+    viewport: &Viewport,
+    scroll_position: f32,
+) -> Result<VisibleBlocks, Error> {
     let block_height = 60.0; // Estimated height per block
     let visible_height = viewport.height - scroll_position;
     let max_visible = (visible_height / block_height).ceil() as usize;
-    
+
     let start_index = (scroll_position / block_height).floor() as usize;
     let end_index = (start_index + max_visible).min(blocks.len());
-    
+
     let visible_blocks = blocks[start_index..end_index].to_vec();
-    
+
     Ok(VisibleBlocks {
         blocks: visible_blocks,
         scroll_offset: scroll_position,
@@ -243,7 +262,11 @@ fn create_mock_input_style() -> InputStyle {
     }
 }
 
-fn render_input_prompt(input: &str, cursor_pos: usize, _style: &InputStyle) -> Result<InputRender, Error> {
+fn render_input_prompt(
+    input: &str,
+    cursor_pos: usize,
+    _style: &InputStyle,
+) -> Result<InputRender, Error> {
     Ok(InputRender {
         text: input.to_string(),
         cursor_position: cursor_pos,
@@ -265,9 +288,13 @@ fn create_mock_color_palette() -> ColorPalette {
     }
 }
 
-fn render_ansi_text(text: &str, ansi_codes: &[AnsiCode], _palette: &ColorPalette) -> Result<ColoredText, Error> {
+fn render_ansi_text(
+    text: &str,
+    ansi_codes: &[AnsiCode],
+    _palette: &ColorPalette,
+) -> Result<ColoredText, Error> {
     let mut segments = Vec::new();
-    
+
     // Simple implementation - create one segment with all attributes
     segments.push(ColorSegment {
         text: text.to_string(),
@@ -281,7 +308,7 @@ fn render_ansi_text(text: &str, ansi_codes: &[AnsiCode], _palette: &ColorPalette
         is_italic: false,
         is_underline: false,
     });
-    
+
     Ok(ColoredText {
         text: text.to_string(),
         segments,

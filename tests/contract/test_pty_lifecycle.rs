@@ -6,9 +6,11 @@
 //! Contract: PTY Process Lifecycle Management
 //! See: specs/001-mosaicterm-terminal-emulator/contracts/pty-lifecycle.md
 
-use std::collections::HashMap;
 use mosaicterm::error::Error;
-use mosaicterm::pty::{PtyHandle, PtyManager, PtyInfo, create_pty, is_alive, terminate_pty, get_pty_info};
+use mosaicterm::pty::{
+    create_pty, get_pty_info, is_alive, terminate_pty, PtyHandle, PtyInfo, PtyManager,
+};
+use std::collections::HashMap;
 
 // Test PTY creation with valid command
 #[test]
@@ -22,7 +24,10 @@ fn test_pty_creation_with_valid_command() {
     let result = create_pty(command, &args, &env);
 
     // Assert
-    assert!(result.is_ok(), "PTY creation should succeed with valid command");
+    assert!(
+        result.is_ok(),
+        "PTY creation should succeed with valid command"
+    );
     let handle = result.unwrap();
     assert!(!handle.id.is_empty(), "PTY handle should have valid ID");
 }
@@ -39,7 +44,10 @@ fn test_pty_creation_with_invalid_command() {
     let result = create_pty(command, &args, &env);
 
     // Assert - Should still create handle, actual validation happens during execution
-    assert!(result.is_ok(), "PTY creation should succeed even with invalid command");
+    assert!(
+        result.is_ok(),
+        "PTY creation should succeed even with invalid command"
+    );
 }
 
 // Test PTY status check for running process
@@ -52,7 +60,10 @@ fn test_pty_status_check_for_running_process() {
     let is_running = is_alive(&handle);
 
     // Assert
-    assert!(is_running, "PTY should be reported as alive for valid handle");
+    assert!(
+        is_running,
+        "PTY should be reported as alive for valid handle"
+    );
 }
 
 // Test PTY status check for terminated process
@@ -65,7 +76,10 @@ fn test_pty_status_check_for_terminated_process() {
     let is_running = is_alive(&handle);
 
     // Assert
-    assert!(!is_running, "PTY should be reported as not alive for terminated handle");
+    assert!(
+        !is_running,
+        "PTY should be reported as not alive for terminated handle"
+    );
 }
 
 // Test PTY termination
@@ -91,7 +105,10 @@ fn test_pty_termination_of_already_terminated_process() {
     let result = terminate_pty(&handle);
 
     // Assert - Should handle gracefully
-    assert!(result.is_err(), "Terminating already terminated PTY should return error");
+    assert!(
+        result.is_err(),
+        "Terminating already terminated PTY should return error"
+    );
 }
 
 // Test PTY info retrieval
@@ -120,7 +137,10 @@ fn test_pty_info_retrieval_for_invalid_handle() {
     let result = get_pty_info(&handle);
 
     // Assert - Should still return info, even if limited
-    assert!(result.is_ok(), "PTY info retrieval should handle invalid handles gracefully");
+    assert!(
+        result.is_ok(),
+        "PTY info retrieval should handle invalid handles gracefully"
+    );
 }
 
 // Test environment variable handling
@@ -136,7 +156,10 @@ fn test_environment_variable_handling() {
     let result = create_pty(command, &args, &env);
 
     // Assert
-    assert!(result.is_ok(), "PTY creation with environment variables should succeed");
+    assert!(
+        result.is_ok(),
+        "PTY creation with environment variables should succeed"
+    );
 }
 
 // Test working directory handling
@@ -151,7 +174,10 @@ fn test_working_directory_handling() {
     let result = create_pty(command, &args, &env);
 
     // Assert
-    assert!(result.is_ok(), "PTY creation with working directory should succeed");
+    assert!(
+        result.is_ok(),
+        "PTY creation with working directory should succeed"
+    );
 }
 
 // Test error handling for invalid handles
@@ -159,11 +185,14 @@ fn test_working_directory_handling() {
 fn test_error_handling_for_invalid_handles() {
     // This test ensures proper error handling for invalid/corrupted handles
     let invalid_handle = create_invalid_pty_handle();
-    
+
     // Test termination of invalid handle
     let terminate_result = terminate_pty(&invalid_handle);
-    assert!(terminate_result.is_err(), "Should error when terminating invalid handle");
-    
+    assert!(
+        terminate_result.is_err(),
+        "Should error when terminating invalid handle"
+    );
+
     // Test status check of invalid handle
     let status = is_alive(&invalid_handle);
     assert!(!status, "Invalid handle should not be alive");

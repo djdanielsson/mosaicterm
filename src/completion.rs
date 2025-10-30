@@ -1,6 +1,49 @@
 //! Command and Path Completion
 //!
 //! Provides intelligent auto-completion for commands, arguments, and file paths.
+//!
+//! ## Overview
+//!
+//! The completion system scans the system `$PATH` to build a cache of available commands,
+//! and provides context-aware completions for file paths and command arguments.
+//!
+//! ## Features
+//!
+//! - **Command Completion:** Matches against executables in `$PATH`
+//! - **Path Completion:** Completes file and directory names
+//! - **Tilde Expansion:** Expands `~` to home directory
+//! - **Auto-Refresh:** Cache auto-refreshes every 5 minutes
+//! - **Common Commands:** Suggests frequently used commands
+//!
+//! ## Usage
+//!
+//! ```no_run
+//! use mosaicterm::completion::CompletionProvider;
+//! use std::path::Path;
+//!
+//! let mut provider = CompletionProvider::new();
+//!
+//! // Get completions for partial input
+//! let completions = provider.get_completions("ech", Path::new("/tmp"))?;
+//!
+//! for item in completions.suggestions {
+//!     println!("{}: {}", item.text, item.label);
+//! }
+//! # Ok::<(), mosaicterm::error::Error>(())
+//! ```
+//!
+//! ## Cache Management
+//!
+//! The command cache is automatically refreshed when:
+//! - First initialized (on startup)
+//! - 5 minutes have elapsed since last refresh
+//! - Manually requested via `refresh_command_cache_if_needed()`
+//!
+//! ## Performance
+//!
+//! - Cache stores ~500-2000 commands (typical system)
+//! - Completion queries run in O(n) time (linear scan with prefix match)
+//! - Auto-refresh uses efficient filesystem scanning (executables only)
 
 use crate::error::Result;
 use std::env;
@@ -246,8 +289,11 @@ impl CompletionProvider {
         }
     }
 
-    /// Refresh the command cache if it's stale
-    fn refresh_command_cache_if_needed(&mut self) -> Result<()> {
+    /// Refresh the command cache if the timeout has elapsed
+    ///
+    /// This checks if the cache is stale (5 minute timeout) and refreshes if needed.
+    /// Safe to call frequently as it only refreshes when the timeout expires.
+    pub fn refresh_command_cache_if_needed(&mut self) -> Result<()> {
         let should_refresh = self
             .cache_updated
             .map(|updated| updated.elapsed() > self.cache_timeout)

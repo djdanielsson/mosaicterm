@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tracing::{info, warn};
 
 /// Main configuration structure for MosaicTerm
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -102,6 +103,14 @@ pub struct TerminalConfig {
 
     /// Whether to enable mouse support
     pub mouse_support: bool,
+
+    /// Maximum number of commands to keep in history
+    /// Default: 1000
+    pub max_history_size: usize,
+
+    /// Command execution timeout settings
+    #[serde(default)]
+    pub timeout: TimeoutConfig,
 }
 
 impl Default for TerminalConfig {
@@ -114,6 +123,40 @@ impl Default for TerminalConfig {
             inherit_env: true,
             scrollback_buffer: 10000,
             mouse_support: true,
+            max_history_size: 1000,
+            timeout: TimeoutConfig::default(),
+        }
+    }
+}
+
+/// Command timeout configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeoutConfig {
+    /// Timeout in seconds for regular commands (0 = disabled)
+    /// Default: 30 seconds
+    pub regular_command_timeout_secs: u64,
+
+    /// Timeout in seconds for interactive commands (0 = disabled)
+    /// Default: 300 seconds (5 minutes)
+    pub interactive_command_timeout_secs: u64,
+
+    /// Whether to automatically kill commands that exceed timeout
+    /// Default: false (just mark as completed)
+    pub kill_on_timeout: bool,
+
+    /// Grace period in seconds after timeout before force-killing
+    /// Only used if kill_on_timeout is true
+    /// Default: 5 seconds
+    pub kill_grace_period_secs: u64,
+}
+
+impl Default for TimeoutConfig {
+    fn default() -> Self {
+        Self {
+            regular_command_timeout_secs: 30,
+            interactive_command_timeout_secs: 300,
+            kill_on_timeout: false,
+            kill_grace_period_secs: 5,
         }
     }
 }
@@ -328,25 +371,49 @@ pub enum ConfigError {
 
     #[error("Parse int error: {0}")]
     ParseInt(#[from] std::num::ParseIntError),
+
+    #[error("TOML parsing error: {0}")]
+    TomlParse(#[from] toml::de::Error),
+
+    #[error("TOML serialization error: {0}")]
+    TomlSerialize(#[from] toml::ser::Error),
+
+    #[error("Config file not found in any standard location")]
+    ConfigFileNotFound,
 }
 
 impl Config {
     /// Load configuration from default locations
     pub fn load() -> Result<Self, ConfigError> {
-        // TODO: Implement file-based configuration loading
-        let config = Self::default();
-
         // Try to load from standard locations
         let config_paths = Self::get_config_paths();
 
-        for path in config_paths {
+        for path in &config_paths {
             if path.exists() {
-                // TODO: Load and parse configuration file
-                // For now, return default config
-                break;
+                match Self::load_from_file(path) {
+                    Ok(config) => {
+                        info!("Loaded configuration from: {:?}", path);
+                        return Ok(config);
+                    }
+                    Err(e) => {
+                        warn!("Failed to load config from {:?}: {}", path, e);
+                        continue;
+                    }
+                }
             }
         }
 
+        // No config file found, use defaults
+        info!("No config file found, using defaults");
+        let config = Self::default();
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Load configuration from a specific file
+    pub fn load_from_file(path: &PathBuf) -> Result<Self, ConfigError> {
+        let content = std::fs::read_to_string(path)?;
+        let config: Config = toml::from_str(&content)?;
         config.validate()?;
         Ok(config)
     }
@@ -355,8 +422,40 @@ impl Config {
     pub fn save(&self) -> Result<(), ConfigError> {
         self.validate()?;
 
-        // TODO: Implement configuration saving
-        // For now, just validate
+        let config_paths = Self::get_config_paths();
+
+        // Try to save to the first writable location
+        for path in &config_paths {
+            // Create parent directories if they don't exist
+            if let Some(parent) = path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    warn!("Failed to create config directory {:?}: {}", parent, e);
+                    continue;
+                }
+            }
+
+            match self.save_to_file(path) {
+                Ok(()) => {
+                    info!("Saved configuration to: {:?}", path);
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Failed to save config to {:?}: {}", path, e);
+                    continue;
+                }
+            }
+        }
+
+        Err(ConfigError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Could not save config to any standard location",
+        )))
+    }
+
+    /// Save configuration to a specific file
+    pub fn save_to_file(&self, path: &PathBuf) -> Result<(), ConfigError> {
+        let toml_string = toml::to_string_pretty(self)?;
+        std::fs::write(path, toml_string)?;
         Ok(())
     }
 
@@ -474,5 +573,60 @@ mod tests {
         assert_eq!(theme.background.r, 0.1);
         assert_eq!(theme.foreground.r, 0.9);
         assert_eq!(theme.accent.b, 0.9);
+    }
+
+    #[test]
+    fn test_config_serialization() {
+        let config = Config::default();
+
+        // Test that we can serialize to TOML
+        let toml_string = toml::to_string_pretty(&config);
+        assert!(toml_string.is_ok());
+
+        // Test that we can deserialize it back
+        let toml_str = toml_string.unwrap();
+        let deserialized: Result<Config, _> = toml::from_str(&toml_str);
+        assert!(deserialized.is_ok());
+    }
+
+    #[test]
+    fn test_config_save_and_load() {
+        use tempfile::NamedTempFile;
+
+        let config = Config::default();
+        let temp_file = NamedTempFile::new().unwrap();
+        let temp_path = temp_file.path().to_path_buf();
+
+        // Test saving
+        assert!(config.save_to_file(&temp_path).is_ok());
+
+        // Test loading
+        let loaded_config = Config::load_from_file(&temp_path);
+        assert!(loaded_config.is_ok());
+
+        // Verify the loaded config is valid
+        let loaded = loaded_config.unwrap();
+        assert_eq!(loaded.ui.font_family, config.ui.font_family);
+        assert_eq!(loaded.ui.font_size, config.ui.font_size);
+    }
+
+    #[test]
+    fn test_config_load_missing_file() {
+        let non_existent = PathBuf::from("/tmp/non_existent_config_xyz123.toml");
+        let result = Config::load_from_file(&non_existent);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_load_invalid_toml() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        write!(temp_file, "invalid toml content [[[").unwrap();
+        let temp_path = temp_file.path().to_path_buf();
+
+        let result = Config::load_from_file(&temp_path);
+        assert!(result.is_err());
     }
 }

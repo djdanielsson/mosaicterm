@@ -109,6 +109,10 @@ pub struct TerminalConfig {
     /// Supports variables: $USER, $HOSTNAME, $PWD, $HOME, $SHELL
     /// Example: "$USER@$HOSTNAME:$PWD$ "
     pub prompt_format: String,
+
+    /// Command execution timeout settings
+    #[serde(default)]
+    pub timeout: TimeoutConfig,
 }
 
 impl Default for TerminalConfig {
@@ -123,6 +127,39 @@ impl Default for TerminalConfig {
             scrollback_buffer: 1000000, // Increased to 1M for unlimited output
             bell_style: BellStyle::Sound,
             prompt_format: "$USER@$HOSTNAME:$PWD$ ".to_string(),
+            timeout: TimeoutConfig::default(),
+        }
+    }
+}
+
+/// Command timeout configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeoutConfig {
+    /// Timeout in seconds for regular commands (0 = disabled)
+    /// Default: 30 seconds
+    pub regular_command_timeout_secs: u64,
+
+    /// Timeout in seconds for interactive commands (0 = disabled)
+    /// Default: 300 seconds (5 minutes)
+    pub interactive_command_timeout_secs: u64,
+
+    /// Whether to automatically kill commands that exceed timeout
+    /// Default: false (just mark as completed)
+    pub kill_on_timeout: bool,
+
+    /// Grace period in seconds after timeout before force-killing
+    /// Only used if kill_on_timeout is true
+    /// Default: 5 seconds
+    pub kill_grace_period_secs: u64,
+}
+
+impl Default for TimeoutConfig {
+    fn default() -> Self {
+        Self {
+            regular_command_timeout_secs: 30,
+            interactive_command_timeout_secs: 300,
+            kill_on_timeout: false,
+            kill_grace_period_secs: 5,
         }
     }
 }
@@ -151,7 +188,7 @@ impl Default for PtyConfig {
         Self {
             environment: std::collections::HashMap::new(),
             inherit_env: true,
-            buffer_size: 1024 * 1024, // 1MB for long output
+            buffer_size: 256 * 1024, // 256KB - balanced for most use cases
             raw_mode: true,
             timeout_ms: 10, // Reduced for faster response
         }
@@ -246,6 +283,20 @@ impl RuntimeConfig {
             shell_manager,
             config_path: None,
         })
+    }
+
+    /// Create a minimal runtime configuration (used as fallback when initialization fails)
+    pub fn new_minimal() -> Self {
+        let theme_manager = ThemeManager::new();
+        let shell_manager = ShellManager::new();
+        let config = Config::default();
+
+        Self {
+            config,
+            theme_manager,
+            shell_manager,
+            config_path: None,
+        }
     }
 
     /// Load configuration from file
@@ -474,6 +525,7 @@ pub mod utils {
             } else {
                 overlay.prompt_format
             },
+            timeout: overlay.timeout,
         }
     }
 

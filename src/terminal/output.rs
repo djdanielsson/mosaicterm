@@ -63,7 +63,7 @@ impl OutputProcessor {
             current_ansi_codes: Vec::new(),
             line_counter: 0,
             in_ansi_sequence: false,
-            max_buffer_size: 100 * 1024 * 1024, // 100MB for unlimited output
+            max_buffer_size: 10 * 1024 * 1024, // 10MB - prevents excessive memory use
         }
     }
 }

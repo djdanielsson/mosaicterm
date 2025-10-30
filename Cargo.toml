@@ -54,6 +54,36 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "performance"
 harness = false
 
+# Integration tests
+[[test]]
+name = "test_basic_commands"
+path = "tests/integration/test_basic_commands.rs"
+
+[[test]]
+name = "test_command_flows"
+path = "tests/integration/test_command_flows.rs"
+
+[[test]]
+name = "test_large_output"
+path = "tests/integration/test_large_output.rs"
+
+[[test]]
+name = "test_error_handling"
+path = "tests/integration/test_error_handling.rs"
+
+# Contract tests
+[[test]]
+name = "test_command_execution"
+path = "tests/contract/test_command_execution.rs"
+
+[[test]]
+name = "test_pty_lifecycle"
+path = "tests/contract/test_pty_lifecycle.rs"
+
+[[test]]
+name = "test_ui_rendering"
+path = "tests/contract/test_ui_rendering.rs"
+
 [profile.dev]
 opt-level = 1
 debug = true

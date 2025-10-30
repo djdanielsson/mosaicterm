@@ -95,9 +95,9 @@ pub struct StreamConfig {
 impl Default for StreamConfig {
     fn default() -> Self {
         Self {
-            read_buffer_size: 1024 * 1024, // 1MB for long output
-            write_buffer_size: 4096,
-            read_timeout_ms: 10, // Reduced for faster response
+            read_buffer_size: 128 * 1024, // 128KB - sufficient for most commands
+            write_buffer_size: 8192,      // 8KB - better for write performance
+            read_timeout_ms: 10,          // Reduced for faster response
             non_blocking: true,
         }
     }
@@ -168,8 +168,8 @@ mod tests {
     #[tokio::test]
     async fn test_stream_config_defaults() {
         let config = StreamConfig::default();
-        assert_eq!(config.read_buffer_size, 1048576); // 1MB
-        assert_eq!(config.write_buffer_size, 4096);
+        assert_eq!(config.read_buffer_size, 128 * 1024); // 128KB
+        assert_eq!(config.write_buffer_size, 8192); // 8KB
         assert_eq!(config.read_timeout_ms, 10);
         assert!(config.non_blocking);
     }

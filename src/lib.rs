@@ -1,8 +1,86 @@
 //! MosaicTerm - A Rust GUI terminal emulator inspired by Warp
 //!
 //! This library provides the core functionality for MosaicTerm,
-//! including PTY management, terminal emulation, UI components,
-//! configuration management, and event-driven architecture.
+//! a modern terminal emulator with block-based command history.
+//!
+//! ## Features
+//!
+//! - **Block-based UI:** Commands and their output grouped into visual blocks
+//! - **PTY Support:** Cross-platform pseudoterminal via `portable-pty`
+//! - **ANSI Colors:** Full ANSI escape sequence support (16/256/RGB colors)
+//! - **Tab Completion:** Intelligent command and path completion
+//! - **Custom Prompts:** Configurable shell prompts with Git integration
+//! - **Themes:** Multiple color schemes with custom theme support
+//! - **Configuration:** TOML-based configuration files
+//!
+//! ## Module Organization
+//!
+//! ### Core Functionality
+//!
+//! - [`config`] - Configuration loading, runtime config, themes, prompts
+//! - [`terminal`] - Terminal emulation, ANSI parsing, input/output processing
+//! - [`pty`] - PTY process management, lifecycle, I/O streams
+//! - [`models`] - Data structures (CommandBlock, OutputLine, PtyProcess)
+//! - [`error`] - Error types and Result aliases
+//!
+//! ### UI Components
+//!
+//! - [`ui`] - Rendering components (blocks, input, viewport, scroll)
+//! - [`completion`] - Command and path completion logic
+//!
+//! ### Utilities
+//!
+//! - [`ansi`] - ANSI color and style utilities
+//! - [`commands`] - Command parsing and validation
+//! - [`execution`] - Direct command execution (for testing)
+//! - [`state`] - Application state management
+//!
+//! ## Quick Start
+//!
+//! ```no_run
+//! use mosaicterm::{init, RuntimeConfig};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Initialize with default configuration
+//! let runtime_config = init()?;
+//!
+//! // Or load from a custom config file
+//! // let runtime_config = init_with_config(Path::new("config.toml"))?;
+//!
+//! // Use runtime_config to create the GUI application
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Architecture
+//!
+//! MosaicTerm uses a hybrid threading model:
+//!
+//! - **Main Thread:** Runs the `egui` UI loop (60 FPS)
+//! - **PTY Reader Threads:** Read output from PTY processes (blocking I/O)
+//! - **PTY Writer Threads:** Write input to PTY processes (blocking I/O)
+//!
+//! Communication between threads happens via async channels (`tokio::mpsc`).
+//!
+//! ## Platform Support
+//!
+//! - ✅ macOS (tested)
+//! - ✅ Linux (tested)
+//! - 🚧 Windows (experimental)
+//!
+//! ## Safety and Reliability
+//!
+//! - **No Panics:** All fallible operations return `Result`
+//! - **Memory Limits:** Enforced output size limits prevent OOM
+//! - **Graceful Degradation:** Falls back to defaults when config loading fails
+//! - **Timeout Detection:** Configurable command timeouts (30s regular, 5min interactive)
+//!
+//! ## Performance
+//!
+//! - **Efficient Rendering:** Conditional repaints, viewport culling
+//! - **Output Batching:** Processes multiple lines at once
+//! - **Auto-Caching:** Command completion cache auto-refreshes every 5 minutes
+//! - **Resource Limits:** 256KB PTY buffer, 10MB max output per command
 
 #![allow(unexpected_cfgs)]
 
@@ -12,7 +90,6 @@ extern crate tracing;
 pub mod completion;
 pub mod config;
 pub mod error;
-pub mod events;
 pub mod state;
 
 // Core modules
@@ -32,8 +109,7 @@ pub mod models;
 // Re-exports for core functionality
 pub use config::{Config, RuntimeConfig};
 pub use error::{Error, Result};
-pub use events::{EventBuilder, EventBus, EventProcessor};
-pub use state::{AppState, ApplicationState, StateManager};
+pub use state::{AppState, ApplicationState};
 
 // Convenience re-exports for common types
 pub use config::loader::ConfigLoader;
@@ -304,23 +380,6 @@ pub fn app_info() -> std::collections::HashMap<String, String> {
     );
 
     info
-}
-
-/// Application information
-#[derive(Debug, Clone)]
-pub struct AppInfo {
-    pub name: String,
-    pub version: String,
-    pub description: String,
-    pub build_info: BuildInfo,
-}
-
-/// Build information
-#[derive(Debug, Clone)]
-pub struct BuildInfo {
-    pub rust_version: String,
-    pub build_date: String,
-    pub git_commit: String,
 }
 
 /// Get default configuration

@@ -5,10 +5,10 @@
 //! Contract: Command Execution and Output Streaming
 //! See: specs/001-mosaicterm-terminal-emulator/contracts/command-execution.md
 
-use regex::Regex;
-use std::time::Duration;
 use mosaicterm::error::Error;
 use mosaicterm::pty::{PtyHandle, PtyManager};
+use regex::Regex;
+use std::time::Duration;
 
 // Test command sending to running PTY
 #[test]
@@ -21,7 +21,10 @@ fn test_command_sending_to_running_pty() {
     let result = send_command(&handle, command);
 
     // Assert
-    assert!(result.is_ok(), "Command sending should succeed for running PTY");
+    assert!(
+        result.is_ok(),
+        "Command sending should succeed for running PTY"
+    );
 }
 
 // Test command sending to terminated PTY
@@ -35,7 +38,10 @@ fn test_command_sending_to_terminated_pty() {
     let result = send_command(&handle, command);
 
     // Assert - Should return error for terminated PTY
-    assert!(result.is_err(), "Command sending should fail for terminated PTY");
+    assert!(
+        result.is_err(),
+        "Command sending should fail for terminated PTY"
+    );
 }
 
 // Test output reading from running PTY
@@ -48,7 +54,10 @@ fn test_output_reading_from_running_pty() {
     let result = read_output(&handle);
 
     // Assert
-    assert!(result.is_ok(), "Output reading should succeed for running PTY");
+    assert!(
+        result.is_ok(),
+        "Output reading should succeed for running PTY"
+    );
 }
 
 // Test output reading from terminated PTY
@@ -61,7 +70,10 @@ fn test_output_reading_from_terminated_pty() {
     let result = read_output(&handle);
 
     // Assert
-    assert!(result.is_err(), "Output reading should fail for terminated PTY");
+    assert!(
+        result.is_err(),
+        "Output reading should fail for terminated PTY"
+    );
 }
 
 // Test command completion detection
@@ -166,7 +178,7 @@ fn process_output_chunk(chunk: OutputChunk) -> Result<ProcessedOutput, Error> {
     // Basic output processing with error handling
     let text = String::from_utf8_lossy(&chunk.data).to_string();
     let lines: Vec<String> = text.lines().map(|s| s.to_string()).collect();
-    
+
     Ok(ProcessedOutput {
         lines,
         timestamp: chunk.timestamp,

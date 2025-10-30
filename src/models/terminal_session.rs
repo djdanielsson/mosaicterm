@@ -60,6 +60,15 @@ pub struct TerminalSession {
 impl TerminalSession {
     /// Create a new terminal session
     pub fn new(shell_type: ShellType, working_directory: PathBuf) -> Self {
+        Self::with_max_history(shell_type, working_directory, 1000)
+    }
+
+    /// Create a new terminal session with specified max history size
+    pub fn with_max_history(
+        shell_type: ShellType,
+        working_directory: PathBuf,
+        max_history_size: usize,
+    ) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
             pty_process: PtyProcess::new(String::new(), Vec::new()),
@@ -69,7 +78,7 @@ impl TerminalSession {
             start_time: Utc::now(),
             state: SessionState::Initializing,
             command_history: Vec::new(),
-            max_history_size: 1000,
+            max_history_size,
         }
     }
 
