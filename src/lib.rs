@@ -21,7 +21,7 @@
 //! - [`terminal`] - Terminal emulation, ANSI parsing, input/output processing
 //! - [`pty`] - PTY process management, lifecycle, I/O streams
 //! - [`models`] - Data structures (CommandBlock, OutputLine, PtyProcess)
-//! - [`error`] - Error types and Result aliases
+//! - [`mod@error`] - Error types and Result aliases
 //!
 //! ### UI Components
 //!

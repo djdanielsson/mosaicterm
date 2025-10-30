@@ -773,7 +773,7 @@ impl eframe::App for MosaicTermApp {
         {
             self.state.initialization_attempted = true;
             info!("Initializing terminal session...");
-            
+
             // Show loading indicator
             self.start_loading("Initializing terminal...");
 
@@ -817,7 +817,10 @@ impl eframe::App for MosaicTermApp {
                 .show(ctx, |ui| {
                     let frame = egui::Frame::none()
                         .fill(egui::Color32::from_rgba_premultiplied(30, 30, 40, 240))
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 100, 200)))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgb(100, 100, 200),
+                        ))
                         .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                         .rounding(egui::Rounding::same(4.0));
 
