@@ -81,12 +81,12 @@ impl SignalHandler {
 
     /// Send a signal to a PTY process
     pub async fn send_signal(&self, handle_id: &str, signal: Signal) -> Result<()> {
-        let pid = self
-            .process_handles
-            .get(handle_id)
-            .ok_or_else(|| Error::ProcessNotRegistered {
-                handle_id: handle_id.to_string(),
-            })?;
+        let pid =
+            self.process_handles
+                .get(handle_id)
+                .ok_or_else(|| Error::ProcessNotRegistered {
+                    handle_id: handle_id.to_string(),
+                })?;
 
         self.send_signal_to_pid(*pid, signal).await
     }
@@ -185,11 +185,10 @@ impl SignalHandler {
             Signal::Stop => NixSignal::SIGSTOP,
         };
 
-        kill(Pid::from_raw(pid as i32), nix_signal)
-            .map_err(|e| Error::SignalSendFailed {
-                signal: format!("{:?}", signal),
-                reason: e.to_string(),
-            })
+        kill(Pid::from_raw(pid as i32), nix_signal).map_err(|e| Error::SignalSendFailed {
+            signal: format!("{:?}", signal),
+            reason: e.to_string(),
+        })
     }
 
     /// Platform-specific Windows signal sending

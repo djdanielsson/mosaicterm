@@ -6,6 +6,7 @@
 pub mod blocks;
 pub mod completion_popup;
 pub mod input;
+pub mod metrics;
 pub mod scroll;
 pub mod text;
 pub mod viewport;
@@ -14,6 +15,7 @@ pub mod viewport;
 pub use blocks::{BlockConfig, CommandBlocks, RenderedBlock, StatusIcon};
 pub use completion_popup::CompletionPopup;
 pub use input::{InputConfig, InputPrompt};
+pub use metrics::MetricsPanel;
 pub use scroll::{ScrollState, ScrollableHistory, ScrollbarConfig};
 pub use text::{AnsiTextRenderer, ColorScheme, FontConfig};
 pub use viewport::{TerminalViewport, ViewportConfig};

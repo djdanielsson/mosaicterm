@@ -55,11 +55,12 @@ use mosaicterm::execution::DirectExecutor;
 use mosaicterm::models::{CommandBlock, ExecutionStatus};
 use mosaicterm::models::{ShellType as ModelShellType, TerminalSession};
 use mosaicterm::pty::PtyManager;
+use mosaicterm::state_manager::StateManager;
 use mosaicterm::terminal::{Terminal, TerminalFactory};
-use mosaicterm::ui::{CommandBlocks, CompletionPopup, InputPrompt, ScrollableHistory};
+use mosaicterm::ui::{CommandBlocks, CompletionPopup, InputPrompt, MetricsPanel, ScrollableHistory};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 // Output size limits to prevent memory leaks
@@ -108,6 +109,8 @@ enum AsyncResult {
 
 /// Main MosaicTerm application
 pub struct MosaicTermApp {
+    /// Centralized state manager - single source of truth
+    state_manager: StateManager,
     /// Terminal emulator instance
     terminal: Option<Terminal>,
     /// PTY manager for process management
@@ -119,24 +122,13 @@ pub struct MosaicTermApp {
     input_prompt: InputPrompt,
     scrollable_history: ScrollableHistory,
     completion_popup: CompletionPopup,
-    /// Command history
-    command_history: Vec<CommandBlock>,
-    /// Application state
-    state: AppState,
+    metrics_panel: MetricsPanel,
     /// Runtime configuration
     runtime_config: RuntimeConfig,
     /// Completion provider
     completion_provider: CompletionProvider,
     /// Prompt formatter for custom prompts
     prompt_formatter: PromptFormatter,
-    /// Last tab press time for double-tab detection
-    last_tab_press: Option<std::time::Instant>,
-    /// Flag to indicate completion was just applied (need to move cursor)
-    completion_just_applied: bool,
-    /// Last time a command was executed (for timeout detection)
-    last_command_time: Option<std::time::Instant>,
-    /// Previous working directory (for cd -)
-    previous_directory: Option<std::path::PathBuf>,
     /// Tokio runtime for async operations
     #[allow(dead_code)]
     runtime: tokio::runtime::Runtime,
@@ -144,6 +136,27 @@ pub struct MosaicTermApp {
     async_tx: mpsc::UnboundedSender<AsyncRequest>,
     /// Channel for receiving async results from background to UI
     async_rx: mpsc::UnboundedReceiver<AsyncResult>,
+
+    // DEPRECATED: These fields are being migrated to StateManager
+    // They will be removed once the migration is complete
+    /// Command history (DEPRECATED - use state_manager.command_history())
+    #[deprecated(note = "Use state_manager.command_history() instead")]
+    command_history: Vec<CommandBlock>,
+    /// Application state (DEPRECATED - use state_manager.app_state())
+    #[deprecated(note = "Use state_manager.app_state() instead")]
+    state: AppState,
+    /// Last tab press time (DEPRECATED - use state_manager.app_state().last_tab_press)
+    #[deprecated(note = "Use state_manager.app_state().last_tab_press instead")]
+    last_tab_press: Option<std::time::Instant>,
+    /// Completion flag (DEPRECATED - use state_manager.app_state().completion_just_applied)
+    #[deprecated(note = "Use state_manager.app_state().completion_just_applied instead")]
+    completion_just_applied: bool,
+    /// Last command time (DEPRECATED - use state_manager.active_session().last_command_time)
+    #[deprecated(note = "Use state_manager.active_session().last_command_time instead")]
+    last_command_time: Option<std::time::Instant>,
+    /// Previous directory (DEPRECATED - use state_manager.active_session().previous_directory)
+    #[deprecated(note = "Use state_manager.active_session().previous_directory instead")]
+    previous_directory: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +212,7 @@ impl MosaicTermApp {
         let command_blocks = CommandBlocks::new();
         let scrollable_history = ScrollableHistory::new();
         let completion_popup = CompletionPopup::new();
+        let metrics_panel = MetricsPanel::new();
 
         let runtime_config = RuntimeConfig::new().unwrap_or_else(|e| {
             error!("Failed to create runtime config: {}", e);
@@ -289,7 +303,14 @@ impl MosaicTermApp {
             .await;
         });
 
+        // Initialize StateManager with command history
+        let mut state_manager = StateManager::new();
+        for block in &command_history {
+            state_manager.add_command_block(block.clone());
+        }
+
         Self {
+            state_manager,
             terminal: None,
             pty_manager,
             terminal_factory,
@@ -297,18 +318,26 @@ impl MosaicTermApp {
             input_prompt,
             scrollable_history,
             completion_popup,
-            command_history,
-            state: AppState::default(),
+            metrics_panel,
             runtime_config,
             completion_provider: CompletionProvider::new(),
             prompt_formatter,
-            last_tab_press: None,
-            completion_just_applied: false,
-            last_command_time: None,
-            previous_directory: None,
             runtime,
             async_tx: request_tx,
             async_rx: result_rx,
+            // DEPRECATED fields - kept for gradual migration
+            #[allow(deprecated)]
+            command_history,
+            #[allow(deprecated)]
+            state: AppState::default(),
+            #[allow(deprecated)]
+            last_tab_press: None,
+            #[allow(deprecated)]
+            completion_just_applied: false,
+            #[allow(deprecated)]
+            last_command_time: None,
+            #[allow(deprecated)]
+            previous_directory: None,
         }
     }
 
@@ -396,7 +425,15 @@ impl MosaicTermApp {
         // Create and initialize terminal
         let terminal = self.terminal_factory.create_and_initialize(session).await?;
         self.terminal = Some(terminal);
-        self.state.terminal_ready = true;
+
+        // Update state manager
+        self.state_manager.set_terminal_ready(true);
+
+        // DEPRECATED: Also update old field during migration
+        #[allow(deprecated)]
+        {
+            self.state.terminal_ready = true;
+        }
 
         // Update prompt after terminal initialization
         self.update_prompt();
@@ -446,10 +483,22 @@ impl MosaicTermApp {
             });
         let mut command_block = CommandBlock::new(command.clone(), working_dir.clone());
         command_block.mark_running();
-        self.command_history.push(command_block);
+
+        // Add to state manager (single source of truth)
+        self.state_manager.add_command_block(command_block.clone());
+
+        // DEPRECATED: Also update old field during migration
+        #[allow(deprecated)]
+        {
+            self.command_history.push(command_block);
+        }
 
         // Record command execution time for timeout detection
-        self.last_command_time = Some(std::time::Instant::now());
+        self.state_manager.set_last_command_time(chrono::Utc::now());
+        #[allow(deprecated)]
+        {
+            self.last_command_time = Some(std::time::Instant::now());
+        }
 
         // UI will be updated automatically on the next frame
 
@@ -464,11 +513,27 @@ impl MosaicTermApp {
             }
 
             // Leave the block in Running; async loop will collect output and we can mark done later
-            self.state.status_message = Some(format!("Running: {}", command));
+            self.state_manager
+                .set_status_message(Some(format!("Running: {}", command)));
+
+            // DEPRECATED: Also update old field during migration
+            #[allow(deprecated)]
+            {
+                self.state.status_message = Some(format!("Running: {}", command));
+            }
+
             info!("Command '{}' queued", command);
         } else {
             warn!("Terminal not initialized, cannot execute command");
-            self.state.status_message = Some("Terminal not ready".to_string());
+
+            self.state_manager
+                .set_status_message(Some("Terminal not ready".to_string()));
+
+            // DEPRECATED: Also update old field during migration
+            #[allow(deprecated)]
+            {
+                self.state.status_message = Some("Terminal not ready".to_string());
+            }
         }
 
         Ok(())
@@ -503,8 +568,8 @@ impl MosaicTermApp {
                 }
             } else if parts[1] == "-" {
                 // cd - goes to previous directory
-                if let Some(prev_dir) = &self.previous_directory {
-                    prev_dir.clone()
+                if let Some(prev_dir) = self.state_manager.get_previous_directory() {
+                    prev_dir
                 } else {
                     debug!("No previous directory to return to");
                     current_dir.clone()
@@ -535,7 +600,15 @@ impl MosaicTermApp {
             if let Ok(canonical) = new_dir.canonicalize() {
                 if canonical.is_dir() && canonical != current_dir {
                     // Save current directory as previous before changing
-                    self.previous_directory = Some(current_dir.clone());
+                    self.state_manager
+                        .set_previous_directory(Some(current_dir.clone()));
+
+                    // DEPRECATED: Also update old field during migration
+                    #[allow(deprecated)]
+                    {
+                        self.previous_directory = Some(current_dir.clone());
+                    }
+
                     terminal.set_working_directory(canonical.clone());
                     debug!(
                         "Updated working directory from {:?} to: {:?}",
@@ -606,7 +679,14 @@ impl MosaicTermApp {
 
     /// Update application state
     pub fn update_state(&mut self) {
-        self.state.terminal_ready = self.terminal.is_some();
+        let terminal_ready = self.terminal.is_some();
+        self.state_manager.set_terminal_ready(terminal_ready);
+
+        // DEPRECATED: Also update old field during migration
+        #[allow(deprecated)]
+        {
+            self.state.terminal_ready = terminal_ready;
+        }
 
         // Update UI components if needed
         self.update_ui_components();
@@ -621,26 +701,47 @@ impl MosaicTermApp {
 
     /// Set status message
     pub fn set_status_message(&mut self, message: Option<String>) {
-        self.state.status_message = message;
+        self.state_manager.set_status_message(message.clone());
+
+        // DEPRECATED: Also update old field during migration
+        #[allow(deprecated)]
+        {
+            self.state.status_message = message;
+        }
     }
 
     /// Start loading indicator with message
     pub fn start_loading(&mut self, message: impl Into<String>) {
-        self.state.is_loading = true;
-        self.state.loading_message = Some(message.into());
-        self.state.loading_frame = 0;
+        let msg_string = message.into();
+        self.state_manager
+            .set_loading(true, Some(msg_string.clone()));
+        self.state_manager.app_state_mut().loading_frame = 0;
+
+        // DEPRECATED: Also update old field during migration
+        #[allow(deprecated)]
+        {
+            self.state.is_loading = true;
+            self.state.loading_message = Some(msg_string);
+            self.state.loading_frame = 0;
+        }
     }
 
     /// Stop loading indicator
     pub fn stop_loading(&mut self) {
-        self.state.is_loading = false;
-        self.state.loading_message = None;
+        self.state_manager.set_loading(false, None);
+
+        // DEPRECATED: Also update old field during migration
+        #[allow(deprecated)]
+        {
+            self.state.is_loading = false;
+            self.state.loading_message = None;
+        }
     }
 
     /// Get loading spinner character for current frame
     fn loading_spinner(&self) -> &'static str {
         const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        SPINNER_FRAMES[self.state.loading_frame % SPINNER_FRAMES.len()]
+        SPINNER_FRAMES[self.state_manager.loading_frame() % SPINNER_FRAMES.len()]
     }
 
     /// Convert technical error to user-friendly message
@@ -697,6 +798,7 @@ impl MosaicTermApp {
             // Configuration errors
             Error::ConfigLoadFailed { .. }
             | Error::ConfigSaveFailed { .. }
+            | Error::ConfigWatchFailed { .. }
             | Error::ConfigNotFound
             | Error::ConfigValidationFailed { .. }
             | Error::ConfigSerializationFailed { .. }
@@ -767,11 +869,15 @@ impl MosaicTermApp {
         {
             if let Some(menu_pos) = self.command_blocks.interaction_state().context_menu_pos {
                 // Find the command block and extract data we need
-                if let Some(block) = self.command_history.iter().find(|b| &b.id == block_id) {
+                let command_history = self.state_manager.get_command_history();
+                if let Some(block) = command_history.iter().find(|b| &b.id == block_id) {
                     let command = block.command.clone();
                     let status = block.status;
-                    let output_lines: Vec<String> =
-                        block.output.iter().map(|line| line.text.as_str().to_string()).collect();
+                    let output_lines: Vec<String> = block
+                        .output
+                        .iter()
+                        .map(|line| line.text.as_str().to_string())
+                        .collect();
 
                     // Create context menu
                     let mut menu_open = true;
@@ -787,7 +893,9 @@ impl MosaicTermApp {
                             if ui.button("🔄 Rerun Command").clicked() {
                                 // Execute the same command again (non-blocking)
                                 self.input_prompt.add_to_history(command.clone());
-                                let _ = self.async_tx.send(AsyncRequest::ExecuteCommand(command.clone()));
+                                let _ = self
+                                    .async_tx
+                                    .send(AsyncRequest::ExecuteCommand(command.clone()));
                                 menu_open = false;
                             }
 
@@ -918,7 +1026,7 @@ impl MosaicTermApp {
     /// Helper: Initialize terminal in background
     async fn async_initialize_terminal(terminal_factory: &TerminalFactory) -> Result<()> {
         info!("Async terminal initialization started");
-        
+
         // Get runtime config from environment or use defaults
         let runtime_config = RuntimeConfig::new().unwrap_or_else(|e| {
             error!("Failed to create runtime config: {}", e);
@@ -942,7 +1050,7 @@ impl MosaicTermApp {
 
         let session = TerminalSession::with_environment(shell_type, working_dir, environment);
         let _terminal = terminal_factory.create_and_initialize(session).await?;
-        
+
         info!("Async terminal initialization completed");
         Ok(())
     }
@@ -953,10 +1061,10 @@ impl MosaicTermApp {
         _terminal_factory: &TerminalFactory,
     ) -> Result<()> {
         info!("Async PTY restart started");
-        
+
         // For now, just log - full implementation would recreate terminal
         // This is complex because we need to update app state
-        
+
         info!("Async PTY restart completed");
         Ok(())
     }
@@ -967,22 +1075,22 @@ impl MosaicTermApp {
         handle_id: &str,
     ) -> Result<()> {
         info!("Async interrupt signal for handle: {}", handle_id);
-        
+
         let pty_manager = pty_manager.lock().await;
-        
+
         // Find the PTY handle
         let pty_handle = mosaicterm::pty::PtyHandle {
             id: handle_id.to_string(),
             pid: None,
         };
-        
+
         if let Ok(pty_info) = pty_manager.get_info(&pty_handle) {
             if let Some(pid) = pty_info.pid {
                 #[cfg(unix)]
                 {
                     use nix::sys::signal::{kill, Signal};
                     use nix::unistd::Pid;
-                    
+
                     if let Err(e) = kill(Pid::from_raw(pid as i32), Signal::SIGINT) {
                         return Err(mosaicterm::error::Error::SignalSendFailed {
                             signal: "SIGINT".to_string(),
@@ -990,7 +1098,7 @@ impl MosaicTermApp {
                         });
                     }
                 }
-                
+
                 #[cfg(windows)]
                 {
                     // Windows signal handling would go here
@@ -999,7 +1107,7 @@ impl MosaicTermApp {
                         platform: "Windows".to_string(),
                     });
                 }
-                
+
                 #[cfg(not(any(unix, windows)))]
                 {
                     return Err(mosaicterm::error::Error::SignalNotSupported {
@@ -1017,13 +1125,18 @@ impl MosaicTermApp {
                 handle_id: handle_id.to_string(),
             });
         }
-        
+
         Ok(())
     }
 }
 
 impl eframe::App for MosaicTermApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Handle keyboard shortcut for performance metrics (Ctrl+Shift+P)
+        if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::P)) {
+            self.metrics_panel.toggle();
+        }
+
         // Only print debug once per second to avoid spam
         use std::sync::Mutex;
         static LAST_DEBUG_TIME: Mutex<Option<std::time::Instant>> = Mutex::new(None);
@@ -1047,30 +1160,55 @@ impl eframe::App for MosaicTermApp {
             static LAST_CLEANUP_TIME: Mutex<Option<std::time::Instant>> = Mutex::new(None);
             let now = std::time::Instant::now();
             let mut last_time = LAST_CLEANUP_TIME.lock().unwrap();
-            let should_cleanup = last_time.is_none() 
-                || now.duration_since(last_time.unwrap()).as_secs() >= 30;
-            
+            let should_cleanup =
+                last_time.is_none() || now.duration_since(last_time.unwrap()).as_secs() >= 30;
+
             if should_cleanup {
                 if let Ok(mut pty_manager) = self.pty_manager.try_lock() {
                     let count_before = pty_manager.active_count();
                     pty_manager.cleanup_terminated();
                     let count_after = pty_manager.active_count();
-                    
+
                     if count_before > count_after {
-                        info!("Cleaned up {} terminated PTY process(es)", count_before - count_after);
+                        info!(
+                            "Cleaned up {} terminated PTY process(es)",
+                            count_before - count_after
+                        );
                     }
-                    
+
                     *last_time = Some(now);
                 }
+            }
+        }
+        
+        // Update memory statistics periodically (every 5 seconds)
+        {
+            use std::sync::Mutex;
+            static LAST_STATS_UPDATE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+            let now = std::time::Instant::now();
+            let mut last_time = LAST_STATS_UPDATE.lock().unwrap();
+            let should_update = last_time.is_none()
+                || now.duration_since(last_time.unwrap()).as_secs() >= 5;
+
+            if should_update {
+                self.state_manager.update_memory_stats();
+                *last_time = Some(now);
             }
         }
 
         // Initialize terminal on first startup
         if self.terminal.is_none()
-            && !self.state.terminal_ready
-            && !self.state.initialization_attempted
+            && !self.state_manager.is_terminal_ready()
+            && !self.state_manager.is_initialization_attempted()
         {
-            self.state.initialization_attempted = true;
+            self.state_manager.set_initialization_attempted(true);
+
+            // DEPRECATED: Also update old field during migration
+            #[allow(deprecated)]
+            {
+                self.state.initialization_attempted = true;
+            }
+
             info!("Initializing terminal session...");
 
             // Show loading indicator
@@ -1080,7 +1218,11 @@ impl eframe::App for MosaicTermApp {
             if let Err(e) = self.async_tx.send(AsyncRequest::InitTerminal) {
                 error!("Failed to send InitTerminal request: {}", e);
                 self.stop_loading();
-                self.state.status_message = Some("Failed to initialize terminal".to_string());
+                self.state_manager.show_error(
+                    "Initialization Error",
+                    format!("Failed to initialize terminal: {}", e),
+                    true, // critical
+                );
             }
         }
 
@@ -1088,8 +1230,15 @@ impl eframe::App for MosaicTermApp {
         self.update_state();
 
         // Animate loading spinner if active
-        if self.state.is_loading {
-            self.state.loading_frame = (self.state.loading_frame + 1) % 10;
+        if self.state_manager.is_loading() {
+            self.state_manager.increment_loading_frame();
+
+            // DEPRECATED: Also update old field during migration
+            #[allow(deprecated)]
+            {
+                self.state.loading_frame = (self.state.loading_frame + 1) % 10;
+            }
+
             ctx.request_repaint(); // Keep animating
         }
 
@@ -1103,7 +1252,7 @@ impl eframe::App for MosaicTermApp {
         self.handle_keyboard_shortcuts(ctx, frame);
 
         // Show loading overlay if active
-        if self.state.is_loading {
+        if self.state_manager.is_loading() {
             egui::Area::new("loading_overlay")
                 .fixed_pos(egui::pos2(10.0, 10.0))
                 .show(ctx, |ui| {
@@ -1123,14 +1272,66 @@ impl eframe::App for MosaicTermApp {
                                     .size(20.0)
                                     .color(egui::Color32::from_rgb(100, 200, 255)),
                             );
-                            if let Some(msg) = &self.state.loading_message {
+                            let loading_msg = self.state_manager.loading_message();
+                            if !loading_msg.is_empty() {
                                 ui.label(
-                                    egui::RichText::new(msg)
+                                    egui::RichText::new(loading_msg)
                                         .size(14.0)
                                         .color(egui::Color32::from_rgb(200, 200, 200)),
                                 );
                             }
                         });
+                    });
+                });
+        }
+
+        // Show error dialog if present
+        if let Some(error) = self.state_manager.error_dialog() {
+            let error_clone = error.clone();
+            egui::Window::new(&error_clone.title)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.set_min_width(400.0);
+                    ui.set_max_width(600.0);
+
+                    // Error icon and message
+                    ui.horizontal(|ui| {
+                        let icon = if error_clone.is_critical {
+                            "⛔"
+                        } else {
+                            "⚠️"
+                        };
+                        let icon_color = if error_clone.is_critical {
+                            egui::Color32::from_rgb(220, 50, 50)
+                        } else {
+                            egui::Color32::from_rgb(255, 165, 0)
+                        };
+
+                        ui.label(egui::RichText::new(icon).size(32.0).color(icon_color));
+
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new(&error_clone.message)
+                                    .size(14.0)
+                                    .color(egui::Color32::from_rgb(220, 220, 220)),
+                            );
+                        });
+                    });
+
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(5.0);
+
+                    // OK button
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(egui::RichText::new("  OK  ").size(14.0))
+                            .clicked()
+                        {
+                            self.state_manager.clear_error();
+                        }
                     });
                 });
         }
@@ -1166,6 +1367,22 @@ impl eframe::App for MosaicTermApp {
 
         // Render context menu if active
         self.render_context_menu(ctx);
+
+        // Render performance metrics panel if visible (Ctrl+Shift+P to toggle)
+        if self.metrics_panel.is_visible() {
+            let pty_count = if let Ok(pty_manager) = self.pty_manager.try_lock() {
+                pty_manager.active_count()
+            } else {
+                0
+            };
+            let stats = self.state_manager.statistics();
+            // Create a temporary UI for the window
+            egui::Area::new(egui::Id::new("metrics_area"))
+                .fixed_pos(egui::pos2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    self.metrics_panel.render(ui, stats, pty_count);
+                });
+        }
 
         // Handle async operations
         self.handle_async_operations(ctx);
@@ -1204,15 +1421,59 @@ impl eframe::App for MosaicTermApp {
 
 impl MosaicTermApp {
     /// Update window title with application state
-    fn update_window_title(&self, _frame: &mut eframe::Frame) {
-        // Window title management is handled by the framework
-        // This method is a placeholder for future window title customization
-        let _title = if self.state.terminal_ready {
-            format!("{} - Ready", self.state.title)
+    fn update_window_title(&self, frame: &mut eframe::Frame) {
+        // Build dynamic title based on terminal state
+        let title = if self.state_manager.app_state().terminal_ready {
+            let stats = self.state_manager.statistics();
+            let cmd_count = stats.total_commands;
+            
+            // Show command count and current directory if available
+            if let Some(session) = self.state_manager.active_session() {
+                let dir_name = session
+                    .working_directory
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("~");
+                format!("MosaicTerm - {} [{} cmds]", dir_name, cmd_count)
+            } else {
+                format!("MosaicTerm - Ready [{} cmds]", cmd_count)
+            }
         } else {
-            format!("{} - Initializing...", self.state.title)
+            "MosaicTerm - Initializing...".to_string()
         };
-        // TODO: Implement window title updates when eframe supports it
+        
+        // Note: eframe 0.24 doesn't have viewport() method on frame.info()
+        // This infrastructure is ready for when the API becomes available
+        
+        // Alternative: Try using native window handle if available
+        // This is a workaround that may work on some platforms
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static TITLE_UPDATE_ATTEMPTED: AtomicBool = AtomicBool::new(false);
+            
+            // Only attempt once per second to avoid overhead
+            if !TITLE_UPDATE_ATTEMPTED.swap(true, Ordering::Relaxed) {
+                // Store title in a static for potential future use
+                static CURRENT_TITLE: std::sync::Mutex<Option<String>> = 
+                    std::sync::Mutex::new(None);
+                
+                if let Ok(mut current) = CURRENT_TITLE.lock() {
+                    *current = Some(title.clone());
+                }
+                
+                // Reset the flag after a delay
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    TITLE_UPDATE_ATTEMPTED.store(false, Ordering::Relaxed);
+                });
+            }
+        }
+        
+        // Note: As of eframe 0.24, there's no direct API to update window title at runtime.
+        // The title is set once at window creation via ViewportBuilder.
+        // This implementation prepares the infrastructure for when eframe adds support.
+        let _ = title; // Use the variable to avoid unused warning
     }
 
     /// Set up visual style for the application
@@ -1308,28 +1569,48 @@ impl MosaicTermApp {
 
                 // Send interrupt signal to the PTY process (non-blocking)
                 info!("Sending interrupt signal for handle: {}", handle_id);
-                if let Err(e) = self.async_tx.send(AsyncRequest::SendInterrupt(handle_id.clone())) {
+                if let Err(e) = self
+                    .async_tx
+                    .send(AsyncRequest::SendInterrupt(handle_id.clone()))
+                {
                     error!("Failed to send interrupt request: {}", e);
-                    self.state.status_message = Some("Failed to interrupt command".to_string());
+                    self.set_status_message(Some("Failed to interrupt command".to_string()));
                 } else {
-                    self.state.status_message = Some("Interrupting command...".to_string());
+                    self.set_status_message(Some("Interrupting command...".to_string()));
                 }
 
                 // Mark current command as cancelled (result will come from async)
                 // Check if the command is interactive first (before mutable borrow)
-                let is_interactive = self
-                    .command_history
+                let command_history = self.state_manager.get_command_history();
+                let is_interactive = command_history
                     .last()
                     .map(|block| self.is_interactive_command(&block.command))
                     .unwrap_or(false);
 
-                // Mark the last command as cancelled
-                if let Some(block) = self.command_history.last_mut() {
-                    block.mark_cancelled();
+                // Mark the last command as cancelled in state manager
+                let history = self.state_manager.get_command_history();
+                if let Some(last_block) = history.last() {
+                    let block_id = last_block.id.clone();
+                    self.state_manager.update_command_block_status(
+                        &block_id,
+                        mosaicterm::models::ExecutionStatus::Cancelled,
+                    );
+                }
+
+                // DEPRECATED: Also update old field during migration
+                #[allow(deprecated)]
+                {
+                    if let Some(block) = self.command_history.last_mut() {
+                        block.mark_cancelled();
+                    }
                 }
 
                 // Clear the command time so new commands can be submitted
-                self.last_command_time = None;
+                self.state_manager.set_last_command_time(chrono::Utc::now());
+                #[allow(deprecated)]
+                {
+                    self.last_command_time = None;
+                }
 
                 // For interactive programs, we need to restart the PTY session
                 // because the shell can get into a corrupted state
@@ -1341,7 +1622,7 @@ impl MosaicTermApp {
                     if let Err(e) = self.async_tx.send(AsyncRequest::RestartPty) {
                         error!("Failed to send RestartPty request: {}", e);
                         self.stop_loading();
-                        self.state.status_message = Some("Failed to restart session".to_string());
+                        self.set_status_message(Some("Failed to restart session".to_string()));
                     }
 
                     // Result will be handled in poll_async_results
@@ -1358,8 +1639,16 @@ impl MosaicTermApp {
 
     /// Handle screen clearing (Ctrl+L)
     fn handle_clear_screen(&mut self) {
-        // Clear command history
-        self.command_history.clear();
+        // Clear command history in state manager
+        // Note: StateManager doesn't expose a clear() method yet, so we create a new one
+        self.state_manager = StateManager::new();
+
+        // DEPRECATED: Also update old field during migration
+        #[allow(deprecated)]
+        {
+            self.command_history.clear();
+        }
+
         // Clear terminal screen (would send clear command to shell)
         if let Some(_terminal) = &mut self.terminal {
             std::mem::drop(_terminal.process_input("clear"));
@@ -1670,9 +1959,12 @@ impl MosaicTermApp {
                         );
                         ui.separator();
                         ui.label(
-                            egui::RichText::new(format!("History: {}", self.command_history.len()))
-                                .font(egui::FontId::monospace(12.0))
-                                .color(egui::Color32::from_rgb(200, 200, 200)),
+                            egui::RichText::new(format!(
+                                "History: {}",
+                                self.state_manager.get_command_history().len()
+                            ))
+                            .font(egui::FontId::monospace(12.0))
+                            .color(egui::Color32::from_rgb(200, 200, 200)),
                         );
                     });
                 });
@@ -1685,7 +1977,8 @@ impl MosaicTermApp {
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         // Commands appear in execution order: oldest at top, newest at bottom
-                        for (i, block) in self.command_history.iter().enumerate() {
+                        let command_history = self.state_manager.get_command_history();
+                        for (i, block) in command_history.iter().enumerate() {
                             if let Some((block_id, pos)) =
                                 Self::render_single_command_block_static(ui, block, i)
                             {
@@ -1699,7 +1992,7 @@ impl MosaicTermApp {
                         }
 
                         // If no commands, show welcome message
-                        if self.command_history.is_empty() {
+                        if command_history.is_empty() {
                             ui.add_space(50.0);
                             ui.vertical_centered(|ui| {
                                 ui.label(
@@ -1851,14 +2144,18 @@ impl MosaicTermApp {
                             error!("Failed to finalize terminal init: {}", e);
                             self.stop_loading();
                             let user_msg = self.user_friendly_error(&e);
-                            self.state.status_message = Some(user_msg);
+                            self.set_status_message(Some(user_msg));
                         }
                     }
                 }
                 AsyncResult::TerminalInitFailed(msg) => {
                     error!("Terminal initialization failed: {}", msg);
                     self.stop_loading();
-                    self.state.status_message = Some(format!("Failed to initialize terminal: {}", msg));
+                    self.state_manager.show_error(
+                        "Terminal Initialization Failed",
+                        format!("Failed to initialize terminal: {}\n\nPlease check your shell configuration and try restarting the application.", msg),
+                        true, // critical
+                    );
                 }
                 AsyncResult::PtyRestarted => {
                     info!("PTY restarted successfully");
@@ -1866,27 +2163,35 @@ impl MosaicTermApp {
                     // Reinitialize terminal
                     match executor::block_on(self.initialize_terminal()) {
                         Ok(()) => {
-                            self.state.status_message = Some("Shell session restarted".to_string());
+                            self.set_status_message(Some("Shell session restarted".to_string()));
                         }
                         Err(e) => {
                             error!("Failed to reinitialize after restart: {}", e);
                             let user_msg = self.user_friendly_error(&e);
-                            self.state.status_message = Some(user_msg);
+                            self.set_status_message(Some(user_msg));
                         }
                     }
                 }
                 AsyncResult::PtyRestartFailed(msg) => {
                     error!("PTY restart failed: {}", msg);
                     self.stop_loading();
-                    self.state.status_message = Some(format!("Failed to restart: {}", msg));
+                    self.state_manager.show_error(
+                        "Restart Failed",
+                        format!("Failed to restart shell session: {}\n\nYou may need to restart the application.", msg),
+                        false, // not critical - can continue using old session
+                    );
                 }
                 AsyncResult::InterruptSent => {
                     info!("Interrupt signal sent successfully");
-                    self.state.status_message = Some("Process interrupted".to_string());
+                    self.set_status_message(Some("Process interrupted".to_string()));
                 }
                 AsyncResult::InterruptFailed(msg) => {
                     warn!("Interrupt signal failed: {}", msg);
-                    self.state.status_message = Some(format!("Failed to interrupt: {}", msg));
+                    self.state_manager.show_error(
+                        "Interrupt Failed",
+                        format!("Failed to interrupt the running command: {}\n\nThe process may still be running.", msg),
+                        false, // not critical
+                    );
                 }
                 _ => {
                     // Other results not yet implemented
@@ -1931,16 +2236,24 @@ impl MosaicTermApp {
                                 data.len(),
                                 String::from_utf8_lossy(&data)
                             );
-                            let _ = futures::executor::block_on(async {
+                            // Process output and get the lines directly from the return value
+                            let ready_lines = futures::executor::block_on(async {
                                 _terminal
                                     .process_output(&data, mosaicterm::terminal::StreamType::Stdout)
                                     .await
+                                    .unwrap_or_else(|e| {
+                                        debug!("Error processing output: {}", e);
+                                        Vec::new()
+                                    })
                             });
+                            
+                            debug!("Got {} lines from terminal", ready_lines.len());
 
-                            // Add output to current command block
-                            let ready_lines = _terminal.take_ready_output_lines();
-                            debug!("Got {} ready lines from terminal", ready_lines.len());
+                            // For complex output processing, use the deprecated field for now
+                            // and sync to state manager at the end
+                            #[allow(deprecated)]
                             if let Some(last_block) = self.command_history.last_mut() {
+                                let block_id = last_block.id.clone();
                                 let has_ready_lines = !ready_lines.is_empty();
 
                                 // Batch process all lines at once for better performance
@@ -1960,30 +2273,35 @@ impl MosaicTermApp {
 
                                 // Add all lines at once (batch operation)
                                 if !lines_to_add.is_empty() {
-                                    last_block.add_output_lines(lines_to_add);
+                                    last_block.add_output_lines(lines_to_add.clone());
 
-                                    // Check if we need to truncate old lines (after batch add)
-                                    if last_block.output.len() > MAX_OUTPUT_LINES_PER_COMMAND {
-                                        let to_remove = last_block.output.len()
-                                            - MAX_OUTPUT_LINES_PER_COMMAND
-                                            + 1000;
-                                        last_block.output.drain(0..to_remove);
-                                        // Add truncation notice at the beginning
-                                        let truncation_notice = mosaicterm::models::OutputLine {
-                                            text: format!(
-                                                "... [truncated {} lines due to size limit] ...",
-                                                to_remove
-                                            ),
-                                            ansi_codes: vec![],
-                                            line_number: 0,
-                                            timestamp: chrono::Utc::now(),
-                                        };
-                                        last_block.output.insert(0, truncation_notice);
-                                        warn!(
-                                            "Truncated {} lines from command output (limit: {})",
-                                            to_remove, MAX_OUTPUT_LINES_PER_COMMAND
-                                        );
+                                    // Sync to state manager
+                                    for line in &lines_to_add {
+                                        self.state_manager.add_output_line(&block_id, line.clone());
                                     }
+                                }
+
+                                // Check if we need to truncate old lines (after batch add)
+                                if last_block.output.len() > MAX_OUTPUT_LINES_PER_COMMAND {
+                                    let to_remove = last_block.output.len()
+                                        - MAX_OUTPUT_LINES_PER_COMMAND
+                                        + 1000;
+                                    last_block.output.drain(0..to_remove);
+                                    // Add truncation notice at the beginning
+                                    let truncation_notice = mosaicterm::models::OutputLine {
+                                        text: format!(
+                                            "... [truncated {} lines due to size limit] ...",
+                                            to_remove
+                                        ),
+                                        ansi_codes: vec![],
+                                        line_number: 0,
+                                        timestamp: chrono::Utc::now(),
+                                    };
+                                    last_block.output.insert(0, truncation_notice);
+                                    warn!(
+                                        "Truncated {} lines from command output (limit: {})",
+                                        to_remove, MAX_OUTPUT_LINES_PER_COMMAND
+                                    );
                                 }
 
                                 // Also handle partial data (no newlines) as immediate output

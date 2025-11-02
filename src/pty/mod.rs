@@ -4,12 +4,16 @@
 //! handling process spawning, I/O streams, and signal management.
 
 pub mod manager;
+pub mod manager_v2;
+pub mod operations;
 pub mod process;
 pub mod signals;
 pub mod streams;
 
 // Re-exports for convenience
 pub use manager::{PtyHandle, PtyInfo, PtyManager};
+pub use manager_v2::PtyManagerV2;
+pub use operations::PtyOperations;
 pub use process::{
     get_default_shell, get_user_shell, spawn_pty_process, validate_command, SpawnConfig,
 };

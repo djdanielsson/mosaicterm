@@ -310,11 +310,11 @@ impl ShellManager {
 
     /// Load shell configuration files
     pub fn load_shell_config(&self, shell_type: ShellType) -> Result<ShellEnvironment> {
-        let config = self.get_shell_config(shell_type).ok_or_else(|| {
-            Error::ShellConfigNotFound {
-                shell_type: format!("{:?}", shell_type),
-            }
-        })?;
+        let config =
+            self.get_shell_config(shell_type)
+                .ok_or_else(|| Error::ShellConfigNotFound {
+                    shell_type: format!("{:?}", shell_type),
+                })?;
 
         let mut environment = std::collections::HashMap::new();
 

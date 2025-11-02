@@ -27,6 +27,7 @@ toml = "0.8"
 # Async Runtime
 tokio = { version = "1.0", features = ["full"] }
 futures = "0.3"
+async-trait = "0.1"
 
 # Logging
 tracing = "0.1"
@@ -43,12 +44,14 @@ nix = { version = "0.27", features = ["signal"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 arboard = "3.4"
 hostname = "0.4"
+notify = "6.1"
 
 [dev-dependencies]
 # Testing
 tokio-test = "0.4"
 tempfile = "3.0"
 criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
 
 [[bench]]
 name = "performance"
@@ -83,6 +86,45 @@ path = "tests/contract/test_pty_lifecycle.rs"
 [[test]]
 name = "test_ui_rendering"
 path = "tests/contract/test_ui_rendering.rs"
+
+# Unit tests
+[[test]]
+name = "test_ansi_parser"
+path = "tests/unit/test_ansi_parser.rs"
+
+[[test]]
+name = "test_output_processing"
+path = "tests/unit/test_output_processing.rs"
+
+[[test]]
+name = "test_command_validation"
+path = "tests/unit/test_command_validation.rs"
+
+# Test utilities
+[[test]]
+name = "test_mock_pty"
+path = "tests/test_utils/mock_pty.rs"
+
+[[test]]
+name = "test_mock_terminal"
+path = "tests/test_utils/mock_terminal.rs"
+
+[[test]]
+name = "test_fixtures"
+path = "tests/test_utils/fixtures.rs"
+
+# Property-based tests
+[[test]]
+name = "test_ansi_parser_props"
+path = "tests/proptest/test_ansi_parser_props.rs"
+
+[[test]]
+name = "test_command_validation_props"
+path = "tests/proptest/test_command_validation_props.rs"
+
+[[test]]
+name = "test_output_processing_props"
+path = "tests/proptest/test_output_processing_props.rs"
 
 [profile.dev]
 opt-level = 1

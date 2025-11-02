@@ -111,7 +111,8 @@ impl OutputProcessor {
         if chunk.is_complete {
             Ok(self.flush_lines())
         } else {
-            Ok(Vec::new())
+            // Return ready lines (completed lines with newlines) but keep partial line buffered
+            Ok(self.take_ready_lines())
         }
     }
 
@@ -125,22 +126,30 @@ impl OutputProcessor {
         // Convert bytes to string, handling encoding errors
         let text = String::from_utf8_lossy(data);
 
-        for ch in text.chars() {
+        let chars: Vec<char> = text.chars().collect();
+        for (i, ch) in chars.iter().enumerate() {
             match ch {
                 '\n' => self.process_newline(timestamp, stream_type)?,
-                '\r' => self.process_carriage_return()?,
+                '\r' => {
+                    // Only process carriage return if it's NOT followed by \n (i.e., not part of \r\n)
+                    let next_is_newline = i + 1 < chars.len() && chars[i + 1] == '\n';
+                    if !next_is_newline {
+                        self.process_carriage_return()?;
+                    }
+                    // If it's \r\n, just skip the \r and let \n be processed
+                },
                 '\x1b' => {
                     self.in_ansi_sequence = true;
-                    self.current_line.push(ch);
+                    self.current_line.push(*ch);
                 }
                 ch if self.in_ansi_sequence => {
-                    self.current_line.push(ch);
+                    self.current_line.push(*ch);
                     if self.is_ansi_sequence_complete(&self.current_line) {
                         self.process_ansi_sequence()?;
                     }
                 }
                 ch => {
-                    self.current_line.push(ch);
+                    self.current_line.push(*ch);
                 }
             }
         }

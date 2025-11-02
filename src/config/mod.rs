@@ -9,6 +9,7 @@ pub mod loader;
 pub mod prompt;
 pub mod shell;
 pub mod theme;
+pub mod watcher;
 
 use crate::config::shell::ShellManager;
 use crate::config::theme::ThemeManager;

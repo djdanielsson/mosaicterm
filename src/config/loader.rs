@@ -112,8 +112,8 @@ impl ConfigLoader {
         }
 
         // Save in TOML format by default
-        let toml_content = toml::to_string_pretty(config)
-            .map_err(|e| Error::ConfigSerializationFailed {
+        let toml_content =
+            toml::to_string_pretty(config).map_err(|e| Error::ConfigSerializationFailed {
                 format: "TOML".to_string(),
                 reason: e.to_string(),
             })?;
@@ -131,21 +131,22 @@ impl ConfigLoader {
 
         // Determine format from file extension
         let content = match path.extension().and_then(|ext| ext.to_str()) {
-            Some("json") => serde_json::to_string_pretty(config)
-                .map_err(|e| Error::ConfigSerializationFailed {
+            Some("json") => serde_json::to_string_pretty(config).map_err(|e| {
+                Error::ConfigSerializationFailed {
                     format: "JSON".to_string(),
                     reason: e.to_string(),
-                })?,
-            Some("toml") => toml::to_string_pretty(config)
-                .map_err(|e| Error::ConfigSerializationFailed {
+                }
+            })?,
+            Some("toml") => {
+                toml::to_string_pretty(config).map_err(|e| Error::ConfigSerializationFailed {
                     format: "TOML".to_string(),
                     reason: e.to_string(),
-                })?,
-            _ => toml::to_string_pretty(config)
-                .map_err(|e| Error::ConfigSerializationFailed {
-                    format: "TOML".to_string(),
-                    reason: e.to_string(),
-                })?,
+                })?
+            }
+            _ => toml::to_string_pretty(config).map_err(|e| Error::ConfigSerializationFailed {
+                format: "TOML".to_string(),
+                reason: e.to_string(),
+            })?,
         };
 
         fs::write(path, content)?;
@@ -183,22 +184,23 @@ impl ConfigLoader {
         let content = fs::read_to_string(path)?;
 
         match format {
-            ConfigFormat::Toml => toml::from_str(&content)
-                .map_err(|e| Error::ConfigParseFailed {
-                    format: "TOML".to_string(),
-                    reason: e.to_string(),
-                }),
-            ConfigFormat::Json => serde_json::from_str(&content)
-                .map_err(|e| Error::ConfigParseFailed {
+            ConfigFormat::Toml => toml::from_str(&content).map_err(|e| Error::ConfigParseFailed {
+                format: "TOML".to_string(),
+                reason: e.to_string(),
+            }),
+            ConfigFormat::Json => {
+                serde_json::from_str(&content).map_err(|e| Error::ConfigParseFailed {
                     format: "JSON".to_string(),
                     reason: e.to_string(),
-                }),
+                })
+            }
             #[cfg(feature = "yaml")]
-            ConfigFormat::Yaml => serde_yaml::from_str(&content)
-                .map_err(|e| Error::ConfigParseFailed {
+            ConfigFormat::Yaml => {
+                serde_yaml::from_str(&content).map_err(|e| Error::ConfigParseFailed {
                     format: "YAML".to_string(),
                     reason: e.to_string(),
-                }),
+                })
+            }
         }
     }
 
@@ -338,7 +340,8 @@ impl ConfigLoader {
         if config.terminal.timeout.interactive_command_timeout_secs > 86400 {
             return Err(Error::ConfigValidationFailed {
                 field: "terminal.timeout.interactive_command_timeout_secs".to_string(),
-                reason: "Interactive command timeout cannot exceed 24 hours (86400 seconds)".to_string(),
+                reason: "Interactive command timeout cannot exceed 24 hours (86400 seconds)"
+                    .to_string(),
             });
         }
 

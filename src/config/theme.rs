@@ -695,11 +695,10 @@ impl ThemeManager {
     /// Export theme to JSON string
     pub fn export_theme(&self, theme_name: &str) -> Result<String> {
         if let Some(theme) = self.themes.get(theme_name) {
-            serde_json::to_string_pretty(theme)
-                .map_err(|e| Error::ThemeExportFailed {
-                    theme_name: theme_name.to_string(),
-                    reason: e.to_string(),
-                })
+            serde_json::to_string_pretty(theme).map_err(|e| Error::ThemeExportFailed {
+                theme_name: theme_name.to_string(),
+                reason: e.to_string(),
+            })
         } else {
             Err(Error::ThemeNotFound {
                 theme_name: theme_name.to_string(),
@@ -709,10 +708,9 @@ impl ThemeManager {
 
     /// Import theme from JSON string
     pub fn import_theme(&mut self, json: &str) -> Result<String> {
-        let theme: Theme = serde_json::from_str(json)
-            .map_err(|e| Error::ThemeImportFailed {
-                reason: e.to_string(),
-            })?;
+        let theme: Theme = serde_json::from_str(json).map_err(|e| Error::ThemeImportFailed {
+            reason: e.to_string(),
+        })?;
 
         let theme_name = theme.name.clone();
         self.add_theme(theme)?;

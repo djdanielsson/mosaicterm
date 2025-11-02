@@ -91,6 +91,7 @@ pub mod completion;
 pub mod config;
 pub mod error;
 pub mod state;
+pub mod state_manager;
 
 // Core modules
 pub mod pty;

@@ -6,9 +6,7 @@
 //! Contract: PTY Process Lifecycle Management
 //! See: specs/001-mosaicterm-terminal-emulator/contracts/pty-lifecycle.md
 
-use mosaicterm::pty::{
-    create_pty, get_pty_info, is_alive, terminate_pty, PtyHandle,
-};
+use mosaicterm::pty::{create_pty, get_pty_info, is_alive, terminate_pty, PtyHandle};
 use std::collections::HashMap;
 
 // Test PTY creation with valid command

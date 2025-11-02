@@ -237,6 +237,33 @@ impl Default for PtyManager {
     }
 }
 
+// Implement the PtyOperations trait for PtyManager
+#[async_trait::async_trait]
+impl super::operations::PtyOperations for PtyManager {
+    async fn send_input(&mut self, handle: &PtyHandle, data: &[u8]) -> Result<()> {
+        self.send_input(handle, data).await
+    }
+
+    fn try_read_output_now(&mut self, handle: &PtyHandle) -> Result<Vec<u8>> {
+        self.try_read_output_now(handle)
+    }
+
+    fn get_info(&self, handle: &PtyHandle) -> Result<PtyInfo> {
+        self.get_info(handle)
+    }
+
+    fn active_count(&self) -> usize {
+        self.active_count()
+    }
+
+    fn cleanup_terminated(&mut self) -> usize {
+        let count_before = self.active_count();
+        self.cleanup_terminated();
+        let count_after = self.active_count();
+        count_before - count_after
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
