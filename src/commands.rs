@@ -111,7 +111,7 @@ impl CommandProcessor {
             if let Some(last_cmd) = self.history.last() {
                 processed = command.replace("!!", last_cmd);
             } else {
-                return Err(Error::Other("No previous command in history".to_string()));
+                return Err(Error::NoPreviousCommand);
             }
         }
 

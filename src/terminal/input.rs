@@ -325,14 +325,15 @@ impl CommandInputProcessor {
     /// Validate a command before execution
     fn validate_command(command: &str) -> Result<()> {
         if command.is_empty() {
-            return Err(crate::error::Error::Other(
-                "Command cannot be empty".to_string(),
-            ));
+            return Err(crate::error::Error::EmptyCommand);
         }
 
         // Basic validation - could be extended
         if command.len() > 10000 {
-            return Err(crate::error::Error::Other("Command too long".to_string()));
+            return Err(crate::error::Error::CommandValidationFailed {
+                command: command.chars().take(50).collect(),
+                reason: "Command too long (max 10000 chars)".to_string(),
+            });
         }
 
         Ok(())
@@ -390,19 +391,23 @@ pub mod validation {
         let trimmed = command.trim();
 
         if trimmed.is_empty() {
-            return Err(Error::Other("Empty command".to_string()));
+            return Err(Error::EmptyCommand);
         }
 
         // Check for null bytes (command injection attempt)
         if trimmed.contains('\0') {
-            return Err(Error::Other("Command contains null bytes".to_string()));
+            return Err(Error::CommandValidationFailed {
+                command: trimmed.chars().take(50).collect(),
+                reason: "Command contains null bytes (potential injection attempt)".to_string(),
+            });
         }
 
         // Check command length (prevent buffer overflow attempts)
         if trimmed.len() > 10000 {
-            return Err(Error::Other(
-                "Command exceeds maximum length (10000 chars)".to_string(),
-            ));
+            return Err(Error::CommandValidationFailed {
+                command: trimmed.chars().take(50).collect(),
+                reason: "Command exceeds maximum length (10000 chars)".to_string(),
+            });
         }
 
         // Check for potentially dangerous commands
@@ -424,10 +429,10 @@ pub mod validation {
         for (pattern, reason) in &dangerous_patterns {
             if let Ok(regex) = Regex::new(pattern) {
                 if regex.is_match(trimmed) {
-                    return Err(Error::Other(format!(
-                        "Potentially dangerous command blocked: {} ({})",
-                        trimmed, reason
-                    )));
+                    return Err(Error::CommandValidationFailed {
+                        command: trimmed.chars().take(50).collect(),
+                        reason: reason.to_string(),
+                    });
                 }
             }
         }
@@ -438,7 +443,10 @@ pub mod validation {
             || (trimmed.starts_with("sudo ")
                 && trimmed.trim_start_matches("sudo ").trim().is_empty())
         {
-            return Err(Error::Other("Incomplete sudo command".to_string()));
+            return Err(Error::CommandValidationFailed {
+                command: "sudo".to_string(),
+                reason: "Incomplete sudo command".to_string(),
+            });
         }
 
         Ok(())

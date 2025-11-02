@@ -602,14 +602,18 @@ impl ThemeManager {
     pub fn current_theme(&self) -> Result<&Theme> {
         self.themes
             .get(&self.current_theme)
-            .ok_or_else(|| Error::Other(format!("Theme '{}' not found", self.current_theme)))
+            .ok_or_else(|| Error::ThemeNotFound {
+                theme_name: self.current_theme.clone(),
+            })
     }
 
     /// Get a mutable reference to the current theme
     pub fn current_theme_mut(&mut self) -> Result<&mut Theme> {
         self.themes
             .get_mut(&self.current_theme)
-            .ok_or_else(|| Error::Other(format!("Theme '{}' not found", self.current_theme)))
+            .ok_or_else(|| Error::ThemeNotFound {
+                theme_name: self.current_theme.clone(),
+            })
     }
 
     /// Set the current theme
@@ -618,17 +622,18 @@ impl ThemeManager {
             self.current_theme = theme_name.to_string();
             Ok(())
         } else {
-            Err(Error::Other(format!("Theme '{}' not found", theme_name)))
+            Err(Error::ThemeNotFound {
+                theme_name: theme_name.to_string(),
+            })
         }
     }
 
     /// Add a custom theme
     pub fn add_theme(&mut self, theme: Theme) -> Result<()> {
         if self.themes.contains_key(&theme.name) {
-            return Err(Error::Other(format!(
-                "Theme '{}' already exists",
-                theme.name
-            )));
+            return Err(Error::ThemeAlreadyExists {
+                theme_name: theme.name.clone(),
+            });
         }
         self.themes.insert(theme.name.clone(), theme);
         Ok(())
@@ -637,7 +642,9 @@ impl ThemeManager {
     /// Remove a theme
     pub fn remove_theme(&mut self, theme_name: &str) -> Result<()> {
         if theme_name.starts_with("default-") {
-            return Err(Error::Other("Cannot remove built-in themes".to_string()));
+            return Err(Error::CannotRemoveBuiltInTheme {
+                theme_name: theme_name.to_string(),
+            });
         }
 
         if self.themes.remove(theme_name).is_some() {
@@ -647,7 +654,9 @@ impl ThemeManager {
             }
             Ok(())
         } else {
-            Err(Error::Other(format!("Theme '{}' not found", theme_name)))
+            Err(Error::ThemeNotFound {
+                theme_name: theme_name.to_string(),
+            })
         }
     }
 
@@ -687,16 +696,23 @@ impl ThemeManager {
     pub fn export_theme(&self, theme_name: &str) -> Result<String> {
         if let Some(theme) = self.themes.get(theme_name) {
             serde_json::to_string_pretty(theme)
-                .map_err(|e| Error::Other(format!("Failed to export theme: {}", e)))
+                .map_err(|e| Error::ThemeExportFailed {
+                    theme_name: theme_name.to_string(),
+                    reason: e.to_string(),
+                })
         } else {
-            Err(Error::Other(format!("Theme '{}' not found", theme_name)))
+            Err(Error::ThemeNotFound {
+                theme_name: theme_name.to_string(),
+            })
         }
     }
 
     /// Import theme from JSON string
     pub fn import_theme(&mut self, json: &str) -> Result<String> {
         let theme: Theme = serde_json::from_str(json)
-            .map_err(|e| Error::Other(format!("Failed to import theme: {}", e)))?;
+            .map_err(|e| Error::ThemeImportFailed {
+                reason: e.to_string(),
+            })?;
 
         let theme_name = theme.name.clone();
         self.add_theme(theme)?;
@@ -890,7 +906,9 @@ impl ThemeManager {
                 text: theme.colors.text.secondary.to_egui(),
                 accent: theme.colors.status.success.to_egui(),
             }),
-            _ => Err(Error::Other(format!("Unknown component: {}", component))),
+            _ => Err(Error::UnknownComponent {
+                component: component.to_string(),
+            }),
         }
     }
 
@@ -902,10 +920,9 @@ impl ThemeManager {
             "solarized_light" => self.apply_solarized_light_scheme(),
             "dracula" => self.apply_dracula_scheme(),
             "nord" => self.apply_nord_scheme(),
-            _ => Err(Error::Other(format!(
-                "Unknown color scheme: {}",
-                scheme_name
-            ))),
+            _ => Err(Error::UnknownColorScheme {
+                scheme: scheme_name.to_string(),
+            }),
         }
     }
 

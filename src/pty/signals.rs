@@ -84,7 +84,9 @@ impl SignalHandler {
         let pid = self
             .process_handles
             .get(handle_id)
-            .ok_or_else(|| Error::Other(format!("Process {} not registered", handle_id)))?;
+            .ok_or_else(|| Error::ProcessNotRegistered {
+                handle_id: handle_id.to_string(),
+            })?;
 
         self.send_signal_to_pid(*pid, signal).await
     }
@@ -104,9 +106,10 @@ impl SignalHandler {
 
         #[cfg(not(any(unix, windows)))]
         {
-            Err(Error::Other(format!(
-                "Signal handling not supported on this platform"
-            )))
+            Err(Error::SignalNotSupported {
+                signal: format!("{:?}", signal),
+                platform: std::env::consts::OS.to_string(),
+            })
         }
     }
 
@@ -183,7 +186,10 @@ impl SignalHandler {
         };
 
         kill(Pid::from_raw(pid as i32), nix_signal)
-            .map_err(|e| Error::Other(format!("Failed to send signal: {}", e)))
+            .map_err(|e| Error::SignalSendFailed {
+                signal: format!("{:?}", signal),
+                reason: e.to_string(),
+            })
     }
 
     /// Platform-specific Windows signal sending
@@ -195,16 +201,17 @@ impl SignalHandler {
             Signal::Kill => {
                 // Use Windows API to terminate process
                 // This is a simplified implementation
-                Err(Error::Other(
-                    "Signal sending not fully implemented on Windows".to_string(),
-                ))
+                Err(Error::SignalNotSupported {
+                    signal: format!("{:?}", signal),
+                    platform: "Windows".to_string(),
+                })
             }
             _ => {
                 // Other signals not applicable on Windows
-                Err(Error::Other(format!(
-                    "Signal {:?} not supported on Windows",
-                    signal
-                )))
+                Err(Error::SignalNotSupported {
+                    signal: format!("{:?}", signal),
+                    platform: "Windows".to_string(),
+                })
             }
         }
     }

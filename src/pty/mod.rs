@@ -89,7 +89,7 @@ pub fn terminate_pty(_handle: &PtyHandle) -> crate::error::Result<()> {
     {
         // Simple termination - in reality would signal the actual process
         if _handle.id.is_empty() {
-            Err(crate::error::Error::Other("Invalid PTY handle".to_string()))
+            Err(crate::error::Error::InvalidPtyHandle)
         } else {
             // Simulate successful termination
             Ok(())

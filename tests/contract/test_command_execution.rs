@@ -6,9 +6,8 @@
 //! See: specs/001-mosaicterm-terminal-emulator/contracts/command-execution.md
 
 use mosaicterm::error::Error;
-use mosaicterm::pty::{PtyHandle, PtyManager};
+use mosaicterm::pty::PtyHandle;
 use regex::Regex;
-use std::time::Duration;
 
 // Test command sending to running PTY
 #[test]
@@ -97,7 +96,7 @@ fn test_output_chunk_processing() {
         data: b"Hello\nWorld\n".to_vec(),
         timestamp: chrono::Utc::now(),
         stream_type: StreamType::Stdout,
-        is_complete: true,
+        _is_complete: true,
     };
 
     // Act
@@ -120,7 +119,7 @@ fn test_error_handling_for_malformed_input() {
         data: invalid_utf8,
         timestamp: chrono::Utc::now(),
         stream_type: StreamType::Stdout,
-        is_complete: false,
+        _is_complete: false,
     };
 
     // Act
@@ -164,7 +163,7 @@ fn read_output(handle: &PtyHandle) -> Result<OutputChunk, Error> {
             data: b"mock output\n".to_vec(),
             timestamp: chrono::Utc::now(),
             stream_type: StreamType::Stdout,
-            is_complete: true,
+            _is_complete: true,
         })
     }
 }
@@ -181,8 +180,8 @@ fn process_output_chunk(chunk: OutputChunk) -> Result<ProcessedOutput, Error> {
 
     Ok(ProcessedOutput {
         lines,
-        timestamp: chunk.timestamp,
-        stream_type: chunk.stream_type,
+        _timestamp: chunk.timestamp,
+        _stream_type: chunk.stream_type,
     })
 }
 
@@ -193,18 +192,19 @@ struct OutputChunk {
     data: Vec<u8>,
     timestamp: chrono::DateTime<chrono::Utc>,
     stream_type: StreamType,
-    is_complete: bool,
+    _is_complete: bool,
 }
 
 #[derive(Debug)]
 enum StreamType {
     Stdout,
+    #[allow(dead_code)]
     Stderr,
 }
 
 #[derive(Debug)]
 struct ProcessedOutput {
     lines: Vec<String>,
-    timestamp: chrono::DateTime<chrono::Utc>,
-    stream_type: StreamType,
+    _timestamp: chrono::DateTime<chrono::Utc>,
+    _stream_type: StreamType,
 }

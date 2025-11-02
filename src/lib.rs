@@ -118,11 +118,44 @@ pub use config::theme::ThemeManager;
 pub use models::ShellType as TerminalShellType;
 
 // Version information
+/// The current version of MosaicTerm from Cargo.toml
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The application name from Cargo.toml
 pub const NAME: &str = env!("CARGO_PKG_NAME");
+
+/// The application description from Cargo.toml
 pub const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 
 /// Initialize MosaicTerm with default settings
+///
+/// This is the primary initialization function for MosaicTerm. It performs the following steps:
+/// 1. Validates system requirements (shell availability, etc.)
+/// 2. Loads configuration from default locations or uses defaults
+/// 3. Creates runtime configuration with theme and shell managers
+/// 4. Initializes core components
+///
+/// # Returns
+///
+/// Returns `Ok(RuntimeConfig)` if initialization succeeds, or an `Error` if any step fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use mosaicterm::init;
+///
+/// match init() {
+///     Ok(config) => println!("MosaicTerm initialized successfully"),
+///     Err(e) => eprintln!("Initialization failed: {}", e),
+/// }
+/// ```
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - System requirements are not met (e.g., no compatible shell found)
+/// - Runtime configuration creation fails
+/// - Core component initialization fails
 pub fn init() -> Result<RuntimeConfig> {
     info!("🚀 Initializing {} v{}", NAME, VERSION);
 
@@ -245,10 +278,10 @@ pub fn init_with_config(config_path: &std::path::Path) -> Result<RuntimeConfig> 
 
     // Step 2: Validate config file exists and is readable
     if !config_path.exists() {
-        return Err(Error::Config(format!(
-            "Configuration file does not exist: {}",
-            config_path.display()
-        )));
+        return Err(Error::ConfigLoadFailed {
+            path: config_path.to_path_buf(),
+            reason: "Configuration file does not exist".to_string(),
+        });
     }
 
     // Step 3: Load custom configuration with detailed error handling
@@ -279,6 +312,21 @@ pub fn init_with_config(config_path: &std::path::Path) -> Result<RuntimeConfig> 
 }
 
 /// Create default configuration instance
+///
+/// Creates a new `RuntimeConfig` with default settings. This is useful when you want
+/// to start with a clean configuration without loading from files.
+///
+/// # Returns
+///
+/// Returns `Ok(RuntimeConfig)` with default settings, or an `Error` if creation fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use mosaicterm::create_config;
+///
+/// let config = create_config().expect("Failed to create default config");
+/// ```
 pub fn create_config() -> Result<RuntimeConfig> {
     info!("🏗️  Creating configuration instance...");
 
@@ -307,11 +355,30 @@ pub fn create_config() -> Result<RuntimeConfig> {
 /// Comprehensive error recovery and reporting
 pub fn handle_startup_error(error: &Error) -> String {
     match error {
-        Error::Config(msg) => {
+        Error::ConfigLoadFailed { path, reason } => {
             format!(
-                "Configuration Error: {}\n\nTry:\n• Check configuration file syntax\n• Ensure file permissions are correct\n• Use default configuration",
-                msg
+                "Configuration Error: Failed to load config from '{}': {}\n\nTry:\n• Check configuration file syntax\n• Ensure file permissions are correct\n• Use default configuration",
+                path.display(),
+                reason
             )
+        }
+        Error::ConfigParseFailed { format, reason } => {
+            format!(
+                "Configuration Error: Failed to parse {} config: {}\n\nTry:\n• Check configuration file syntax\n• Ensure file is valid {}\n• Use default configuration",
+                format,
+                reason,
+                format
+            )
+        }
+        Error::ConfigValidationFailed { field, reason } => {
+            format!(
+                "Configuration Error: Validation failed for '{}': {}\n\nTry:\n• Check configuration value\n• Use default configuration",
+                field,
+                reason
+            )
+        }
+        Error::ConfigNotFound => {
+            "Configuration Error: Config file not found\n\nTry:\n• Create a configuration file\n• Use default configuration".to_string()
         }
         Error::Other(msg) => {
             format!(
@@ -383,11 +450,49 @@ pub fn app_info() -> std::collections::HashMap<String, String> {
 }
 
 /// Get default configuration
+///
+/// Returns a `Config` instance with all default values. This is useful for
+/// testing or when you want to inspect the default configuration values.
+///
+/// # Examples
+///
+/// ```
+/// use mosaicterm::default_config;
+///
+/// let config = default_config();
+/// assert_eq!(config.ui.font_size, 12);
+/// ```
 pub fn default_config() -> Config {
     Config::default()
 }
 
 /// Validate system requirements for MosaicTerm
+///
+/// Checks if the system meets all requirements to run MosaicTerm:
+/// - Required commands are available (`which`, `ps`)
+/// - PTY support is available (Unix-like systems)
+/// - At least one compatible shell is found
+///
+/// # Returns
+///
+/// Returns a `SystemValidation` struct containing any issues found, or an error
+/// if validation cannot be performed.
+///
+/// # Examples
+///
+/// ```no_run
+/// use mosaicterm::validate_system;
+///
+/// match validate_system() {
+///     Ok(validation) if validation.is_valid => {
+///         println!("System is ready to run MosaicTerm");
+///     }
+///     Ok(validation) => {
+///         println!("System has issues: {:?}", validation.issues);
+///     }
+///     Err(e) => eprintln!("Validation failed: {}", e),
+/// }
+/// ```
 pub fn validate_system() -> Result<SystemValidation> {
     info!("🔍 Validating system requirements...");
 
@@ -431,22 +536,51 @@ fn command_exists(cmd: &str) -> bool {
 }
 
 /// System validation result
+///
+/// Contains the result of system validation checks, including whether
+/// the system is valid and a list of any issues found.
 #[derive(Debug, Clone)]
 pub struct SystemValidation {
+    /// Whether the system meets all requirements
     pub is_valid: bool,
+    /// List of validation issues found (empty if `is_valid` is true)
     pub issues: Vec<ValidationIssue>,
 }
 
-/// Validation issues
+/// Validation issues that can be found during system validation
+///
+/// Each variant represents a different type of issue that might prevent
+/// MosaicTerm from running properly.
 #[derive(Debug, Clone)]
 pub enum ValidationIssue {
+    /// A required command is not available on the system
     MissingCommand(String),
+    /// A required capability (e.g., PTY support) is missing
     MissingCapability(String),
+    /// System memory is below recommended minimum
     LowMemory(usize),
+    /// Insufficient permissions to perform required operations
     InsufficientPermissions(String),
 }
 
 /// Get system information
+///
+/// Collects detailed information about the system including OS, architecture,
+/// hostname, CPU count, and memory. This is useful for diagnostics and bug reports.
+///
+/// # Returns
+///
+/// Returns a `SystemInfo` struct with all available system information.
+///
+/// # Examples
+///
+/// ```
+/// use mosaicterm::system_info;
+///
+/// let info = system_info();
+/// println!("Running on {} {}", info.os, info.arch);
+/// println!("Hostname: {}", info.hostname);
+/// ```
 pub fn system_info() -> SystemInfo {
     // Get basic system information available from std
     let os = std::env::consts::OS.to_string();
@@ -672,14 +806,24 @@ fn get_memory_mb() -> usize {
 }
 
 /// System information
+///
+/// Contains detailed information about the system where MosaicTerm is running.
+/// This is useful for diagnostics, bug reports, and feature detection.
 #[derive(Debug, Clone)]
 pub struct SystemInfo {
+    /// Operating system name (e.g., "linux", "macos", "windows")
     pub os: String,
+    /// CPU architecture (e.g., "x86_64", "aarch64")
     pub arch: String,
+    /// OS family (e.g., "unix", "windows")
     pub family: String,
+    /// OS version string
     pub version: String,
+    /// System hostname
     pub hostname: String,
+    /// Number of logical CPU cores
     pub cpu_count: usize,
+    /// Total system memory in megabytes
     pub memory_mb: usize,
 }
 

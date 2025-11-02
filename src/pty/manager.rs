@@ -147,7 +147,9 @@ impl PtyManager {
                 is_alive: process.is_running(),
             })
         } else {
-            Err(Error::Other(format!("PTY process {} not found", handle.id)))
+            Err(Error::PtyHandleNotFound {
+                handle_id: handle.id.to_string(),
+            })
         }
     }
 
@@ -156,10 +158,9 @@ impl PtyManager {
         if let Some(streams) = self.streams.get_mut(&handle.id) {
             streams.write(data).await
         } else {
-            Err(Error::Other(format!(
-                "PTY streams for {} not found",
-                handle.id
-            )))
+            Err(Error::PtyStreamsNotFound {
+                handle_id: handle.id.to_string(),
+            })
         }
     }
 
@@ -172,10 +173,9 @@ impl PtyManager {
                 streams.read_with_timeout(timeout_ms).await
             }
         } else {
-            Err(Error::Other(format!(
-                "PTY streams for {} not found",
-                handle.id
-            )))
+            Err(Error::PtyStreamsNotFound {
+                handle_id: handle.id.to_string(),
+            })
         }
     }
 
@@ -184,10 +184,9 @@ impl PtyManager {
         if let Some(streams) = self.streams.get_mut(&handle.id) {
             streams.try_read_now()
         } else {
-            Err(Error::Other(format!(
-                "PTY streams for {} not found",
-                handle.id
-            )))
+            Err(Error::PtyStreamsNotFound {
+                handle_id: handle.id.to_string(),
+            })
         }
     }
 
@@ -217,16 +216,17 @@ impl PtyManager {
         if std::process::Command::new("which")
             .arg(command)
             .output()
-            .map_err(|_| Error::Other(format!("Command '{}' not found in PATH", command)))?
+            .map_err(|_| Error::CommandNotFound {
+                command: command.to_string(),
+            })?
             .status
             .success()
         {
             Ok(())
         } else {
-            Err(Error::Other(format!(
-                "Command '{}' not found or not executable",
-                command
-            )))
+            Err(Error::CommandNotFound {
+                command: command.to_string(),
+            })
         }
     }
 }

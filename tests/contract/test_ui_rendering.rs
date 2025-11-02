@@ -7,8 +7,7 @@
 //! See: specs/001-mosaicterm-terminal-emulator/contracts/ui-rendering.md
 
 use mosaicterm::error::Error;
-use mosaicterm::models::{CommandBlock, ExecutionStatus};
-use mosaicterm::ui::{CommandBlocks, InputPrompt, ScrollableHistory};
+use mosaicterm::models::CommandBlock;
 use std::path::PathBuf;
 
 // Test command block rendering with success status
@@ -54,7 +53,7 @@ fn test_scrollable_history_with_multiple_blocks() {
     // Arrange
     let blocks = create_mock_command_blocks(5);
     let viewport = Viewport {
-        width: 800.0,
+        _width: 800.0,
         height: 600.0,
     };
     let scroll_position = 0.0;
@@ -74,7 +73,7 @@ fn test_scrollable_history_with_scroll_position() {
     // Arrange
     let blocks = create_mock_command_blocks(10);
     let viewport = Viewport {
-        width: 800.0,
+        _width: 800.0,
         height: 600.0,
     };
     let scroll_position = 200.0; // Scrolled down
@@ -133,7 +132,7 @@ fn test_viewport_calculations() {
     // Arrange
     let blocks = create_mock_command_blocks(3);
     let small_viewport = Viewport {
-        width: 400.0,
+        _width: 400.0,
         height: 200.0,
     };
     let scroll_position = 0.0;
@@ -154,7 +153,7 @@ fn test_empty_command_history_rendering() {
     // Arrange
     let blocks = vec![];
     let viewport = Viewport {
-        width: 800.0,
+        _width: 800.0,
         height: 600.0,
     };
     let scroll_position = 0.0;
@@ -197,10 +196,10 @@ fn create_mock_command_block(command: &str, output: &str, success: bool) -> Comm
 
 fn create_mock_block_style() -> BlockStyle {
     BlockStyle {
-        background_color: [40, 40, 50],
-        border_color: [80, 80, 100],
-        text_color: [200, 200, 200],
-        padding: 8.0,
+        _background_color: [40, 40, 50],
+        _border_color: [80, 80, 100],
+        _text_color: [200, 200, 200],
+        _padding: 8.0,
     }
 }
 
@@ -208,8 +207,8 @@ fn render_command_block(block: &CommandBlock, _style: &BlockStyle) -> Result<Ren
     Ok(RenderedBlock {
         command_area: RenderArea {
             text: block.command.clone(),
-            width: 400.0,
-            height: 20.0,
+            _width: 400.0,
+            _height: 20.0,
         },
         output_area: RenderArea {
             text: block
@@ -218,8 +217,8 @@ fn render_command_block(block: &CommandBlock, _style: &BlockStyle) -> Result<Ren
                 .map(|line| line.text.clone())
                 .collect::<Vec<_>>()
                 .join("\n"),
-            width: 400.0,
-            height: (block.output.len() * 16) as f32,
+            _width: 400.0,
+            _height: (block.output.len() * 16) as f32,
         },
     })
 }
@@ -249,16 +248,16 @@ fn calculate_visible_blocks(
     Ok(VisibleBlocks {
         blocks: visible_blocks,
         scroll_offset: scroll_position,
-        total_height: blocks.len() as f32 * block_height,
+        _total_height: blocks.len() as f32 * block_height,
     })
 }
 
 fn create_mock_input_style() -> InputStyle {
     InputStyle {
-        background_color: [25, 25, 35],
-        border_color: [100, 100, 150],
-        text_color: [255, 255, 255],
-        cursor_color: [100, 200, 100],
+        _background_color: [25, 25, 35],
+        _border_color: [100, 100, 150],
+        _text_color: [255, 255, 255],
+        _cursor_color: [100, 200, 100],
     }
 }
 
@@ -270,21 +269,21 @@ fn render_input_prompt(
     Ok(InputRender {
         text: input.to_string(),
         cursor_position: cursor_pos,
-        width: 600.0,
-        height: 30.0,
+        _width: 600.0,
+        _height: 30.0,
     })
 }
 
 fn create_mock_color_palette() -> ColorPalette {
     ColorPalette {
-        foreground: [255, 255, 255],
-        background: [0, 0, 0],
-        red: [255, 0, 0],
-        green: [0, 255, 0],
-        blue: [0, 0, 255],
-        yellow: [255, 255, 0],
-        magenta: [255, 0, 255],
-        cyan: [0, 255, 255],
+        _foreground: [255, 255, 255],
+        _background: [0, 0, 0],
+        _red: [255, 0, 0],
+        _green: [0, 255, 0],
+        _blue: [0, 0, 255],
+        _yellow: [255, 255, 0],
+        _magenta: [255, 0, 255],
+        _cyan: [0, 255, 255],
     }
 }
 
@@ -297,16 +296,16 @@ fn render_ansi_text(
 
     // Simple implementation - create one segment with all attributes
     segments.push(ColorSegment {
-        text: text.to_string(),
-        foreground_color: if ansi_codes.contains(&AnsiCode::ForegroundRed) {
+        _text: text.to_string(),
+        _foreground_color: if ansi_codes.contains(&AnsiCode::ForegroundRed) {
             Some([255, 0, 0])
         } else {
             None
         },
-        background_color: None,
-        is_bold: ansi_codes.contains(&AnsiCode::Bold),
-        is_italic: false,
-        is_underline: false,
+        _background_color: None,
+        _is_bold: ansi_codes.contains(&AnsiCode::Bold),
+        _is_italic: false,
+        _is_underline: false,
     });
 
     Ok(ColoredText {
@@ -319,10 +318,10 @@ fn render_ansi_text(
 
 #[derive(Debug)]
 struct BlockStyle {
-    background_color: [u8; 3],
-    border_color: [u8; 3],
-    text_color: [u8; 3],
-    padding: f32,
+    _background_color: [u8; 3],
+    _border_color: [u8; 3],
+    _text_color: [u8; 3],
+    _padding: f32,
 }
 
 #[derive(Debug)]
@@ -334,13 +333,13 @@ struct RenderedBlock {
 #[derive(Debug)]
 struct RenderArea {
     text: String,
-    width: f32,
-    height: f32,
+    _width: f32,
+    _height: f32,
 }
 
 #[derive(Debug)]
 struct Viewport {
-    width: f32,
+    _width: f32,
     height: f32,
 }
 
@@ -348,44 +347,48 @@ struct Viewport {
 struct VisibleBlocks {
     blocks: Vec<CommandBlock>,
     scroll_offset: f32,
-    total_height: f32,
+    _total_height: f32,
 }
 
 #[derive(Debug)]
 struct InputStyle {
-    background_color: [u8; 3],
-    border_color: [u8; 3],
-    text_color: [u8; 3],
-    cursor_color: [u8; 3],
+    _background_color: [u8; 3],
+    _border_color: [u8; 3],
+    _text_color: [u8; 3],
+    _cursor_color: [u8; 3],
 }
 
 #[derive(Debug)]
 struct InputRender {
     text: String,
     cursor_position: usize,
-    width: f32,
-    height: f32,
+    _width: f32,
+    _height: f32,
 }
 
 #[derive(Debug)]
 struct ColorPalette {
-    foreground: [u8; 3],
-    background: [u8; 3],
-    red: [u8; 3],
-    green: [u8; 3],
-    blue: [u8; 3],
-    yellow: [u8; 3],
-    magenta: [u8; 3],
-    cyan: [u8; 3],
+    _foreground: [u8; 3],
+    _background: [u8; 3],
+    _red: [u8; 3],
+    _green: [u8; 3],
+    _blue: [u8; 3],
+    _yellow: [u8; 3],
+    _magenta: [u8; 3],
+    _cyan: [u8; 3],
 }
 
 #[derive(Debug, PartialEq)]
 enum AnsiCode {
     ForegroundRed,
+    #[allow(dead_code)]
     ForegroundGreen,
+    #[allow(dead_code)]
     ForegroundBlue,
     Bold,
+    #[allow(dead_code)]
     Italic,
+    #[allow(dead_code)]
     Underline,
 }
 
@@ -397,10 +400,10 @@ struct ColoredText {
 
 #[derive(Debug)]
 struct ColorSegment {
-    text: String,
-    foreground_color: Option<[u8; 3]>,
-    background_color: Option<[u8; 3]>,
-    is_bold: bool,
-    is_italic: bool,
-    is_underline: bool,
+    _text: String,
+    _foreground_color: Option<[u8; 3]>,
+    _background_color: Option<[u8; 3]>,
+    _is_bold: bool,
+    _is_italic: bool,
+    _is_underline: bool,
 }

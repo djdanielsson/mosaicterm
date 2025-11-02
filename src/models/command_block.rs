@@ -128,9 +128,10 @@ impl CommandBlock {
 
     /// Get the plain text output (without ANSI codes)
     pub fn get_plain_output(&self) -> String {
+        // Optimize: use references instead of cloning each string
         self.output
             .iter()
-            .map(|line| line.text.clone())
+            .map(|line| line.text.as_str())
             .collect::<Vec<_>>()
             .join("\n")
     }

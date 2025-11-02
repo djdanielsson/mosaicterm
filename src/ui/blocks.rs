@@ -360,7 +360,7 @@ impl CommandBlocks {
             .output
             .iter()
             .take(output_limit)
-            .map(|line| line.text.clone())
+            .map(|line| line.text.as_str())
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -648,7 +648,7 @@ impl CommandBlocks {
                     let output_text = command_block
                         .output
                         .iter()
-                        .map(|line| line.text.clone())
+                        .map(|line| line.text.as_str())
                         .collect::<Vec<_>>()
                         .join("\n");
                     *action = Some(ContextMenuAction::CopyOutput(output_text));
@@ -670,7 +670,7 @@ impl CommandBlocks {
                         let output_text = command_block
                             .output
                             .iter()
-                            .map(|line| line.text.clone())
+                            .map(|line| line.text.as_str())
                             .collect::<Vec<_>>()
                             .join("\n");
                         let all_text = format!("{}\n{}", command_block.command, output_text);

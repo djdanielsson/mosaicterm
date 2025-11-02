@@ -379,9 +379,7 @@ impl Terminal {
             // Process the chunk and return the lines
             self.output_processor.process_chunk(chunk)
         } else {
-            Err(crate::error::Error::Other(
-                "No PTY handle available".to_string(),
-            ))
+            Err(crate::error::Error::NoPtyHandleAvailable)
         }
     }
 

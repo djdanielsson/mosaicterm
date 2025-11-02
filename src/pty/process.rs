@@ -34,7 +34,10 @@ pub async fn spawn_pty_process(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| Error::Other(format!("Failed to open PTY: {}", e)))?;
+        .map_err(|e| Error::PtyCreationFailed {
+            command: command.to_string(),
+            reason: e.to_string(),
+        })?;
 
     // Build the command
     let mut cmd_builder = CommandBuilder::new(command);
@@ -54,7 +57,10 @@ pub async fn spawn_pty_process(
     let child = pair
         .slave
         .spawn_command(cmd_builder)
-        .map_err(|e| Error::Other(format!("Failed to spawn command: {}", e)))?;
+        .map_err(|e| Error::CommandSpawnFailed {
+            command: command.to_string(),
+            reason: e.to_string(),
+        })?;
 
     // Get the PID
     let pid = child.process_id().unwrap_or(0);
@@ -75,11 +81,15 @@ fn create_pty_streams(pair: PtyPair) -> Result<PtyStreams> {
     let mut master_reader = pair
         .master
         .try_clone_reader()
-        .map_err(|e| Error::Other(format!("Failed to clone PTY reader: {}", e)))?;
+        .map_err(|e| Error::PtyReaderCloneFailed {
+            reason: e.to_string(),
+        })?;
     let mut master_writer = pair
         .master
         .take_writer()
-        .map_err(|e| Error::Other(format!("Failed to take PTY writer: {}", e)))?;
+        .map_err(|e| Error::PtyWriterTakeFailed {
+            reason: e.to_string(),
+        })?;
 
     // Channel: PTY output -> async consumer
     let (tx_async_out, rx_async_out) = unbounded_channel::<Vec<u8>>();
@@ -89,37 +99,113 @@ fn create_pty_streams(pair: PtyPair) -> Result<PtyStreams> {
     // Reader thread: read from PTY master and forward to async channel
     thread::spawn(move || {
         let mut buf = [0u8; 4096];
+        let mut consecutive_errors = 0;
+        const MAX_CONSECUTIVE_ERRORS: u32 = 5;
+        
         loop {
             match master_reader.read(&mut buf) {
                 Ok(0) => {
-                    // EOF
+                    // EOF - process terminated normally
+                    eprintln!("PTY read EOF - process terminated");
                     break;
                 }
                 Ok(n) => {
                     // Debug: print how many bytes were read
                     eprintln!("PTY read {} bytes", n);
-                    let _ = tx_async_out.send(buf[..n].to_vec());
+                    consecutive_errors = 0; // Reset error counter on success
+                    
+                    // Send data to async channel
+                    if tx_async_out.send(buf[..n].to_vec()).is_err() {
+                        eprintln!("PTY read: receiver dropped, stopping reader thread");
+                        break;
+                    }
                 }
                 Err(e) => {
-                    // On EAGAIN/EINTR, continue; otherwise break
-                    // For simplicity, just break on error
-                    eprintln!("PTY read error: {}", e);
-                    break;
+                    // Handle recoverable errors (EAGAIN, EINTR)
+                    if e.kind() == std::io::ErrorKind::Interrupted {
+                        eprintln!("PTY read interrupted (EINTR), retrying...");
+                        continue;
+                    }
+                    
+                    if e.kind() == std::io::ErrorKind::WouldBlock {
+                        eprintln!("PTY read would block (EAGAIN), retrying...");
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        continue;
+                    }
+                    
+                    // Non-recoverable error
+                    consecutive_errors += 1;
+                    eprintln!("PTY read error ({}): {} (attempt {}/{})", 
+                        e.kind(), e, consecutive_errors, MAX_CONSECUTIVE_ERRORS);
+                    
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                        eprintln!("PTY read: too many consecutive errors, stopping reader thread");
+                        break;
+                    }
+                    
+                    // Brief delay before retry
+                    std::thread::sleep(std::time::Duration::from_millis(50));
                 }
             }
         }
+        eprintln!("PTY reader thread exiting");
     });
 
     // Writer thread: receive stdin data and write to PTY master
     thread::spawn(move || {
+        let mut consecutive_errors = 0;
+        const MAX_CONSECUTIVE_ERRORS: u32 = 3;
+        
         while let Ok(data) = rx_stdin.recv() {
-            if let Err(e) = master_writer.write_all(&data) {
-                eprintln!("PTY write error: {}", e);
-                break;
+            let mut attempts = 0;
+            const MAX_ATTEMPTS: u32 = 3;
+            
+            loop {
+                match master_writer.write_all(&data) {
+                    Ok(()) => {
+                        consecutive_errors = 0; // Reset error counter on success
+                        
+                        // Flush the write
+                        if let Err(e) = master_writer.flush() {
+                            eprintln!("PTY flush error: {}", e);
+                            // Continue anyway, flush errors are usually not fatal
+                        }
+                        
+                        eprintln!("PTY wrote {} bytes", data.len());
+                        break; // Move to next data item
+                    }
+                    Err(e) => {
+                        attempts += 1;
+                        
+                        // Handle recoverable errors
+                        if e.kind() == std::io::ErrorKind::Interrupted {
+                            eprintln!("PTY write interrupted (EINTR), retrying...");
+                            continue;
+                        }
+                        
+                        if e.kind() == std::io::ErrorKind::WouldBlock && attempts < MAX_ATTEMPTS {
+                            eprintln!("PTY write would block (EAGAIN), retrying ({}/{})...", 
+                                attempts, MAX_ATTEMPTS);
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                            continue;
+                        }
+                        
+                        // Non-recoverable error or max attempts reached
+                        consecutive_errors += 1;
+                        eprintln!("PTY write error ({}): {} (consecutive errors: {}/{})", 
+                            e.kind(), e, consecutive_errors, MAX_CONSECUTIVE_ERRORS);
+                        
+                        if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                            eprintln!("PTY write: too many consecutive errors, stopping writer thread");
+                            return; // Exit thread
+                        }
+                        
+                        break; // Skip this data item and try next
+                    }
+                }
             }
-            let _ = master_writer.flush();
-            eprintln!("PTY wrote {} bytes", data.len());
         }
+        eprintln!("PTY writer thread exiting");
     });
 
     Ok(PtyStreams::from_channels(rx_async_out, tx_stdin))
@@ -167,10 +253,9 @@ pub fn validate_command(command: &str) -> Result<()> {
         .status()
     {
         Ok(status) if status.success() => Ok(()),
-        _ => Err(Error::Other(format!(
-            "Command '{}' not found in PATH",
-            command
-        ))),
+        _ => Err(Error::CommandNotFound {
+            command: command.to_string(),
+        }),
     }
 }
 

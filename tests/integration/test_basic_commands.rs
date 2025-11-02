@@ -4,7 +4,6 @@
 //! in the MosaicTerm environment.
 
 use mosaicterm::execution::DirectExecutor;
-use std::time::Duration;
 
 #[tokio::test]
 async fn test_echo_command() {

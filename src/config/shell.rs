@@ -311,10 +311,9 @@ impl ShellManager {
     /// Load shell configuration files
     pub fn load_shell_config(&self, shell_type: ShellType) -> Result<ShellEnvironment> {
         let config = self.get_shell_config(shell_type).ok_or_else(|| {
-            Error::Other(format!(
-                "Shell configuration not found for {:?}",
-                shell_type
-            ))
+            Error::ShellConfigNotFound {
+                shell_type: format!("{:?}", shell_type),
+            }
         })?;
 
         let mut environment = std::collections::HashMap::new();
@@ -597,21 +596,26 @@ pub mod utils {
     /// Validate shell configuration
     pub fn validate_shell_config(config: &ShellConfig) -> Result<()> {
         if config.name.is_empty() {
-            return Err(Error::Other("Shell name cannot be empty".to_string()));
+            return Err(Error::ConfigValidationFailed {
+                field: "shell.name".to_string(),
+                reason: "Shell name cannot be empty".to_string(),
+            });
         }
 
         if config.executable_paths.is_empty() {
-            return Err(Error::Other(
-                "Shell must have at least one executable path".to_string(),
-            ));
+            return Err(Error::ConfigValidationFailed {
+                field: "shell.executable_paths".to_string(),
+                reason: "Shell must have at least one executable path".to_string(),
+            });
         }
 
         for path in &config.executable_paths {
             if let Some(path_str) = path.to_str() {
                 if path_str.is_empty() {
-                    return Err(Error::Other(
-                        "Shell executable path cannot be empty".to_string(),
-                    ));
+                    return Err(Error::ConfigValidationFailed {
+                        field: "shell.executable_paths".to_string(),
+                        reason: "Shell executable path cannot be empty".to_string(),
+                    });
                 }
             }
         }

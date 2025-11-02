@@ -31,7 +31,9 @@ impl PtyStreams {
     pub async fn write(&mut self, data: &[u8]) -> Result<()> {
         self.input_tx
             .send(data.to_vec())
-            .map_err(|e| Error::Other(format!("Failed to send input to PTY: {}", e)))?;
+            .map_err(|e| Error::PtyInputSendFailed {
+                reason: e.to_string(),
+            })?;
         Ok(())
     }
 

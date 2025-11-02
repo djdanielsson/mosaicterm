@@ -277,12 +277,17 @@ impl RuntimeConfig {
         // Apply current theme
         theme_manager.set_theme(&config.ui.theme_name).unwrap_or(());
 
-        Ok(Self {
+        let runtime_config = Self {
             config,
             theme_manager,
             shell_manager,
             config_path: None,
-        })
+        };
+
+        // Validate the runtime configuration
+        runtime_config.validate()?;
+
+        Ok(runtime_config)
     }
 
     /// Create a minimal runtime configuration (used as fallback when initialization fails)

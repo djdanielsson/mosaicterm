@@ -40,7 +40,7 @@ impl DirectExecutor {
         // Parse command and arguments
         let parts: Vec<&str> = command_str.split_whitespace().collect();
         if parts.is_empty() {
-            return Err(Error::Other("Empty command".to_string()));
+            return Err(Error::EmptyCommand);
         }
 
         let (cmd, args) = (parts[0], &parts[1..]);
@@ -118,7 +118,10 @@ impl DirectExecutor {
             .envs(&self.env_vars)
             .output()
             .await
-            .map_err(|e| Error::Other(format!("Failed to execute command: {}", e)))?;
+            .map_err(|e| Error::CommandSpawnFailed {
+                command: cmd.to_string(),
+                reason: e.to_string(),
+            })?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();

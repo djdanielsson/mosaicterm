@@ -95,9 +95,7 @@ impl ConfigLoader {
             }
             Ok(config)
         } else {
-            Err(Error::Other(
-                "No configuration file found and create_default is false".to_string(),
-            ))
+            Err(Error::ConfigNotFound)
         }
     }
 
@@ -115,7 +113,10 @@ impl ConfigLoader {
 
         // Save in TOML format by default
         let toml_content = toml::to_string_pretty(config)
-            .map_err(|e| Error::Other(format!("Failed to serialize config: {}", e)))?;
+            .map_err(|e| Error::ConfigSerializationFailed {
+                format: "TOML".to_string(),
+                reason: e.to_string(),
+            })?;
 
         fs::write(&path, toml_content)?;
         Ok(path)
@@ -131,11 +132,20 @@ impl ConfigLoader {
         // Determine format from file extension
         let content = match path.extension().and_then(|ext| ext.to_str()) {
             Some("json") => serde_json::to_string_pretty(config)
-                .map_err(|e| Error::Other(format!("Failed to serialize config: {}", e)))?,
+                .map_err(|e| Error::ConfigSerializationFailed {
+                    format: "JSON".to_string(),
+                    reason: e.to_string(),
+                })?,
             Some("toml") => toml::to_string_pretty(config)
-                .map_err(|e| Error::Other(format!("Failed to serialize config: {}", e)))?,
+                .map_err(|e| Error::ConfigSerializationFailed {
+                    format: "TOML".to_string(),
+                    reason: e.to_string(),
+                })?,
             _ => toml::to_string_pretty(config)
-                .map_err(|e| Error::Other(format!("Failed to serialize config: {}", e)))?,
+                .map_err(|e| Error::ConfigSerializationFailed {
+                    format: "TOML".to_string(),
+                    reason: e.to_string(),
+                })?,
         };
 
         fs::write(path, content)?;
@@ -174,12 +184,21 @@ impl ConfigLoader {
 
         match format {
             ConfigFormat::Toml => toml::from_str(&content)
-                .map_err(|e| Error::Other(format!("Failed to parse TOML config: {}", e))),
+                .map_err(|e| Error::ConfigParseFailed {
+                    format: "TOML".to_string(),
+                    reason: e.to_string(),
+                }),
             ConfigFormat::Json => serde_json::from_str(&content)
-                .map_err(|e| Error::Other(format!("Failed to parse JSON config: {}", e))),
+                .map_err(|e| Error::ConfigParseFailed {
+                    format: "JSON".to_string(),
+                    reason: e.to_string(),
+                }),
             #[cfg(feature = "yaml")]
             ConfigFormat::Yaml => serde_yaml::from_str(&content)
-                .map_err(|e| Error::Other(format!("Failed to parse YAML config: {}", e))),
+                .map_err(|e| Error::ConfigParseFailed {
+                    format: "YAML".to_string(),
+                    reason: e.to_string(),
+                }),
         }
     }
 
@@ -242,13 +261,92 @@ impl ConfigLoader {
 
     /// Validate configuration
     fn validate_config(&self, config: &Config) -> Result<()> {
-        // Basic validation
+        // UI validation
         if config.ui.font_size == 0 {
-            return Err(Error::Other("Font size must be greater than 0".to_string()));
+            return Err(Error::ConfigValidationFailed {
+                field: "ui.font_size".to_string(),
+                reason: "Font size must be greater than 0".to_string(),
+            });
         }
 
+        if config.ui.font_size > 72 {
+            return Err(Error::ConfigValidationFailed {
+                field: "ui.font_size".to_string(),
+                reason: "Font size cannot exceed 72".to_string(),
+            });
+        }
+
+        if config.ui.theme_name.trim().is_empty() {
+            return Err(Error::ConfigValidationFailed {
+                field: "ui.theme_name".to_string(),
+                reason: "Theme name cannot be empty".to_string(),
+            });
+        }
+
+        // Terminal validation
         if config.terminal.shell_path.as_os_str().is_empty() {
-            return Err(Error::Other("Shell path cannot be empty".to_string()));
+            return Err(Error::ConfigValidationFailed {
+                field: "terminal.shell_path".to_string(),
+                reason: "Shell path cannot be empty".to_string(),
+            });
+        }
+
+        if config.terminal.scrollback_buffer == 0 {
+            return Err(Error::ConfigValidationFailed {
+                field: "terminal.scrollback_buffer".to_string(),
+                reason: "Scrollback buffer must be greater than 0".to_string(),
+            });
+        }
+
+        if config.terminal.scrollback_buffer > 1000000 {
+            return Err(Error::ConfigValidationFailed {
+                field: "terminal.scrollback_buffer".to_string(),
+                reason: "Scrollback buffer cannot exceed 1,000,000".to_string(),
+            });
+        }
+
+        if config.terminal.prompt_format.is_empty() {
+            return Err(Error::ConfigValidationFailed {
+                field: "terminal.prompt_format".to_string(),
+                reason: "Prompt format cannot be empty".to_string(),
+            });
+        }
+
+        // PTY validation
+        if config.pty.buffer_size == 0 {
+            return Err(Error::ConfigValidationFailed {
+                field: "pty.buffer_size".to_string(),
+                reason: "PTY buffer size must be greater than 0".to_string(),
+            });
+        }
+
+        if config.pty.buffer_size > 10 * 1024 * 1024 {
+            return Err(Error::ConfigValidationFailed {
+                field: "pty.buffer_size".to_string(),
+                reason: "PTY buffer size cannot exceed 10MB".to_string(),
+            });
+        }
+
+        // Timeout validation
+        if config.terminal.timeout.regular_command_timeout_secs > 3600 {
+            return Err(Error::ConfigValidationFailed {
+                field: "terminal.timeout.regular_command_timeout_secs".to_string(),
+                reason: "Regular command timeout cannot exceed 1 hour (3600 seconds)".to_string(),
+            });
+        }
+
+        if config.terminal.timeout.interactive_command_timeout_secs > 86400 {
+            return Err(Error::ConfigValidationFailed {
+                field: "terminal.timeout.interactive_command_timeout_secs".to_string(),
+                reason: "Interactive command timeout cannot exceed 24 hours (86400 seconds)".to_string(),
+            });
+        }
+
+        if config.terminal.timeout.kill_grace_period_secs > 300 {
+            return Err(Error::ConfigValidationFailed {
+                field: "terminal.timeout.kill_grace_period_secs".to_string(),
+                reason: "Kill grace period cannot exceed 5 minutes (300 seconds)".to_string(),
+            });
         }
 
         Ok(())
