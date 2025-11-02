@@ -432,11 +432,7 @@ impl MosaicTermApp {
         // Update state manager
         self.state_manager.set_terminal_ready(true);
 
-        // DEPRECATED: Also update old field during migration
-        #[allow(deprecated)]
-        {
-            self.state.terminal_ready = true;
-        }
+        // State is now managed through StateManager only
 
         // Update prompt after terminal initialization
         self.update_prompt();
@@ -491,17 +487,10 @@ impl MosaicTermApp {
         self.state_manager.add_command_block(command_block.clone());
 
         // DEPRECATED: Also update old field during migration
-        #[allow(deprecated)]
-        {
-            self.command_history.push(command_block);
-        }
+        // Command block is now managed through StateManager only
 
         // Record command execution time for timeout detection
         self.state_manager.set_last_command_time(chrono::Utc::now());
-        #[allow(deprecated)]
-        {
-            self.last_command_time = Some(std::time::Instant::now());
-        }
 
         // UI will be updated automatically on the next frame
 
@@ -519,24 +508,12 @@ impl MosaicTermApp {
             self.state_manager
                 .set_status_message(Some(format!("Running: {}", command)));
 
-            // DEPRECATED: Also update old field during migration
-            #[allow(deprecated)]
-            {
-                self.state.status_message = Some(format!("Running: {}", command));
-            }
-
             info!("Command '{}' queued", command);
         } else {
             warn!("Terminal not initialized, cannot execute command");
 
             self.state_manager
                 .set_status_message(Some("Terminal not ready".to_string()));
-
-            // DEPRECATED: Also update old field during migration
-            #[allow(deprecated)]
-            {
-                self.state.status_message = Some("Terminal not ready".to_string());
-            }
         }
 
         Ok(())
@@ -605,12 +582,6 @@ impl MosaicTermApp {
                     // Save current directory as previous before changing
                     self.state_manager
                         .set_previous_directory(Some(current_dir.clone()));
-
-                    // DEPRECATED: Also update old field during migration
-                    #[allow(deprecated)]
-                    {
-                        self.previous_directory = Some(current_dir.clone());
-                    }
 
                     terminal.set_working_directory(canonical.clone());
                     debug!(
@@ -685,12 +656,6 @@ impl MosaicTermApp {
         let terminal_ready = self.terminal.is_some();
         self.state_manager.set_terminal_ready(terminal_ready);
 
-        // DEPRECATED: Also update old field during migration
-        #[allow(deprecated)]
-        {
-            self.state.terminal_ready = terminal_ready;
-        }
-
         // Update UI components if needed
         self.update_ui_components();
     }
@@ -705,12 +670,6 @@ impl MosaicTermApp {
     /// Set status message
     pub fn set_status_message(&mut self, message: Option<String>) {
         self.state_manager.set_status_message(message.clone());
-
-        // DEPRECATED: Also update old field during migration
-        #[allow(deprecated)]
-        {
-            self.state.status_message = message;
-        }
     }
 
     /// Start loading indicator with message
@@ -719,26 +678,11 @@ impl MosaicTermApp {
         self.state_manager
             .set_loading(true, Some(msg_string.clone()));
         self.state_manager.app_state_mut().loading_frame = 0;
-
-        // DEPRECATED: Also update old field during migration
-        #[allow(deprecated)]
-        {
-            self.state.is_loading = true;
-            self.state.loading_message = Some(msg_string);
-            self.state.loading_frame = 0;
-        }
     }
 
     /// Stop loading indicator
     pub fn stop_loading(&mut self) {
         self.state_manager.set_loading(false, None);
-
-        // DEPRECATED: Also update old field during migration
-        #[allow(deprecated)]
-        {
-            self.state.is_loading = false;
-            self.state.loading_message = None;
-        }
     }
 
     /// Get loading spinner character for current frame
@@ -1206,12 +1150,6 @@ impl eframe::App for MosaicTermApp {
         {
             self.state_manager.set_initialization_attempted(true);
 
-            // DEPRECATED: Also update old field during migration
-            #[allow(deprecated)]
-            {
-                self.state.initialization_attempted = true;
-            }
-
             info!("Initializing terminal session...");
 
             // Show loading indicator
@@ -1235,12 +1173,6 @@ impl eframe::App for MosaicTermApp {
         // Animate loading spinner if active
         if self.state_manager.is_loading() {
             self.state_manager.increment_loading_frame();
-
-            // DEPRECATED: Also update old field during migration
-            #[allow(deprecated)]
-            {
-                self.state.loading_frame = (self.state.loading_frame + 1) % 10;
-            }
 
             ctx.request_repaint(); // Keep animating
         }
@@ -1600,20 +1532,8 @@ impl MosaicTermApp {
                     );
                 }
 
-                // DEPRECATED: Also update old field during migration
-                #[allow(deprecated)]
-                {
-                    if let Some(block) = self.command_history.last_mut() {
-                        block.mark_cancelled();
-                    }
-                }
-
                 // Clear the command time so new commands can be submitted
                 self.state_manager.set_last_command_time(chrono::Utc::now());
-                #[allow(deprecated)]
-                {
-                    self.last_command_time = None;
-                }
 
                 // For interactive programs, we need to restart the PTY session
                 // because the shell can get into a corrupted state
@@ -1647,11 +1567,6 @@ impl MosaicTermApp {
         self.state_manager = StateManager::new();
 
         // DEPRECATED: Also update old field during migration
-        #[allow(deprecated)]
-        {
-            self.command_history.clear();
-        }
-
         // Clear terminal screen (would send clear command to shell)
         if let Some(_terminal) = &mut self.terminal {
             std::mem::drop(_terminal.process_input("clear"));
