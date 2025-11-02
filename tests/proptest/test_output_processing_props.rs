@@ -14,7 +14,7 @@ proptest! {
             is_complete: false,
             stream_type: StreamType::Stdout,
         };
-        
+
         let _ = processor.process_chunk(chunk);
         // Should not panic on any byte sequence
     }
@@ -28,7 +28,7 @@ proptest! {
             is_complete: false,
             stream_type: StreamType::Stdout,
         };
-        
+
         let result = processor.process_chunk(chunk);
         prop_assert!(result.is_ok());
     }
@@ -46,13 +46,13 @@ proptest! {
             is_complete: false,
             stream_type: StreamType::Stdout,
         };
-        
+
         let result = processor.process_chunk(chunk);
         prop_assert!(result.is_ok());
-        
+
         let lines = result.unwrap();
         // Should produce at least one line with proper ending
-        prop_assert!(lines.len() >= 1 || lines.is_empty());
+        prop_assert!(!lines.is_empty() || lines.is_empty());
     }
 
     #[test]
@@ -65,10 +65,10 @@ proptest! {
             is_complete: false,
             stream_type: StreamType::Stdout,
         };
-        
+
         let result = processor.process_chunk(chunk);
         prop_assert!(result.is_ok());
-        
+
         let output_lines = result.unwrap();
         // Should produce some output lines (exact count may vary with filtering)
         // At minimum, should not have more lines than input
@@ -81,7 +81,7 @@ proptest! {
         part2 in "[a-z]{1,50}",
     ) {
         let mut processor = OutputProcessor::new();
-        
+
         // First chunk (partial)
         let chunk1 = OutputChunk {
             data: part1.as_bytes().to_vec(),
@@ -90,7 +90,7 @@ proptest! {
             stream_type: StreamType::Stdout,
         };
         processor.process_chunk(chunk1).unwrap();
-        
+
         // Second chunk (complete)
         let chunk2 = OutputChunk {
             data: format!("{}\n", part2).as_bytes().to_vec(),
@@ -99,7 +99,7 @@ proptest! {
             stream_type: StreamType::Stdout,
         };
         let result = processor.process_chunk(chunk2);
-        
+
         prop_assert!(result.is_ok());
     }
 
@@ -116,7 +116,7 @@ proptest! {
             is_complete: false,
             stream_type: StreamType::Stdout,
         };
-        
+
         let result = processor.process_chunk(chunk);
         prop_assert!(result.is_ok());
     }
@@ -124,7 +124,7 @@ proptest! {
     #[test]
     fn test_empty_chunks(count in 0usize..10) {
         let mut processor = OutputProcessor::new();
-        
+
         for _ in 0..count {
             let chunk = OutputChunk {
                 data: vec![],
@@ -147,7 +147,7 @@ proptest! {
             is_complete: false,
             stream_type: StreamType::Stdout,
         };
-        
+
         let result = processor.process_chunk(chunk);
         prop_assert!(result.is_ok());
     }
@@ -163,14 +163,14 @@ proptest! {
         } else {
             StreamType::Stdout
         };
-        
+
         let chunk = OutputChunk {
             data: format!("{}\n", text).as_bytes().to_vec(),
             timestamp: chrono::Utc::now(),
             is_complete: false,
             stream_type,
         };
-        
+
         let result = processor.process_chunk(chunk);
         prop_assert!(result.is_ok());
     }
@@ -184,9 +184,8 @@ proptest! {
             is_complete: false,
             stream_type: StreamType::Stdout,
         };
-        
+
         // Should handle binary data without panicking
         let _ = processor.process_chunk(chunk);
     }
 }
-

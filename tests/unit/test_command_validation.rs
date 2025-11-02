@@ -142,11 +142,7 @@ mod command_validation_tests {
 
     #[test]
     fn test_validate_quotes() {
-        let cmds = vec![
-            "echo \"test\"",
-            "echo 'test'",
-            "echo `date`",
-        ];
+        let cmds = vec!["echo \"test\"", "echo 'test'", "echo `date`"];
         for cmd in cmds {
             let result = validate_command(cmd);
             // Validation behavior depends on security settings

@@ -47,7 +47,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings -A deprecated
 
       - name: Check documentation
         run: cargo doc --no-deps

@@ -30,9 +30,9 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("Red text") || plain.len() > 0);
+        assert!(plain.contains("Red text") || !plain.is_empty());
         // Should have at least the color code
-        assert!(result.ansi_codes.len() >= 1);
+        assert!(!result.ansi_codes.is_empty());
     }
 
     #[test]
@@ -42,7 +42,7 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("Bold text") || plain.len() > 0);
+        assert!(plain.contains("Bold text") || !plain.is_empty());
     }
 
     #[test]
@@ -53,7 +53,7 @@ mod ansi_parser_tests {
 
         let plain = &result.clean_text;
         // Should contain the actual text
-        assert!(plain.len() > 0);
+        assert!(!plain.is_empty());
     }
 
     #[test]
@@ -75,7 +75,7 @@ mod ansi_parser_tests {
         for (input, expected_text) in colors {
             let result = parser.parse(input).unwrap();
             let plain = &result.clean_text;
-            assert!(plain.contains(expected_text) || plain.len() > 0);
+            assert!(plain.contains(expected_text) || !plain.is_empty());
         }
     }
 
@@ -86,7 +86,7 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("Red background") || plain.len() > 0);
+        assert!(plain.contains("Red background") || !plain.is_empty());
     }
 
     #[test]
@@ -96,7 +96,7 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("Red") || plain.contains("Normal") || plain.len() > 0);
+        assert!(plain.contains("Red") || plain.contains("Normal") || !plain.is_empty());
     }
 
     #[test]
@@ -115,7 +115,7 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         // Should have ANSI codes but minimal or no text
-        assert!(result.ansi_codes.len() >= 1);
+        assert!(!result.ansi_codes.is_empty());
     }
 
     #[test]
@@ -138,7 +138,7 @@ mod ansi_parser_tests {
 
         let plain = &result.clean_text;
         assert!(plain.contains("Normal"));
-        assert!(plain.contains("Bold") || plain.len() > 0);
+        assert!(plain.contains("Bold") || !plain.is_empty());
     }
 
     #[test]
@@ -148,7 +148,7 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("Bright Red") || plain.len() > 0);
+        assert!(plain.contains("Bright Red") || !plain.is_empty());
     }
 
     #[test]
@@ -158,7 +158,7 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("RGB Red") || plain.len() > 0);
+        assert!(plain.contains("RGB Red") || !plain.is_empty());
     }
 
     #[test]
@@ -168,7 +168,7 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("Underlined") || plain.len() > 0);
+        assert!(plain.contains("Underlined") || !plain.is_empty());
     }
 
     #[test]
@@ -178,7 +178,7 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("Italic") || plain.len() > 0);
+        assert!(plain.contains("Italic") || !plain.is_empty());
     }
 
     #[test]
@@ -188,7 +188,7 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("Bold") || plain.len() > 0);
+        assert!(plain.contains("Bold") || !plain.is_empty());
     }
 
     #[test]
@@ -198,7 +198,7 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("Red text") || plain.len() > 0);
+        assert!(plain.contains("Red text") || !plain.is_empty());
     }
 
     #[test]
@@ -229,7 +229,7 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("Red") || plain.contains("Normal") || plain.len() > 0);
+        assert!(plain.contains("Red") || plain.contains("Normal") || !plain.is_empty());
     }
 
     #[test]
@@ -239,7 +239,7 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("Text at column") || plain.len() > 0);
+        assert!(plain.contains("Text at column") || !plain.is_empty());
     }
 
     #[test]
@@ -251,8 +251,8 @@ mod ansi_parser_tests {
         let result2 = parser.parse("\x1b[32mGreen\x1b[0m").unwrap();
         let result3 = parser.parse("Plain text").unwrap();
 
-        assert!(result1.clean_text.len() > 0);
-        assert!(result2.clean_text.len() > 0);
+        assert!(!result1.clean_text.is_empty());
+        assert!(!result2.clean_text.is_empty());
         assert_eq!(result3.clean_text, "Plain text");
     }
 
@@ -266,7 +266,7 @@ mod ansi_parser_tests {
 
         let plain = &result.clean_text;
         // Should contain the file names
-        assert!(plain.len() > 0);
+        assert!(!plain.is_empty());
     }
 
     #[test]
@@ -278,7 +278,6 @@ mod ansi_parser_tests {
         let result = parser.parse(input).unwrap();
 
         let plain = &result.clean_text;
-        assert!(plain.contains("On branch") || plain.len() > 0);
+        assert!(plain.contains("On branch") || !plain.is_empty());
     }
 }
-

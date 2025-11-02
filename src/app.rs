@@ -57,7 +57,9 @@ use mosaicterm::models::{ShellType as ModelShellType, TerminalSession};
 use mosaicterm::pty::PtyManager;
 use mosaicterm::state_manager::StateManager;
 use mosaicterm::terminal::{Terminal, TerminalFactory};
-use mosaicterm::ui::{CommandBlocks, CompletionPopup, InputPrompt, MetricsPanel, ScrollableHistory};
+use mosaicterm::ui::{
+    CommandBlocks, CompletionPopup, InputPrompt, MetricsPanel, ScrollableHistory,
+};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
@@ -165,7 +167,8 @@ pub struct AppState {
     terminal_ready: bool,
     /// Whether terminal initialization has been attempted
     initialization_attempted: bool,
-    /// Window title
+    /// Window title (kept for backward compatibility)
+    #[allow(dead_code)]
     title: String,
     /// Status message
     status_message: Option<String>,
@@ -1180,15 +1183,15 @@ impl eframe::App for MosaicTermApp {
                 }
             }
         }
-        
+
         // Update memory statistics periodically (every 5 seconds)
         {
             use std::sync::Mutex;
             static LAST_STATS_UPDATE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
             let now = std::time::Instant::now();
             let mut last_time = LAST_STATS_UPDATE.lock().unwrap();
-            let should_update = last_time.is_none()
-                || now.duration_since(last_time.unwrap()).as_secs() >= 5;
+            let should_update =
+                last_time.is_none() || now.duration_since(last_time.unwrap()).as_secs() >= 5;
 
             if should_update {
                 self.state_manager.update_memory_stats();
@@ -1421,12 +1424,12 @@ impl eframe::App for MosaicTermApp {
 
 impl MosaicTermApp {
     /// Update window title with application state
-    fn update_window_title(&self, frame: &mut eframe::Frame) {
+    fn update_window_title(&self, _frame: &mut eframe::Frame) {
         // Build dynamic title based on terminal state
         let title = if self.state_manager.app_state().terminal_ready {
             let stats = self.state_manager.statistics();
             let cmd_count = stats.total_commands;
-            
+
             // Show command count and current directory if available
             if let Some(session) = self.state_manager.active_session() {
                 let dir_name = session
@@ -1441,27 +1444,27 @@ impl MosaicTermApp {
         } else {
             "MosaicTerm - Initializing...".to_string()
         };
-        
+
         // Note: eframe 0.24 doesn't have viewport() method on frame.info()
         // This infrastructure is ready for when the API becomes available
-        
+
         // Alternative: Try using native window handle if available
         // This is a workaround that may work on some platforms
         #[cfg(not(target_arch = "wasm32"))]
         {
             use std::sync::atomic::{AtomicBool, Ordering};
             static TITLE_UPDATE_ATTEMPTED: AtomicBool = AtomicBool::new(false);
-            
+
             // Only attempt once per second to avoid overhead
             if !TITLE_UPDATE_ATTEMPTED.swap(true, Ordering::Relaxed) {
                 // Store title in a static for potential future use
-                static CURRENT_TITLE: std::sync::Mutex<Option<String>> = 
+                static CURRENT_TITLE: std::sync::Mutex<Option<String>> =
                     std::sync::Mutex::new(None);
-                
+
                 if let Ok(mut current) = CURRENT_TITLE.lock() {
                     *current = Some(title.clone());
                 }
-                
+
                 // Reset the flag after a delay
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(1));
@@ -1469,7 +1472,7 @@ impl MosaicTermApp {
                 });
             }
         }
-        
+
         // Note: As of eframe 0.24, there's no direct API to update window title at runtime.
         // The title is set once at window creation via ViewportBuilder.
         // This implementation prepares the infrastructure for when eframe adds support.
@@ -2246,7 +2249,7 @@ impl MosaicTermApp {
                                         Vec::new()
                                     })
                             });
-                            
+
                             debug!("Got {} lines from terminal", ready_lines.len());
 
                             // For complex output processing, use the deprecated field for now

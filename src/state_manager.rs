@@ -97,7 +97,7 @@ pub enum SessionStatus {
 }
 
 /// Global application state (UI-related)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ApplicationState {
     /// Terminal initialization status
     pub terminal_ready: bool,
@@ -177,14 +177,14 @@ impl AppStatistics {
     pub fn uptime_seconds(&self) -> i64 {
         (Utc::now() - self.start_time).num_seconds()
     }
-    
+
     /// Get uptime as a formatted string
     pub fn uptime_formatted(&self) -> String {
         let seconds = self.uptime_seconds();
         let hours = seconds / 3600;
         let minutes = (seconds % 3600) / 60;
         let secs = seconds % 60;
-        
+
         if hours > 0 {
             format!("{}h {}m {}s", hours, minutes, secs)
         } else if minutes > 0 {
@@ -193,7 +193,7 @@ impl AppStatistics {
             format!("{}s", secs)
         }
     }
-    
+
     /// Update memory usage statistics
     pub fn update_memory(&mut self) {
         #[cfg(target_os = "macos")]
@@ -201,7 +201,7 @@ impl AppStatistics {
             use std::process::Command;
             // Get memory usage on macOS using ps
             if let Ok(output) = Command::new("ps")
-                .args(&["-o", "rss=", "-p", &std::process::id().to_string()])
+                .args(["-o", "rss=", "-p", &std::process::id().to_string()])
                 .output()
             {
                 if let Ok(memory_str) = String::from_utf8(output.stdout) {
@@ -214,7 +214,7 @@ impl AppStatistics {
                 }
             }
         }
-        
+
         #[cfg(target_os = "linux")]
         {
             // Read from /proc/self/status on Linux
@@ -234,7 +234,7 @@ impl AppStatistics {
                 }
             }
         }
-        
+
         #[cfg(target_os = "windows")]
         {
             // Windows memory tracking would require winapi crate
@@ -243,13 +243,13 @@ impl AppStatistics {
             self.peak_memory_bytes = 0;
         }
     }
-    
+
     /// Format memory size as human-readable string
     pub fn format_memory(bytes: usize) -> String {
         const KB: usize = 1024;
         const MB: usize = KB * 1024;
         const GB: usize = MB * 1024;
-        
+
         if bytes >= GB {
             format!("{:.2} GB", bytes as f64 / GB as f64)
         } else if bytes >= MB {
@@ -258,22 +258,6 @@ impl AppStatistics {
             format!("{:.2} KB", bytes as f64 / KB as f64)
         } else {
             format!("{} B", bytes)
-        }
-    }
-}
-
-impl Default for ApplicationState {
-    fn default() -> Self {
-        Self {
-            terminal_ready: false,
-            initialization_attempted: false,
-            status_message: None,
-            is_loading: false,
-            loading_message: String::new(),
-            loading_frame: 0,
-            last_tab_press: None,
-            completion_just_applied: false,
-            error_dialog: None,
         }
     }
 }
@@ -287,11 +271,11 @@ impl StateManager {
             app_state: ApplicationState::default(),
             statistics: AppStatistics::default(),
         };
-        
+
         // Create a default session
         let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
         let _session_id = manager.create_session(working_dir, crate::models::ShellType::Bash);
-        
+
         manager
     }
 
@@ -503,9 +487,7 @@ impl StateManager {
 
     /// Get command history (returns empty vec if no active session)
     pub fn get_command_history(&self) -> Vec<CommandBlock> {
-        self.command_history()
-            .map(|history| history.clone())
-            .unwrap_or_default()
+        self.command_history().cloned().unwrap_or_default()
     }
 
     /// Add an output line to a specific command block
@@ -544,18 +526,27 @@ impl StateManager {
                 .iter_mut()
                 .find(|b| b.id == block_id)
             {
-                let old_status = block.status.clone();
-                block.status = status.clone();
-                
+                let old_status = block.status;
+                block.status = status;
+
                 // Track status change in statistics (only count final status once)
                 match (old_status, &status) {
-                    (crate::models::ExecutionStatus::Running, crate::models::ExecutionStatus::Completed) => {
+                    (
+                        crate::models::ExecutionStatus::Running,
+                        crate::models::ExecutionStatus::Completed,
+                    ) => {
                         self.statistics.successful_commands += 1;
                     }
-                    (crate::models::ExecutionStatus::Running, crate::models::ExecutionStatus::Failed) => {
+                    (
+                        crate::models::ExecutionStatus::Running,
+                        crate::models::ExecutionStatus::Failed,
+                    ) => {
                         self.statistics.failed_commands += 1;
                     }
-                    (crate::models::ExecutionStatus::Running, crate::models::ExecutionStatus::Cancelled) => {
+                    (
+                        crate::models::ExecutionStatus::Running,
+                        crate::models::ExecutionStatus::Cancelled,
+                    ) => {
                         self.statistics.cancelled_commands += 1;
                     }
                     _ => {}
@@ -585,19 +576,19 @@ impl StateManager {
             session.previous_directory = dir;
         }
     }
-    
+
     // Statistics methods
-    
+
     /// Get statistics
     pub fn statistics(&self) -> &AppStatistics {
         &self.statistics
     }
-    
+
     /// Get statistics (mutable)
     pub fn statistics_mut(&mut self) -> &mut AppStatistics {
         &mut self.statistics
     }
-    
+
     /// Increment command counter
     pub fn increment_command_count(&mut self, status: crate::models::ExecutionStatus) {
         self.statistics.total_commands += 1;
@@ -614,12 +605,12 @@ impl StateManager {
             _ => {}
         }
     }
-    
+
     /// Increment output line counter
     pub fn increment_output_lines(&mut self, count: usize) {
         self.statistics.total_output_lines += count;
     }
-    
+
     /// Update memory statistics
     pub fn update_memory_stats(&mut self) {
         self.statistics.update_memory();

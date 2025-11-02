@@ -71,6 +71,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     /// Mock implementation of PtyOperations for testing
+    #[allow(dead_code)]
     pub struct MockPtyOperations {
         /// Store input sent to PTYs
         pub input_log: Arc<Mutex<HashMap<String, Vec<Vec<u8>>>>>,
@@ -84,6 +85,7 @@ mod tests {
 
     impl MockPtyOperations {
         /// Create a new mock PTY operations instance
+        #[allow(dead_code)]
         pub fn new() -> Self {
             Self {
                 input_log: Arc::new(Mutex::new(HashMap::new())),
@@ -94,6 +96,7 @@ mod tests {
         }
 
         /// Add a PTY to the mock
+        #[allow(dead_code)]
         pub fn add_pty(&mut self, handle: &PtyHandle, info: PtyInfo) {
             let mut infos = self.pty_info.lock().unwrap();
             infos.insert(handle.id.clone(), info);
@@ -102,15 +105,14 @@ mod tests {
         }
 
         /// Queue output for a PTY
+        #[allow(dead_code)]
         pub fn queue_output(&mut self, handle: &PtyHandle, data: Vec<u8>) {
             let mut queue = self.output_queue.lock().unwrap();
-            queue
-                .entry(handle.id.clone())
-                .or_insert_with(Vec::new)
-                .push(data);
+            queue.entry(handle.id.clone()).or_default().push(data);
         }
 
         /// Get the input log for a PTY
+        #[allow(dead_code)]
         pub fn get_input(&self, handle: &PtyHandle) -> Vec<Vec<u8>> {
             let log = self.input_log.lock().unwrap();
             log.get(&handle.id).cloned().unwrap_or_default()
@@ -128,7 +130,7 @@ mod tests {
         async fn send_input(&mut self, handle: &PtyHandle, data: &[u8]) -> Result<()> {
             let mut log = self.input_log.lock().unwrap();
             log.entry(handle.id.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(data.to_vec());
             Ok(())
         }
@@ -163,4 +165,3 @@ mod tests {
         }
     }
 }
-

@@ -137,7 +137,7 @@ impl OutputProcessor {
                         self.process_carriage_return()?;
                     }
                     // If it's \r\n, just skip the \r and let \n be processed
-                },
+                }
                 '\x1b' => {
                     self.in_ansi_sequence = true;
                     self.current_line.push(*ch);

@@ -37,20 +37,14 @@ pub fn create_command_block_with_output(command: &str, output_lines: Vec<&str>) 
 }
 
 /// Create a completed command block
-pub fn create_completed_command_block(
-    command: &str,
-    output_lines: Vec<&str>,
-) -> CommandBlock {
+pub fn create_completed_command_block(command: &str, output_lines: Vec<&str>) -> CommandBlock {
     let mut block = create_command_block_with_output(command, output_lines);
     block.mark_completed(std::time::Duration::from_secs(1));
     block
 }
 
 /// Create a failed command block
-pub fn create_failed_command_block(
-    command: &str,
-    error_msg: &str,
-) -> CommandBlock {
+pub fn create_failed_command_block(command: &str, error_msg: &str) -> CommandBlock {
     let mut block = create_test_command_block(command);
     block.add_output_line(create_test_output_line(error_msg, 1));
     block.mark_failed(std::time::Duration::from_secs(1), 1);
@@ -114,10 +108,7 @@ mod tests {
 
     #[test]
     fn test_create_command_block_with_output() {
-        let block = create_command_block_with_output(
-            "echo test",
-            vec!["line1", "line2", "line3"],
-        );
+        let block = create_command_block_with_output("echo test", vec!["line1", "line2", "line3"]);
         assert_eq!(block.output.len(), 3);
         assert_eq!(block.output[0].text, "line1");
     }
@@ -158,4 +149,3 @@ mod tests {
         assert_eq!(output[5], 0xFD);
     }
 }
-

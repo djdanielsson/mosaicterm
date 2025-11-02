@@ -19,7 +19,7 @@ proptest! {
         let mut parser = AnsiParser::new();
         let result = parser.parse(&s);
         prop_assert!(result.is_ok());
-        
+
         let parsed = result.unwrap();
         // Clean text should not be longer than original
         prop_assert!(parsed.clean_text.len() <= s.len());
@@ -33,17 +33,17 @@ proptest! {
         let mut parser = AnsiParser::new();
         let input = format!("\x1b[{}m{}\x1b[0m", color_code, text);
         let result = parser.parse(&input);
-        
+
         prop_assert!(result.is_ok());
         let parsed = result.unwrap();
-        prop_assert!(parsed.ansi_codes.len() >= 1);
+        prop_assert!(!parsed.ansi_codes.is_empty());
     }
 
     #[test]
     fn test_parser_preserves_text_content(s in "[a-zA-Z0-9 ]{1,100}") {
         let mut parser = AnsiParser::new();
         let result = parser.parse(&s);
-        
+
         prop_assert!(result.is_ok());
         let parsed = result.unwrap();
         // For plain text, clean_text should match input
@@ -57,13 +57,13 @@ proptest! {
     ) {
         let mut parser = AnsiParser::new();
         let mut input = String::new();
-        
+
         for code in &codes {
             input.push_str(&format!("\x1b[{}m", code));
         }
         input.push_str(&text);
         input.push_str("\x1b[0m");
-        
+
         let result = parser.parse(&input);
         prop_assert!(result.is_ok());
     }
@@ -73,7 +73,7 @@ proptest! {
         let mut parser = AnsiParser::new();
         let input = "\x1b[0m".repeat(count);
         let result = parser.parse(&input);
-        
+
         prop_assert!(result.is_ok());
         let parsed = result.unwrap();
         prop_assert_eq!(parsed.clean_text, "");
@@ -86,7 +86,7 @@ proptest! {
         let mut parser = AnsiParser::new();
         let input = lines.join("\n");
         let result = parser.parse(&input);
-        
+
         prop_assert!(result.is_ok());
         let parsed = result.unwrap();
         prop_assert!(parsed.clean_text.contains('\n') || lines.len() == 1);
@@ -100,7 +100,7 @@ proptest! {
         let mut parser = AnsiParser::new();
         let input = format!("\x1b[38;5;{}m{}\x1b[0m", color, text);
         let result = parser.parse(&input);
-        
+
         prop_assert!(result.is_ok());
     }
 
@@ -114,7 +114,7 @@ proptest! {
         let mut parser = AnsiParser::new();
         let input = format!("\x1b[38;2;{};{};{}m{}\x1b[0m", r, g, b, text);
         let result = parser.parse(&input);
-        
+
         prop_assert!(result.is_ok());
     }
 
@@ -126,7 +126,7 @@ proptest! {
         let mut parser = AnsiParser::new();
         let input = format!("\x1b[{}m{}", junk, text);
         let result = parser.parse(&input);
-        
+
         // Should handle gracefully, not panic
         prop_assert!(result.is_ok());
     }
@@ -134,7 +134,7 @@ proptest! {
     #[test]
     fn test_parser_reuse(inputs in prop::collection::vec("\\PC{0,100}", 1..10)) {
         let mut parser = AnsiParser::new();
-        
+
         for input in inputs {
             let _ = parser.parse(&input);
             // Parser should be reusable
@@ -156,10 +156,10 @@ proptest! {
         if underline {
             codes.push("4".to_string());
         }
-        
+
         let input = format!("\x1b[{}m{}\x1b[0m", codes.join(";"), text);
         let result = parser.parse(&input);
-        
+
         prop_assert!(result.is_ok());
     }
 }
@@ -195,10 +195,9 @@ mod additional_props {
             for ch in ctrl_chars {
                 input.push(ch as char);
             }
-            
+
             let _ = parser.parse(&input);
             // Should handle control characters
         }
     }
 }
-

@@ -18,7 +18,7 @@ fn bench_ansi_parsing_simple(c: &mut Criterion) {
     c.bench_function("ansi/parse_simple", |b| {
         b.iter_batched(
             || {
-                let mut parser = AnsiParser::new();
+                let parser = AnsiParser::new();
                 let text = "\x1b[31mRed text\x1b[0m";
                 (parser, text)
             },
@@ -32,7 +32,7 @@ fn bench_ansi_parsing_complex(c: &mut Criterion) {
     c.bench_function("ansi/parse_complex", |b| {
         b.iter_batched(
             || {
-                let mut parser = AnsiParser::new();
+                let parser = AnsiParser::new();
                 let text = "\x1b[1;31mBold Red\x1b[0m \x1b[4;32mUnderline Green\x1b[0m \x1b[38;5;196mBright Red\x1b[0m";
                 (parser, text)
             },
@@ -46,9 +46,9 @@ fn bench_ansi_parsing_large(c: &mut Criterion) {
     c.bench_function("ansi/parse_large", |b| {
         b.iter_batched(
             || {
-                let mut parser = AnsiParser::new();
-                let text = "Normal text ".repeat(1000) 
-                    + "\x1b[31mRed text\x1b[0m " 
+                let parser = AnsiParser::new();
+                let text = "Normal text ".repeat(1000)
+                    + "\x1b[31mRed text\x1b[0m "
                     + &"More text ".repeat(1000);
                 (parser, text)
             },
@@ -62,7 +62,7 @@ fn bench_ansi_parsing_no_ansi(c: &mut Criterion) {
     c.bench_function("ansi/parse_plain_text", |b| {
         b.iter_batched(
             || {
-                let mut parser = AnsiParser::new();
+                let parser = AnsiParser::new();
                 let text = "Plain text without any ANSI codes".repeat(100);
                 (parser, text)
             },
@@ -76,7 +76,7 @@ fn bench_ansi_parsing_rgb(c: &mut Criterion) {
     c.bench_function("ansi/parse_rgb_colors", |b| {
         b.iter_batched(
             || {
-                let mut parser = AnsiParser::new();
+                let parser = AnsiParser::new();
                 let text = "\x1b[38;2;255;0;0mRGB Red\x1b[0m \x1b[38;2;0;255;0mRGB Green\x1b[0m";
                 (parser, text)
             },
@@ -94,7 +94,7 @@ fn bench_output_processing_simple(c: &mut Criterion) {
     c.bench_function("output/process_simple", |b| {
         b.iter_batched(
             || {
-                let mut processor = OutputProcessor::new();
+                let processor = OutputProcessor::new();
                 let chunk = OutputChunk {
                     data: b"Hello, World!\n".to_vec(),
                     timestamp: chrono::Utc::now(),
@@ -113,8 +113,10 @@ fn bench_output_processing_multiline(c: &mut Criterion) {
     c.bench_function("output/process_multiline", |b| {
         b.iter_batched(
             || {
-                let mut processor = OutputProcessor::new();
-                let data = (0..100).map(|i| format!("Line {}\n", i)).collect::<String>();
+                let processor = OutputProcessor::new();
+                let data = (0..100)
+                    .map(|i| format!("Line {}\n", i))
+                    .collect::<String>();
                 let chunk = OutputChunk {
                     data: data.as_bytes().to_vec(),
                     timestamp: chrono::Utc::now(),
@@ -133,7 +135,7 @@ fn bench_output_processing_ansi(c: &mut Criterion) {
     c.bench_function("output/process_ansi", |b| {
         b.iter_batched(
             || {
-                let mut processor = OutputProcessor::new();
+                let processor = OutputProcessor::new();
                 let data = (0..50)
                     .map(|i| format!("\x1b[{}mLine {}\x1b[0m\n", 30 + (i % 8), i))
                     .collect::<String>();
@@ -155,7 +157,7 @@ fn bench_output_processing_large(c: &mut Criterion) {
     c.bench_function("output/process_large", |b| {
         b.iter_batched(
             || {
-                let mut processor = OutputProcessor::new();
+                let processor = OutputProcessor::new();
                 let data = "X".repeat(10000) + "\n";
                 let chunk = OutputChunk {
                     data: data.as_bytes().to_vec(),
@@ -267,7 +269,7 @@ fn bench_throughput_parse_ansi(c: &mut Criterion) {
     c.bench_function("throughput/parse_100_ansi_strings", |b| {
         b.iter_batched(
             || {
-                let mut parser = AnsiParser::new();
+                let parser = AnsiParser::new();
                 let strings: Vec<_> = (0..100)
                     .map(|i| format!("\x1b[{}mText {}\x1b[0m", 30 + (i % 8), i))
                     .collect();

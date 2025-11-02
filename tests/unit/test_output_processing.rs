@@ -28,7 +28,7 @@ mod output_processing_tests {
         assert!(result.is_ok());
 
         let lines = result.unwrap();
-        assert!(lines.len() >= 1);
+        assert!(!lines.is_empty());
         if !lines.is_empty() {
             assert!(lines[0].text.contains("Hello"));
         }
@@ -86,9 +86,8 @@ mod output_processing_tests {
         assert!(result.is_ok());
 
         // Partial lines should be buffered, not returned
-        let lines = result.unwrap();
-        // May or may not have lines depending on implementation
-        assert!(lines.len() >= 0);
+        let _lines = result.unwrap();
+        // Lines vector is always valid (length >= 0 is implicit for usize)
     }
 
     #[test]
@@ -106,7 +105,7 @@ mod output_processing_tests {
         assert!(result.is_ok());
 
         let lines = result.unwrap();
-        assert!(lines.len() >= 1);
+        assert!(!lines.is_empty());
     }
 
     #[test]
@@ -143,7 +142,7 @@ mod output_processing_tests {
         let lines = result.unwrap();
         if !lines.is_empty() {
             // Should contain the text
-            assert!(lines[0].text.len() > 0);
+            assert!(!lines[0].text.is_empty());
         }
     }
 
@@ -222,7 +221,7 @@ mod output_processing_tests {
 
         let lines = result.unwrap();
         // Should handle carriage return (overwrite)
-        assert!(lines.len() >= 1);
+        assert!(!lines.is_empty());
     }
 
     #[test]
@@ -284,7 +283,7 @@ mod output_processing_tests {
         let lines = processor.process_chunk(chunk2).unwrap();
 
         // Should have assembled the full line
-        assert!(lines.len() >= 1);
+        assert!(!lines.is_empty());
         if !lines.is_empty() {
             assert!(lines[0].text.contains("First") || lines[0].text.contains("line"));
         }
@@ -351,4 +350,3 @@ mod output_processing_tests {
         assert!(result.is_ok());
     }
 }
-

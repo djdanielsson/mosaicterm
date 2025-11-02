@@ -219,7 +219,7 @@ impl PtyManagerV2 {
     /// Clean up terminated processes
     pub async fn cleanup_terminated(&self) -> usize {
         let terminals = self.terminals.read().await;
-        
+
         // Find terminated processes
         let mut terminated = Vec::new();
         for (id, entry_lock) in terminals.iter() {
@@ -228,12 +228,12 @@ impl PtyManagerV2 {
                 terminated.push(id.clone());
             }
         }
-        
+
         let count = terminated.len();
-        
+
         // Drop read lock before acquiring write lock
         drop(terminals);
-        
+
         // Remove terminated processes
         if !terminated.is_empty() {
             let mut terminals = self.terminals.write().await;
@@ -241,7 +241,7 @@ impl PtyManagerV2 {
                 terminals.remove(&id);
             }
         }
-        
+
         count
     }
 
@@ -291,10 +291,9 @@ mod tests {
         // This test would demonstrate that operations on different terminals
         // don't block each other (unlike the old single-lock design)
         let manager = Arc::new(PtyManagerV2::new());
-        
+
         // In a real test, we'd spawn multiple terminals and verify they
         // can operate concurrently without blocking each other
         assert_eq!(manager.active_count().await, 0);
     }
 }
-

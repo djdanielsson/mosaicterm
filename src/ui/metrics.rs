@@ -70,11 +70,11 @@ impl MetricsPanel {
             .default_width(350.0)
             .show(ui.ctx(), |ui| {
                 ui.set_min_width(300.0);
-                
+
                 // System section
                 ui.heading(RichText::new("📊 System").size(14.0).strong());
                 ui.separator();
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Uptime:");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -82,15 +82,17 @@ impl MetricsPanel {
                         ui.label(RichText::new(uptime).color(Color32::GREEN));
                     });
                 });
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Memory (current):");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let mem = format_bytes(stats.current_memory_bytes);
-                        ui.label(RichText::new(mem).color(color_for_memory(stats.current_memory_bytes)));
+                        ui.label(
+                            RichText::new(mem).color(color_for_memory(stats.current_memory_bytes)),
+                        );
                     });
                 });
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Memory (peak):");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -98,80 +100,99 @@ impl MetricsPanel {
                         ui.label(RichText::new(mem).color(Color32::YELLOW));
                     });
                 });
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Active PTY processes:");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{}", pty_count)).color(Color32::LIGHT_BLUE));
+                        ui.label(
+                            RichText::new(format!("{}", pty_count)).color(Color32::LIGHT_BLUE),
+                        );
                     });
                 });
-                
+
                 ui.add_space(8.0);
-                
+
                 // Commands section
                 ui.heading(RichText::new("⌨️  Commands").size(14.0).strong());
                 ui.separator();
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Total commands:");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{}", stats.total_commands)).color(Color32::LIGHT_BLUE));
+                        ui.label(
+                            RichText::new(format!("{}", stats.total_commands))
+                                .color(Color32::LIGHT_BLUE),
+                        );
                     });
                 });
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Successful:");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{}", stats.successful_commands)).color(Color32::GREEN));
+                        ui.label(
+                            RichText::new(format!("{}", stats.successful_commands))
+                                .color(Color32::GREEN),
+                        );
                     });
                 });
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Failed:");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{}", stats.failed_commands)).color(Color32::RED));
+                        ui.label(
+                            RichText::new(format!("{}", stats.failed_commands)).color(Color32::RED),
+                        );
                     });
                 });
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Cancelled:");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{}", stats.cancelled_commands)).color(Color32::YELLOW));
+                        ui.label(
+                            RichText::new(format!("{}", stats.cancelled_commands))
+                                .color(Color32::YELLOW),
+                        );
                     });
                 });
-                
+
                 if stats.total_commands > 0 {
-                    let success_rate = (stats.successful_commands as f32 / stats.total_commands as f32) * 100.0;
+                    let success_rate =
+                        (stats.successful_commands as f32 / stats.total_commands as f32) * 100.0;
                     ui.horizontal(|ui| {
                         ui.label("Success rate:");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.1}%", success_rate))
-                                    .color(color_for_success_rate(success_rate))
+                                    .color(color_for_success_rate(success_rate)),
                             );
                         });
                     });
                 }
-                
+
                 ui.add_space(8.0);
-                
+
                 // Output section
                 ui.heading(RichText::new("📝 Output").size(14.0).strong());
                 ui.separator();
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Total lines:");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{}", stats.total_output_lines)).color(Color32::LIGHT_BLUE));
+                        ui.label(
+                            RichText::new(format!("{}", stats.total_output_lines))
+                                .color(Color32::LIGHT_BLUE),
+                        );
                     });
                 });
-                
+
                 if stats.total_commands > 0 {
                     let avg_lines = stats.total_output_lines as f32 / stats.total_commands as f32;
                     ui.horizontal(|ui| {
                         ui.label("Avg lines per command:");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new(format!("{:.1}", avg_lines)).color(Color32::WHITE));
+                            ui.label(
+                                RichText::new(format!("{:.1}", avg_lines)).color(Color32::WHITE),
+                            );
                         });
                     });
                 }
@@ -236,4 +257,3 @@ fn color_for_success_rate(rate: f32) -> Color32 {
         Color32::RED
     }
 }
-

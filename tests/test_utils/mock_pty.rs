@@ -60,10 +60,13 @@ impl MockPtyProcess {
     }
 }
 
+/// Type alias for send input callback to reduce complexity
+type SendInputCallback = Box<dyn Fn(&str, &[u8]) + Send + Sync>;
+
 /// Mock PTY Manager for testing
 pub struct MockPtyManager {
     processes: Arc<Mutex<HashMap<String, MockPtyProcess>>>,
-    pub send_input_callback: Option<Box<dyn Fn(&str, &[u8]) + Send + Sync>>,
+    pub send_input_callback: Option<SendInputCallback>,
 }
 
 impl MockPtyManager {
@@ -77,7 +80,7 @@ impl MockPtyManager {
 
     /// Spawn a new mock process
     pub fn spawn(&mut self, command: String) -> Result<PtyHandle> {
-        let mut process = MockPtyProcess::new(command);
+        let process = MockPtyProcess::new(command);
         let handle = process.handle.clone();
 
         let mut processes = self.processes.lock().unwrap();
@@ -282,7 +285,7 @@ mod tests {
     fn test_mock_pty_manager_cleanup() {
         let mut manager = MockPtyManager::new();
         let handle1 = manager.spawn("cmd1".to_string()).unwrap();
-        let handle2 = manager.spawn("cmd2".to_string()).unwrap();
+        let _handle2 = manager.spawn("cmd2".to_string()).unwrap();
 
         manager.terminate(&handle1, 0).unwrap();
 
@@ -291,4 +294,3 @@ mod tests {
         assert_eq!(manager.active_count(), 1);
     }
 }
-

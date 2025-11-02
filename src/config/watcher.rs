@@ -71,10 +71,7 @@ impl ConfigWatcher {
                 reason: format!("Failed to watch directory: {}", e),
             })?;
 
-        info!(
-            "Started watching config file: {}",
-            config_path.display()
-        );
+        info!("Started watching config file: {}", config_path.display());
 
         Ok(Self {
             config_path,
@@ -142,12 +139,7 @@ impl ConfigWatcher {
         event.paths.iter().any(|p| {
             p.canonicalize()
                 .ok()
-                .and_then(|cp| {
-                    self.config_path
-                        .canonicalize()
-                        .ok()
-                        .map(|ccp| cp == ccp)
-                })
+                .and_then(|cp| self.config_path.canonicalize().ok().map(|ccp| cp == ccp))
                 .unwrap_or(false)
         })
     }
@@ -285,4 +277,3 @@ mod tests {
         }
     }
 }
-
