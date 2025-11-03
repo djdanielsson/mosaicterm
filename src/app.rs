@@ -158,6 +158,7 @@ pub struct MosaicTermApp {
     last_command_time: Option<std::time::Instant>,
     /// Previous directory (DEPRECATED - use state_manager.active_session().previous_directory)
     #[deprecated(note = "Use state_manager.active_session().previous_directory instead")]
+    #[allow(dead_code)]
     previous_directory: Option<std::path::PathBuf>,
 }
 
@@ -166,17 +167,22 @@ pub struct AppState {
     /// Whether the terminal is ready for input
     terminal_ready: bool,
     /// Whether terminal initialization has been attempted
+    #[allow(dead_code)]
     initialization_attempted: bool,
     /// Window title (kept for backward compatibility)
     #[allow(dead_code)]
     title: String,
     /// Status message
+    #[allow(dead_code)]
     status_message: Option<String>,
     /// Loading indicator state (for spinner animation)
+    #[allow(dead_code)]
     loading_frame: usize,
     /// Whether a long operation is in progress
+    #[allow(dead_code)]
     is_loading: bool,
     /// Loading message
+    #[allow(dead_code)]
     loading_message: Option<String>,
 }
 
@@ -2497,9 +2503,12 @@ mod tests {
     fn test_status_message() {
         let mut app = MosaicTermApp::new();
         app.set_status_message(Some("Test message".to_string()));
-        assert_eq!(app.state.status_message, Some("Test message".to_string()));
+        assert_eq!(
+            app.state_manager.app_state().status_message,
+            Some("Test message".to_string())
+        );
 
         app.set_status_message(None);
-        assert!(app.state.status_message.is_none());
+        assert!(app.state_manager.app_state().status_message.is_none());
     }
 }
