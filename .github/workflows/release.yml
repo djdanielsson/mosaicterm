@@ -1,34 +1,67 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  release:
+    types: [created, published]
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    name: Release
+  # First run all CI checks
+  ci-checks:
+    name: CI Checks
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check compilation
+        run: cargo check
+
+      - name: Run tests
+        run: cargo test
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings -A deprecated
+
+      - name: Check documentation
+        run: cargo doc --no-deps
+
+  # Build release binaries for each platform
+  build-release:
+    name: Build ${{ matrix.name }}
+    needs: ci-checks
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
-          # - os: ubuntu-latest
-          #   target: x86_64-unknown-linux-gnu
-          #   name: linux-x64
           - os: macos-latest
             target: x86_64-apple-darwin
             name: macos-x64
+            artifact: mosaicterm
+          # Uncomment to enable Linux builds
+          # - os: ubuntu-latest
+          #   target: x86_64-unknown-linux-gnu
+          #   name: linux-x64
+          #   artifact: mosaicterm
+          # Uncomment to enable Windows builds
           # - os: windows-latest
           #   target: x86_64-pc-windows-msvc
           #   name: windows-x64
+          #   artifact: mosaicterm.exe
 
     steps:
       - name: Checkout code
@@ -42,81 +75,32 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Run tests
+      - name: Run release tests
         run: cargo test --release
 
-      - name: Build release
-        run: cargo build --release
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package for Linux/macOS
         if: matrix.os != 'windows-latest'
         run: |
-          cd target/release
-          tar czf mosaicterm-${{ matrix.name }}.tar.gz mosaicterm
-          cd ../..
+          cd target/${{ matrix.target }}/release
+          tar czf mosaicterm-${{ matrix.name }}.tar.gz ${{ matrix.artifact }}
+          mv mosaicterm-${{ matrix.name }}.tar.gz ../../..
 
       - name: Package for Windows
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          cd target/release
-          Compress-Archive -Path mosaicterm.exe -DestinationPath mosaicterm-${{ matrix.name }}.zip
-          cd ../..
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path ${{ matrix.artifact }} -DestinationPath mosaicterm-${{ matrix.name }}.zip
+          Move-Item mosaicterm-${{ matrix.name }}.zip ../../..
 
-      - name: Upload release assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: mosaicterm-${{ matrix.name }}
-          path: target/release/mosaicterm-${{ matrix.name }}.*
-
-  publish:
-    name: Publish Release
-    needs: release
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Get version
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Create Release
+      - name: Upload to release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: MosaicTerm v${{ steps.version.outputs.version }}
-          body: |
-            ## Changes
-
-            See [CHANGELOG.md](https://github.com/djdanielsson/mosaicterm/blob/main/CHANGELOG.md) for details.
-
-            ## Downloads
-
-            - **Linux (x64)**: `mosaicterm-linux-x64.tar.gz`
-            - **macOS (x64)**: `mosaicterm-macos-x64.tar.gz`
-            - **Windows (x64)**: `mosaicterm-windows-x64.zip`
-
-            ## Installation
-
-            ### Linux/macOS
-            ```bash
-            tar xzf mosaicterm-*-x64.tar.gz
-            ./mosaicterm
-            ```
-
-            ### Windows
-            Extract `mosaicterm-windows-x64.zip` and run `mosaicterm.exe`
           files: |
-            artifacts/**/mosaicterm-*.tar.gz
-            artifacts/**/mosaicterm-*.zip
+            mosaicterm-${{ matrix.name }}.tar.gz
+            mosaicterm-${{ matrix.name }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
