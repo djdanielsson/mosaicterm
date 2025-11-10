@@ -490,6 +490,13 @@ impl StateManager {
         self.command_history().cloned().unwrap_or_default()
     }
 
+    /// Clear command history for the active session
+    pub fn clear_command_history(&mut self) {
+        if let Some(session) = self.active_session_mut() {
+            session.command_history.clear();
+        }
+    }
+
     /// Add an output line to a specific command block
     pub fn add_output_line(&mut self, block_id: &str, line: OutputLine) {
         if let Some(session) = self.active_session_mut() {
@@ -561,6 +568,18 @@ impl StateManager {
         // This is a compatibility shim during migration
         if let Some(session) = self.active_session_mut() {
             session.last_command_time = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Get last command execution time for active session
+    pub fn last_command_time(&self) -> Option<std::time::Instant> {
+        self.active_session().and_then(|s| s.last_command_time)
+    }
+
+    /// Clear last command execution time for active session
+    pub fn clear_last_command_time(&mut self) {
+        if let Some(session) = self.active_session_mut() {
+            session.last_command_time = None;
         }
     }
 
