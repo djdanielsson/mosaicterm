@@ -705,9 +705,18 @@ mod tests {
     fn test_tui_apps_config_default() {
         let config = Config::default();
         // Verify default TUI apps are present
-        assert!(config.tui_apps.fullscreen_commands.contains(&"vim".to_string()));
-        assert!(config.tui_apps.fullscreen_commands.contains(&"nvim".to_string()));
-        assert!(config.tui_apps.fullscreen_commands.contains(&"htop".to_string()));
+        assert!(config
+            .tui_apps
+            .fullscreen_commands
+            .contains(&"vim".to_string()));
+        assert!(config
+            .tui_apps
+            .fullscreen_commands
+            .contains(&"nvim".to_string()));
+        assert!(config
+            .tui_apps
+            .fullscreen_commands
+            .contains(&"htop".to_string()));
         assert!(!config.tui_apps.fullscreen_commands.is_empty());
     }
 
@@ -716,13 +725,20 @@ mod tests {
         let base = Config::default();
         let mut overlay = Config::default();
         // Set custom TUI apps in overlay
-        overlay.tui_apps.fullscreen_commands = vec!["custom_app".to_string(), "another_app".to_string()];
+        overlay.tui_apps.fullscreen_commands =
+            vec!["custom_app".to_string(), "another_app".to_string()];
 
         let merged = utils::merge_configs(base, overlay);
         // Should use overlay's TUI apps since it's not empty
         assert_eq!(merged.tui_apps.fullscreen_commands.len(), 2);
-        assert!(merged.tui_apps.fullscreen_commands.contains(&"custom_app".to_string()));
-        assert!(merged.tui_apps.fullscreen_commands.contains(&"another_app".to_string()));
+        assert!(merged
+            .tui_apps
+            .fullscreen_commands
+            .contains(&"custom_app".to_string()));
+        assert!(merged
+            .tui_apps
+            .fullscreen_commands
+            .contains(&"another_app".to_string()));
     }
 
     #[test]
@@ -735,6 +751,9 @@ mod tests {
         let merged = utils::merge_configs(base, overlay);
         // Should use base's TUI apps since overlay is empty
         assert!(!merged.tui_apps.fullscreen_commands.is_empty());
-        assert!(merged.tui_apps.fullscreen_commands.contains(&"vim".to_string()));
+        assert!(merged
+            .tui_apps
+            .fullscreen_commands
+            .contains(&"vim".to_string()));
     }
 }

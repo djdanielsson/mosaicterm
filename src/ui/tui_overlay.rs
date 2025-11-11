@@ -155,14 +155,14 @@ impl TuiOverlay {
     /// Process text with ANSI escape sequences and update screen buffer
     fn process_ansi_text(&mut self, text: &str) {
         let mut chars = text.chars().peekable();
-        
+
         while let Some(ch) = chars.next() {
             if ch == '\x1b' {
                 // ANSI escape sequence
                 if chars.peek() == Some(&'[') {
                     chars.next(); // consume '['
                     let mut params = String::new();
-                    
+
                     // Collect parameters
                     while let Some(&next_ch) = chars.peek() {
                         if next_ch.is_ascii_digit() || next_ch == ';' || next_ch == '?' {
@@ -172,7 +172,7 @@ impl TuiOverlay {
                             break;
                         }
                     }
-                    
+
                     // Get command character
                     if let Some(cmd) = chars.next() {
                         self.handle_ansi_command(&params, cmd);
@@ -281,7 +281,7 @@ impl TuiOverlay {
 
                         // Display the virtual screen buffer
                         let screen_text = self.screen_buffer.render_to_string();
-                        
+
                         ui.add(
                             egui::TextEdit::multiline(&mut screen_text.as_ref())
                                 .font(egui::TextStyle::Monospace)
