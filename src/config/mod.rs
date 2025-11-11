@@ -517,7 +517,7 @@ pub mod utils {
             terminal: merge_terminal_configs(base.terminal, overlay.terminal),
             pty: merge_pty_configs(base.pty, overlay.pty),
             key_bindings: merge_key_bindings(base.key_bindings, overlay.key_bindings),
-            tui_apps: TuiAppConfig::default(), // Use default TUI apps config for now
+            tui_apps: merge_tui_apps_configs(base.tui_apps, overlay.tui_apps),
         }
     }
 
@@ -620,6 +620,18 @@ pub mod utils {
             },
         }
     }
+
+    fn merge_tui_apps_configs(base: TuiAppConfig, overlay: TuiAppConfig) -> TuiAppConfig {
+        TuiAppConfig {
+            // If overlay has commands, use overlay; otherwise use base
+            // This allows users to override the default list
+            fullscreen_commands: if overlay.fullscreen_commands.is_empty() {
+                base.fullscreen_commands
+            } else {
+                overlay.fullscreen_commands
+            },
+        }
+    }
 }
 
 #[cfg(test)]
@@ -687,5 +699,42 @@ mod tests {
         // Basic validation - should pass with default config
         assert!(config.ui.font_size > 0);
         assert!(!config.terminal.shell_path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_tui_apps_config_default() {
+        let config = Config::default();
+        // Verify default TUI apps are present
+        assert!(config.tui_apps.fullscreen_commands.contains(&"vim".to_string()));
+        assert!(config.tui_apps.fullscreen_commands.contains(&"nvim".to_string()));
+        assert!(config.tui_apps.fullscreen_commands.contains(&"htop".to_string()));
+        assert!(!config.tui_apps.fullscreen_commands.is_empty());
+    }
+
+    #[test]
+    fn test_merge_tui_apps_configs() {
+        let base = Config::default();
+        let mut overlay = Config::default();
+        // Set custom TUI apps in overlay
+        overlay.tui_apps.fullscreen_commands = vec!["custom_app".to_string(), "another_app".to_string()];
+
+        let merged = utils::merge_configs(base, overlay);
+        // Should use overlay's TUI apps since it's not empty
+        assert_eq!(merged.tui_apps.fullscreen_commands.len(), 2);
+        assert!(merged.tui_apps.fullscreen_commands.contains(&"custom_app".to_string()));
+        assert!(merged.tui_apps.fullscreen_commands.contains(&"another_app".to_string()));
+    }
+
+    #[test]
+    fn test_merge_tui_apps_configs_empty_overlay() {
+        let base = Config::default();
+        let mut overlay = Config::default();
+        // Empty overlay should use base
+        overlay.tui_apps.fullscreen_commands = vec![];
+
+        let merged = utils::merge_configs(base, overlay);
+        // Should use base's TUI apps since overlay is empty
+        assert!(!merged.tui_apps.fullscreen_commands.is_empty());
+        assert!(merged.tui_apps.fullscreen_commands.contains(&"vim".to_string()));
     }
 }
