@@ -254,6 +254,9 @@ impl CommandBlocks {
             ExecutionStatus::Pending => {
                 ui.colored_label(egui::Color32::from_rgb(150, 150, 150), "● Pending");
             }
+            ExecutionStatus::TuiMode => {
+                ui.colored_label(egui::Color32::from_rgb(150, 100, 255), "⌨ TUI Mode");
+            }
         }
     }
 

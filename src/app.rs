@@ -137,6 +137,8 @@ pub struct MosaicTermApp {
     async_tx: mpsc::UnboundedSender<AsyncRequest>,
     /// Channel for receiving async results from background to UI
     async_rx: mpsc::UnboundedReceiver<AsyncResult>,
+    /// Fullscreen TUI overlay for interactive apps
+    tui_overlay: mosaicterm::ui::TuiOverlay,
 }
 
 impl Default for MosaicTermApp {
@@ -229,6 +231,7 @@ impl MosaicTermApp {
             runtime,
             async_tx: request_tx,
             async_rx: result_rx,
+            tui_overlay: mosaicterm::ui::TuiOverlay::new(),
         }
     }
 
@@ -376,6 +379,15 @@ impl MosaicTermApp {
         }
 
         info!("Processing command: {}", command);
+
+        // Check if this is a TUI command that should open in fullscreen overlay
+        if self.is_tui_command(&command) {
+            info!(
+                "TUI command detected, opening fullscreen overlay: {}",
+                command
+            );
+            return self.handle_tui_command(command).await;
+        }
 
         // Check if this is an interactive command and warn the user
         if self.is_interactive_command(&command) {
@@ -557,37 +569,79 @@ impl MosaicTermApp {
         }
     }
 
+    /// Check if a command is a TUI app that should open in fullscreen overlay
+    fn is_tui_command(&self, command: &str) -> bool {
+        let cmd_name = self.get_command_name(command);
+        self.runtime_config
+            .config()
+            .tui_apps
+            .fullscreen_commands
+            .iter()
+            .any(|prog| prog == &cmd_name)
+    }
+
+    /// Handle a TUI command by opening the fullscreen overlay
+    async fn handle_tui_command(&mut self, command: String) -> Result<()> {
+        info!("Handling TUI command: {}", command);
+
+        // Create command block (mark it as TUI mode)
+        let working_dir = self
+            .terminal
+            .as_ref()
+            .map(|t| t.get_working_directory().to_path_buf())
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"))
+            });
+        let mut command_block = CommandBlock::new(command.clone(), working_dir.clone());
+        command_block.mark_tui_mode(); // Special marker for TUI commands
+
+        // Add to state manager
+        self.state_manager.add_command_block(command_block.clone());
+
+        // Create a new PTY for the TUI app
+        if let Some(_terminal) = &mut self.terminal {
+            if let Some(handle) = _terminal.pty_handle() {
+                // Store handle ID before mutable borrow
+                let handle_id = handle.id.len(); // Simple ID based on handle ID length
+
+                // Send command to PTY
+                {
+                    let mut pty_manager = self.pty_manager.lock().await;
+                    
+                    // Set TERM to xterm-256color for proper TUI support
+                    let env_cmd = "export TERM=xterm-256color\n";
+                    if let Err(e) = pty_manager.send_input(handle, env_cmd.as_bytes()).await {
+                        warn!("Failed to set TERM for TUI command: {}", e);
+                    }
+                    
+                    // Brief delay to let env command process
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    
+                    let cmd = format!("{}\n", command);
+                    if let Err(e) = pty_manager.send_input(handle, cmd.as_bytes()).await {
+                        warn!("Failed to send TUI command to PTY: {}", e);
+                        return Err(e);
+                    }
+                } // Drop pty_manager lock here
+
+                // Start the overlay with PTY handle ID
+                self.tui_overlay.start(command.clone(), handle_id);
+                self.set_status_message(Some(format!("Running TUI app: {}", command)));
+
+                info!("TUI overlay started for command: {}", command);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Check if a command is interactive (TUI-based) and may not work well in block mode
     fn is_interactive_command(&self, command: &str) -> bool {
         let cmd_name = self.get_command_name(command);
 
-        // List of known interactive TUI programs
-        let interactive_programs = vec![
-            "vim",
-            "vi",
-            "nvim",
-            "emacs",
-            "nano",
-            "pico", // Text editors
-            "htop",
-            "top",
-            "atop",
-            "iotop", // System monitors
-            "less",
-            "more", // Pagers
-            "man",  // Manual pager
-            "tmux",
-            "screen", // Terminal multiplexers
-            "mutt",
-            "alpine", // Email clients
-            "mc",
-            "ranger",
-            "nnn",   // File managers
-            "tig",   // Git TUI
-            "gitui", // Git TUI
-            "nethack",
-            "cmatrix",    // Games/fun
-            "menuconfig", // Config menus
+        // List of known interactive TUI programs (not handled by TUI overlay)
+        let interactive_programs = [
+            "python", "python3", "node", "irb", "ruby", "ssh", // REPLs and remote shells
         ];
 
         interactive_programs.iter().any(|&prog| cmd_name == prog)
@@ -596,6 +650,24 @@ impl MosaicTermApp {
     /// Extract the command name from a command line
     fn get_command_name(&self, command: &str) -> String {
         command.split_whitespace().next().unwrap_or("").to_string()
+    }
+
+    /// Handle TUI app exit - mark command block as completed without output
+    fn handle_tui_exit(&mut self, command: String) {
+        info!("TUI app exited: {}", command);
+
+        // Find the command block and mark it as completed
+        if let Some(history) = self.state_manager.command_history_mut() {
+            if let Some(block) = history.iter_mut().rev().find(|b| {
+                b.command == command && b.status == mosaicterm::models::ExecutionStatus::TuiMode
+            }) {
+                // Mark as completed (no output will be shown)
+                block.mark_completed(std::time::Duration::from_secs(0));
+                info!("TUI command block marked as completed: {}", command);
+            }
+        }
+
+        self.set_status_message(Some(format!("TUI app exited: {}", command)));
     }
 
     /// Update application state
@@ -1266,6 +1338,67 @@ impl eframe::App for MosaicTermApp {
                 });
         }
 
+        // Render TUI overlay if active
+        if self.tui_overlay.is_active() {
+            // Handle input for TUI app BEFORE rendering
+            if let Some(input_data) = self.tui_overlay.handle_input(ctx) {
+                debug!("TUI overlay: Sending {} bytes of input to PTY", input_data.len());
+                // Send input to PTY
+                if let Some(_handle_id) = self.tui_overlay.pty_handle() {
+                    if let Ok(mut pty_manager) = self.pty_manager.try_lock() {
+                        // Get the actual PTY handle from the terminal
+                        if let Some(terminal) = &self.terminal {
+                            if let Some(pty_handle) = terminal.pty_handle() {
+                                if let Err(e) = executor::block_on(async {
+                                    pty_manager.send_input(pty_handle, &input_data).await
+                                }) {
+                                    warn!("Failed to send input to TUI app: {}", e);
+                                }
+                            }
+                        }
+                    } else {
+                        warn!("Failed to acquire PTY lock for TUI input");
+                    }
+                }
+            }
+
+            // Render overlay UI
+            let overlay_closed = self.tui_overlay.render(ctx);
+            if overlay_closed || self.tui_overlay.has_exited() {
+                info!("TUI overlay closing");
+                
+                // Send Ctrl+C to kill the TUI process and reset terminal
+                if let Some(terminal) = &self.terminal {
+                    if let Some(pty_handle) = terminal.pty_handle() {
+                        if let Ok(mut pty_manager) = self.pty_manager.try_lock() {
+                            executor::block_on(async {
+                                // Send Ctrl+C (ASCII 3) to terminate the process
+                                let _ = pty_manager.send_input(pty_handle, &[3]).await;
+                                
+                                // Wait a moment for process to die
+                                std::thread::sleep(std::time::Duration::from_millis(50));
+                                
+                                // Reset terminal to dumb mode for regular commands
+                                let reset_cmd = "export TERM=dumb\n";
+                                let _ = pty_manager.send_input(pty_handle, reset_cmd.as_bytes()).await;
+                                
+                                // Send a reset sequence to clear any weird state
+                                let _ = pty_manager.send_input(pty_handle, b"\x1bc").await; // ESC c (reset)
+                            });
+                            info!("Sent Ctrl+C and reset terminal");
+                        }
+                    }
+                }
+                
+                // TUI app exited, mark command block as completed with empty output
+                if let Some(cmd) = self.tui_overlay.command() {
+                    self.handle_tui_exit(cmd.to_string());
+                }
+                
+                self.tui_overlay.stop();
+            }
+        }
+
         // Handle async operations
         self.handle_async_operations(ctx);
 
@@ -1273,18 +1406,24 @@ impl eframe::App for MosaicTermApp {
         self.poll_async_results();
 
         // Only repaint when needed to save CPU
-        // Repaint if: command is running, has pending output, or user input changed
+        // Repaint if: command is running, has pending output, user input changed, or TUI overlay active
         let needs_repaint = self.state_manager.last_command_time().is_some()
             || (self
                 .terminal
                 .as_ref()
                 .map(|t| t.has_pending_output())
                 .unwrap_or(false))
-            || self.completion_popup.is_visible();
+            || self.completion_popup.is_visible()
+            || self.tui_overlay.is_active();
 
         if needs_repaint {
             // Repaint immediately for active operations
             ctx.request_repaint();
+            
+            // For TUI overlay, request very fast repaints (16ms = ~60fps) for smooth updates
+            if self.tui_overlay.is_active() {
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
+            }
         } else {
             // Check again in 100ms for idle state (efficient polling)
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -1921,6 +2060,9 @@ impl MosaicTermApp {
                             ExecutionStatus::Pending => {
                                 ("Pending", egui::Color32::from_rgb(150, 150, 150))
                             }
+                            ExecutionStatus::TuiMode => {
+                                ("TUI Mode", egui::Color32::from_rgb(150, 100, 255))
+                            }
                         };
 
                         ui.label(
@@ -2097,6 +2239,28 @@ impl MosaicTermApp {
                 if let Some(mut pty_manager) = pty_manager_opt {
                     if let Ok(data) = pty_manager.try_read_output_now(handle) {
                         if !data.is_empty() {
+                            // If TUI overlay is active, send RAW output there (don't process it!)
+                            if self.tui_overlay.is_active() {
+                                debug!("Routing {} bytes to TUI overlay", data.len());
+                                
+                                // Send raw bytes directly to overlay - TUI apps need ANSI codes!
+                                self.tui_overlay.add_raw_output(&data);
+                                
+                                // Check if output contains shell prompt (indicating TUI app exited)
+                                let data_str = String::from_utf8_lossy(&data);
+                                let has_prompt = data_str.ends_with("$ ")
+                                    || data_str.ends_with("% ")
+                                    || data_str.ends_with("> ")
+                                    || data_str.contains("@") && (data_str.contains("$") || data_str.contains("%"));
+                                
+                                if has_prompt {
+                                    debug!("Detected prompt in TUI output, marking as exited");
+                                    self.tui_overlay.mark_exited();
+                                }
+                                
+                                return; // Don't process output for command blocks
+                            }
+
                             // Check for ANSI clear screen sequences (\x1b[H\x1b[2J or \x1b[2J)
                             let data_str = String::from_utf8_lossy(&data);
                             let is_clear_sequence = data_str.contains("\x1b[H\x1b[2J")
@@ -2141,6 +2305,12 @@ impl MosaicTermApp {
                                     self.state_manager.command_history_mut()
                                 {
                                     if let Some(last_block) = command_history.last_mut() {
+                                        // Skip output processing if this command is in TUI mode
+                                        if last_block.status == mosaicterm::models::ExecutionStatus::TuiMode {
+                                            debug!("Skipping output for TUI mode command");
+                                            return;
+                                        }
+                                        
                                         let has_ready_lines = !ready_lines.is_empty();
 
                                         // Batch process all lines at once for better performance

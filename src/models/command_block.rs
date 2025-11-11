@@ -26,6 +26,8 @@ pub enum ExecutionStatus {
     Failed,
     /// Command was cancelled by user
     Cancelled,
+    /// Command is running in TUI fullscreen mode (no output captured)
+    TuiMode,
 }
 
 /// Represents a single executed command and its complete output
@@ -94,6 +96,11 @@ impl CommandBlock {
     pub fn mark_cancelled(&mut self) {
         self.status = ExecutionStatus::Cancelled;
         self.exit_code = Some(130); // Standard exit code for SIGINT
+    }
+
+    /// Mark the command as running in TUI fullscreen mode
+    pub fn mark_tui_mode(&mut self) {
+        self.status = ExecutionStatus::TuiMode;
     }
 
     /// Add output line to the block

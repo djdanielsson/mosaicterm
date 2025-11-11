@@ -34,6 +34,10 @@ pub struct Config {
     /// Key binding configuration
     #[serde(default)]
     pub key_bindings: KeyBindings,
+
+    /// Interactive TUI app configuration
+    #[serde(default)]
+    pub tui_apps: TuiAppConfig,
 }
 
 /// UI-related configuration
@@ -250,6 +254,55 @@ pub enum BellStyle {
     Visual,
 }
 
+/// Configuration for interactive TUI applications
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TuiAppConfig {
+    /// List of commands that should open in fullscreen mode
+    pub fullscreen_commands: Vec<String>,
+}
+
+impl Default for TuiAppConfig {
+    fn default() -> Self {
+        Self {
+            fullscreen_commands: vec![
+                // Text editors
+                "vim".to_string(),
+                "nvim".to_string(),
+                "vi".to_string(),
+                "nano".to_string(),
+                "emacs".to_string(),
+                "helix".to_string(),
+                "micro".to_string(),
+                // System monitors
+                "top".to_string(),
+                "htop".to_string(),
+                "btop".to_string(),
+                "gotop".to_string(),
+                "ytop".to_string(),
+                "atop".to_string(),
+                // Interactive tools
+                "less".to_string(),
+                "more".to_string(),
+                "man".to_string(),
+                "tmux".to_string(),
+                "screen".to_string(),
+                // File managers
+                "ranger".to_string(),
+                "nnn".to_string(),
+                "mc".to_string(),
+                "vifm".to_string(),
+                // Other TUI apps
+                "ncdu".to_string(),
+                "cmus".to_string(),
+                "weechat".to_string(),
+                "irssi".to_string(),
+                "mutt".to_string(),
+                "ncmpcpp".to_string(),
+            ],
+        }
+    }
+}
+
 /// Runtime configuration manager
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -464,6 +517,7 @@ pub mod utils {
             terminal: merge_terminal_configs(base.terminal, overlay.terminal),
             pty: merge_pty_configs(base.pty, overlay.pty),
             key_bindings: merge_key_bindings(base.key_bindings, overlay.key_bindings),
+            tui_apps: TuiAppConfig::default(), // Use default TUI apps config for now
         }
     }
 

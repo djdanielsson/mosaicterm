@@ -9,6 +9,7 @@ pub mod input;
 pub mod metrics;
 pub mod scroll;
 pub mod text;
+pub mod tui_overlay;
 pub mod viewport;
 
 // Re-exports for convenience
@@ -18,6 +19,7 @@ pub use input::{InputConfig, InputPrompt};
 pub use metrics::MetricsPanel;
 pub use scroll::{ScrollState, ScrollableHistory, ScrollbarConfig};
 pub use text::{AnsiTextRenderer, ColorScheme, FontConfig};
+pub use tui_overlay::TuiOverlay;
 pub use viewport::{TerminalViewport, ViewportConfig};
 
 use eframe::egui;
