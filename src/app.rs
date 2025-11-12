@@ -307,6 +307,9 @@ impl MosaicTermApp {
         // Create environment with prompt suppression
         let mut environment: std::collections::HashMap<String, String> = std::env::vars().collect();
 
+        // Disable terminal echo explicitly
+        environment.insert("STTY".to_string(), "-echo".to_string());
+        
         // Suppress shell prompts by setting PS1 to empty for bash/zsh
         // This prevents prompts from appearing in output at all
         match shell_type {
@@ -2325,9 +2328,23 @@ impl MosaicTermApp {
                                         // Batch process all lines at once for better performance
                                         let mut lines_to_add =
                                             Vec::with_capacity(ready_lines.len());
-                                        for line in &ready_lines {
-                                            // Only skip exact command echo
-                                            if line.text.trim() != last_block.command.trim() {
+                                        let command_text = last_block.command.trim();
+                                        let current_output_count = last_block.output.len();
+                                        
+                                        for (idx, line) in ready_lines.iter().enumerate() {
+                                            let line_text = line.text.trim();
+                                            let is_first_few_lines = current_output_count + idx < 5;
+                                            
+                                            // Skip if:
+                                            // 1. Exact match of command
+                                            // 2. First few lines and is a prefix of command (partial echo)
+                                            let should_skip = line_text == command_text
+                                                || (is_first_few_lines 
+                                                    && !line_text.is_empty()
+                                                    && command_text.starts_with(line_text)
+                                                    && line_text.len() <= 3); // Only skip very short prefixes
+                                            
+                                            if !should_skip {
                                                 // Truncate line if too long
                                                 let mut line_to_add = line.clone();
                                                 if line_to_add.text.len() > MAX_LINE_LENGTH {

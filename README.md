@@ -30,6 +30,22 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 
 ### Installation
 
+#### Option 1: Download Pre-built Release (Recommended)
+
+**macOS:**
+1. Download the latest `MosaicTerm-macos-{arm64|x64}.app.tar.gz` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
+2. Extract: `tar xzf MosaicTerm-macos-*.app.tar.gz`
+3. Move to Applications: `mv MosaicTerm.app /Applications/`
+4. Launch from Applications folder or Spotlight
+
+**Linux:**
+1. Download the latest `mosaicterm-linux-x64.tar.gz` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
+2. Extract: `tar xzf mosaicterm-linux-x64.tar.gz`
+3. Move to PATH: `sudo mv mosaicterm /usr/local/bin/`
+4. Run: `mosaicterm`
+
+#### Option 2: Build from Source
+
 ```bash
 # Clone the repository
 git clone https://github.com/djdanielsson/mosaicterm.git

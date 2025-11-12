@@ -100,7 +100,20 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package for Linux/macOS
+      - name: Build macOS App Bundle
+        if: matrix.os == 'macos-latest'
+        run: |
+          # Copy binary to release directory for app bundle creation
+          cp target/${{ matrix.target }}/release/mosaicterm target/release/
+          # Build the .app bundle
+          chmod +x .github/scripts/build-macos-app.sh
+          ./.github/scripts/build-macos-app.sh
+          # Create tarball of the .app bundle
+          cd target/release
+          tar czf MosaicTerm-${{ matrix.name }}.app.tar.gz MosaicTerm.app
+          mv MosaicTerm-${{ matrix.name }}.app.tar.gz ../..
+
+      - name: Package CLI binary for Linux/macOS
         if: matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
@@ -115,7 +128,15 @@ jobs:
           Compress-Archive -Path ${{ matrix.artifact }} -DestinationPath mosaicterm-${{ matrix.name }}.zip
           Move-Item mosaicterm-${{ matrix.name }}.zip ../../..
 
-      - name: Upload Linux/macOS release
+      - name: Upload macOS App Bundle
+        if: matrix.os == 'macos-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: MosaicTerm-${{ matrix.name }}.app.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload CLI binary for Linux/macOS
         if: matrix.os != 'windows-latest'
         uses: softprops/action-gh-release@v1
         with:
