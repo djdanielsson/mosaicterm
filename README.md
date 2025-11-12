@@ -73,21 +73,25 @@ MosaicTerm works best with modern CLI tools:
 - **Display Server**: Works with both X11 and Wayland
 - **Wayland Support**: 
   - MosaicTerm automatically detects and configures for Wayland
-  - **Important**: If you encounter "buffer size must be integer multiple of buffer_scale" errors:
+  - The application automatically forces integer DPI scaling (1x or 2x) to help prevent buffer size errors
+  - **If you still encounter "buffer size must be integer multiple of buffer_scale" errors:**
     ```bash
-    # Option 1: Use X11 instead (recommended workaround)
-    GDK_BACKEND=x11 mosaicterm
-    # Or force X11 backend:
+    # Option 1: Use X11 instead (MOST RELIABLE - recommended)
     WINIT_UNIX_BACKEND=x11 mosaicterm
+    # Or set environment variable before running:
+    export WINIT_UNIX_BACKEND=x11
+    mosaicterm
     
-    # Option 2: Disable fractional scaling (best long-term solution)
-    # In GNOME: Settings > Displays > Scale to 100% or 200% (not 125%, 150%, etc.)
-    # In KDE: System Settings > Display and Monitor > Scale Display to 100% or 200%
+    # Option 2: Disable fractional scaling in system settings
+    # GNOME: Settings > Displays > Scale to 100% or 200% (not 125%, 150%, etc.)
+    # KDE: System Settings > Display and Monitor > Scale Display to 100% or 200%
+    # Fedora: Settings > Displays > Fractional Scaling OFF, use 100% or 200%
     
-    # Option 3: Set environment variable to force integer scaling
-    GDK_DPI_SCALE=1 mosaicterm  # or GDK_DPI_SCALE=2 for 2x scaling
+    # Option 3: Force X11 via environment variable (persists across sessions)
+    echo 'export WINIT_UNIX_BACKEND=x11' >> ~/.bashrc  # or ~/.zshrc
     ```
-  - **Note**: This is a known limitation with fractional scaling on Wayland. The application rounds window sizes, but buffer creation happens at a lower level in egui/winit. Using X11 or integer scaling avoids this issue.
+  - **Why this happens**: Wayland requires buffer sizes to be integer multiples of the buffer scale. Even with integer DPI scaling, some window operations can create odd-sized buffers. This is a limitation in how egui/winit handles Wayland buffer creation.
+  - **Best solution**: Use X11 (`WINIT_UNIX_BACKEND=x11`) which doesn't have this limitation.
 - **Dependencies**: Most Linux distributions include required system libraries. If you encounter build issues, install:
   ```bash
   # Ubuntu/Debian
@@ -191,6 +195,22 @@ prompt_format = "🚀 $USER@$HOSTNAME\n$PWD ❯ "
 - Some placeholder implementations in test suite
 - Limited cross-platform testing
 - Advanced UI features still in development (see roadmap)
+
+### Interactive Programs (TUI Applications)
+
+MosaicTerm uses a **block-based command history** model that works great for standard CLI commands, but has limitations with full-screen interactive (TUI) applications like `vim`, `htop`, `nano`, `less`, `tmux`, etc.
+
+**What happens**: These programs expect full terminal control and may display garbled output or escape sequences as text. MosaicTerm will show a warning when you attempt to run them.
+
+**If you accidentally run one**: Right-click the command block and select "Kill Process", or press **Ctrl+C** to terminate it.
+
+**Recommended alternatives**:
+- **Text editing**: Use external editors (`open file.txt` on macOS, `xdg-open file.txt` on Linux)
+- **File viewing**: Use `cat`, `bat`, `head`, `tail` instead of `less`/`more`
+- **System monitoring**: Use `ps aux` instead of `htop`/`top`
+- **Git operations**: Use `git log`, `git status`, `git diff` instead of `tig`/`gitui`
+
+For full-screen interactive programs, use a traditional terminal emulator. Support for interactive programs is planned for a future release.
 
 ## 🗺️ Roadmap
 
@@ -324,10 +344,12 @@ MosaicTerm uses GitHub Actions for automated code quality checks. The following 
 - `src/`: Main application code
 - `tests/`: Test suites (unit, integration, contract)
 - `benches/`: Performance benchmarks
-- `docs/`: Documentation (planned)
+- `docs/`: Documentation (architecture, guides)
 
 ## 📚 Documentation
 
+- **[Architecture Guide](docs/ARCHITECTURE.md)**: System architecture and design patterns
+- **[Custom Prompt Guide](docs/CUSTOM_PROMPT.md)**: How to customize your command prompt
 - **[Specification](specs/001-mosaicterm-terminal-emulator/spec.md)**: Feature requirements and design
 - **[Implementation Plan](specs/001-mosaicterm-terminal-emulator/plan.md)**: Technical architecture
 - **[Tasks](specs/001-mosaicterm-terminal-emulator/tasks.md)**: Development roadmap
