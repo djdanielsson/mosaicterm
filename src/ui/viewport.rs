@@ -162,4 +162,35 @@ mod tests {
         viewport.scroll_to_bottom();
         assert_eq!(viewport.scroll_position(), 0.0);
     }
+
+    #[test]
+    fn test_viewport_with_config() {
+        let config = ViewportConfig {
+            background_color: egui::Color32::BLACK,
+            border_color: egui::Color32::WHITE,
+            border_width: 2.0,
+            padding: egui::Vec2::new(10.0, 10.0),
+            smooth_scrolling: false,
+            max_scroll_speed: 100.0,
+        };
+        
+        let viewport = TerminalViewport::with_config(config);
+        assert_eq!(viewport.config().background_color, egui::Color32::BLACK);
+        assert_eq!(viewport.config().border_width, 2.0);
+        assert!(!viewport.config().smooth_scrolling);
+    }
+
+    #[test]
+    fn test_viewport_config_mut() {
+        let mut viewport = TerminalViewport::new();
+        let config = viewport.config_mut();
+        config.border_width = 3.0;
+        assert_eq!(viewport.config().border_width, 3.0);
+    }
+
+    #[test]
+    fn test_viewport_dimensions() {
+        let viewport = TerminalViewport::new();
+        assert_eq!(viewport.dimensions(), egui::Vec2::ZERO);
+    }
 }

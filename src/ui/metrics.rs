@@ -257,3 +257,78 @@ fn color_for_success_rate(rate: f32) -> Color32 {
         Color32::RED
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_metrics_panel_creation() {
+        let panel = MetricsPanel::new();
+        assert!(!panel.is_visible());
+    }
+
+    #[test]
+    fn test_metrics_panel_visibility() {
+        let mut panel = MetricsPanel::new();
+        
+        assert!(!panel.is_visible());
+        
+        panel.set_visible(true);
+        assert!(panel.is_visible());
+        
+        panel.set_visible(false);
+        assert!(!panel.is_visible());
+    }
+
+    #[test]
+    fn test_metrics_panel_toggle() {
+        let mut panel = MetricsPanel::new();
+        
+        assert!(!panel.is_visible());
+        
+        panel.toggle();
+        assert!(panel.is_visible());
+        
+        panel.toggle();
+        assert!(!panel.is_visible());
+    }
+
+    #[test]
+    fn test_metrics_panel_default() {
+        let panel = MetricsPanel::default();
+        assert!(!panel.is_visible());
+    }
+
+    #[test]
+    fn test_format_bytes() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1024), "1.00 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.00 MB");
+        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.00 GB");
+        assert_eq!(format_bytes(1536), "1.50 KB");
+    }
+
+    #[test]
+    fn test_format_duration() {
+        assert_eq!(format_duration(Duration::from_secs(0)), "0s");
+        assert_eq!(format_duration(Duration::from_secs(30)), "30s");
+        assert_eq!(format_duration(Duration::from_secs(90)), "1m 30s");
+        assert_eq!(format_duration(Duration::from_secs(3661)), "1h 1m 1s");
+    }
+
+    #[test]
+    fn test_color_for_memory() {
+        assert_eq!(color_for_memory(50 * 1024 * 1024), Color32::GREEN);
+        assert_eq!(color_for_memory(200 * 1024 * 1024), Color32::YELLOW);
+        assert_eq!(color_for_memory(600 * 1024 * 1024), Color32::RED);
+    }
+
+    #[test]
+    fn test_color_for_success_rate() {
+        assert_eq!(color_for_success_rate(95.0), Color32::GREEN);
+        assert_eq!(color_for_success_rate(80.0), Color32::YELLOW);
+        assert_eq!(color_for_success_rate(50.0), Color32::RED);
+    }
+}

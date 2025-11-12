@@ -633,4 +633,122 @@ mod tests {
         assert!(!state.scrolling);
         assert!(state.scrollbar_visible);
     }
+
+    #[test]
+    fn test_scrollbar_config() {
+        let config = ScrollbarConfig::default();
+        assert_eq!(config.width, 12.0);
+        assert!(config.auto_hide);
+    }
+
+    #[test]
+    fn test_scrollable_history_with_config() {
+        let config = ScrollbarConfig {
+            width: 16.0,
+            background_color: egui::Color32::from_rgb(50, 50, 50),
+            handle_color: egui::Color32::from_rgb(100, 100, 100),
+            handle_hover_color: egui::Color32::from_rgb(120, 120, 120),
+            auto_hide: false,
+        };
+        
+        let history = ScrollableHistory::with_config(config);
+        assert_eq!(history.scrollbar_config.width, 16.0);
+        assert!(!history.scrollbar_config.auto_hide);
+    }
+
+    #[test]
+    fn test_scroll_clamping() {
+        let mut history = ScrollableHistory::new();
+        history.smooth_scrolling = false;
+        
+        // Test clamping to valid range
+        history.scroll_to(-0.5); // Should clamp to 0.0
+        assert_eq!(history.scroll_position, 0.0);
+        
+        history.scroll_to(1.5); // Should clamp to 1.0
+        assert_eq!(history.scroll_position, 1.0);
+    }
+
+    #[test]
+    fn test_animate_to_position() {
+        let mut history = ScrollableHistory::new();
+        
+        assert!(!history.is_animating);
+        history.animate_to_position(0.5);
+        assert!(history.is_animating);
+        assert_eq!(history.target_scroll_position, 0.5);
+        assert_eq!(history.animation_time, 0.0);
+    }
+
+    #[test]
+    fn test_handle_mouse_wheel() {
+        let mut history = ScrollableHistory::new();
+        history.smooth_scrolling = false;
+        history.total_height = 1000.0;
+        
+        let initial_pos = history.scroll_position;
+        history.handle_mouse_wheel(egui::Vec2::new(0.0, 10.0));
+        assert_ne!(history.scroll_position, initial_pos);
+    }
+
+    #[test]
+    fn test_set_viewport_height() {
+        let mut history = ScrollableHistory::new();
+        history.set_viewport_height(500.0);
+        assert_eq!(history.viewport_height, 500.0);
+    }
+
+    #[test]
+    fn test_set_smooth_scrolling() {
+        let mut history = ScrollableHistory::new();
+        assert!(history.smooth_scrolling);
+        
+        history.set_smooth_scrolling(false);
+        assert!(!history.smooth_scrolling);
+        
+        history.set_smooth_scrolling(true);
+        assert!(history.smooth_scrolling);
+    }
+
+    #[test]
+    fn test_set_scrollbar_config() {
+        let mut history = ScrollableHistory::new();
+        let new_config = ScrollbarConfig {
+            width: 20.0,
+            background_color: egui::Color32::BLACK,
+            handle_color: egui::Color32::WHITE,
+            handle_hover_color: egui::Color32::GRAY,
+            auto_hide: false,
+        };
+        
+        history.set_scrollbar_config(new_config);
+        assert_eq!(history.scrollbar_config.width, 20.0);
+        assert_eq!(history.scrollbar_config.background_color, egui::Color32::BLACK);
+    }
+
+    #[test]
+    fn test_needs_scrollbar() {
+        let mut history = ScrollableHistory::new();
+        
+        // No scrollbar needed when content fits
+        history.total_height = 100.0;
+        history.viewport_height = 200.0;
+        assert!(!history.needs_scrollbar());
+        
+        // Scrollbar needed when content exceeds viewport
+        history.total_height = 1000.0;
+        history.viewport_height = 100.0;
+        assert!(history.needs_scrollbar());
+    }
+
+    #[test]
+    fn test_scroll_momentum_decay() {
+        let mut history = ScrollableHistory::new();
+        history.smooth_scrolling = true;
+        history.scroll_momentum = 10.0;
+        
+        // Update animation should decay momentum
+        history.update_scroll_animation(0.1);
+        assert!(history.scroll_momentum < 10.0);
+    }
 }

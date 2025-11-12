@@ -336,3 +336,250 @@ impl From<&str> for Error {
         Error::Other(err.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    #[test]
+    fn test_error_display_pty_errors() {
+        let err = Error::PtyCreationFailed {
+            command: "test".to_string(),
+            reason: "failed".to_string(),
+        };
+        assert!(err.to_string().contains("test"));
+        assert!(err.to_string().contains("failed"));
+
+        let err = Error::PtyHandleNotFound {
+            handle_id: "123".to_string(),
+        };
+        assert!(err.to_string().contains("123"));
+
+        let err = Error::InvalidPtyHandle;
+        assert!(err.to_string().contains("Invalid"));
+    }
+
+    #[test]
+    fn test_error_display_command_errors() {
+        let err = Error::CommandNotFound {
+            command: "missing".to_string(),
+        };
+        assert!(err.to_string().contains("missing"));
+        assert!(err.to_string().contains("PATH"));
+
+        let err = Error::CommandTimeout {
+            command: "slow".to_string(),
+            duration: Duration::from_secs(30),
+        };
+        assert!(err.to_string().contains("slow"));
+        assert!(err.to_string().contains("30"));
+
+        let err = Error::EmptyCommand;
+        assert!(err.to_string().contains("empty"));
+
+        let err = Error::NoPreviousCommand;
+        assert!(err.to_string().contains("previous"));
+    }
+
+    #[test]
+    fn test_error_display_config_errors() {
+        let err = Error::ConfigLoadFailed {
+            path: PathBuf::from("/test/config.toml"),
+            reason: "permission denied".to_string(),
+        };
+        assert!(err.to_string().contains("config.toml"));
+        assert!(err.to_string().contains("permission denied"));
+
+        let err = Error::ThemeNotFound {
+            theme_name: "dark".to_string(),
+        };
+        assert!(err.to_string().contains("dark"));
+
+        let err = Error::CannotRemoveBuiltInTheme {
+            theme_name: "default".to_string(),
+        };
+        assert!(err.to_string().contains("default"));
+        assert!(err.to_string().contains("built-in"));
+    }
+
+    #[test]
+    fn test_error_from_io() {
+        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let err: Error = io_err.into();
+        match err {
+            Error::Io(_) => {}
+            _ => panic!("Expected Io error"),
+        }
+    }
+
+    #[test]
+    fn test_error_from_string() {
+        let err: Error = "test error".to_string().into();
+        match err {
+            Error::Other(msg) => assert_eq!(msg, "test error"),
+            _ => panic!("Expected Other error"),
+        }
+    }
+
+    #[test]
+    fn test_error_from_str() {
+        let err: Error = "test error".into();
+        match err {
+            Error::Other(msg) => assert_eq!(msg, "test error"),
+            _ => panic!("Expected Other error"),
+        }
+    }
+
+    #[test]
+    fn test_error_from_serde_json() {
+        let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
+        let err: Error = json_err.into();
+        match err {
+            Error::Serde(_) => {}
+            _ => panic!("Expected Serde error"),
+        }
+    }
+
+    #[test]
+    fn test_error_from_toml() {
+        let toml_err = toml::from_str::<toml::Value>("invalid = toml").unwrap_err();
+        let err: Error = toml_err.into();
+        match err {
+            Error::Toml(_) => {}
+            _ => panic!("Expected Toml error"),
+        }
+    }
+
+    #[test]
+    fn test_error_from_regex() {
+        let regex_err = regex::Regex::new("[").unwrap_err();
+        let err: Error = regex_err.into();
+        match err {
+            Error::Regex(_) => {}
+            _ => panic!("Expected Regex error"),
+        }
+    }
+
+    #[test]
+    fn test_error_from_anyhow() {
+        let anyhow_err = anyhow::anyhow!("test error");
+        let err: Error = anyhow_err.into();
+        match err {
+            Error::Other(msg) => assert_eq!(msg, "test error"),
+            _ => panic!("Expected Other error"),
+        }
+    }
+
+    #[test]
+    fn test_error_from_box_dyn_error() {
+        let box_err: Box<dyn std::error::Error> = Box::new(io::Error::new(
+            io::ErrorKind::Other,
+            "boxed error",
+        ));
+        let err: Error = box_err.into();
+        match err {
+            Error::Other(msg) => assert!(msg.contains("boxed error")),
+            _ => panic!("Expected Other error"),
+        }
+    }
+
+    #[test]
+    fn test_error_std_error_trait() {
+        let err = Error::Other("test".to_string());
+        // Verify Error trait is implemented
+        let _: &dyn std::error::Error = &err;
+    }
+
+    #[test]
+    fn test_all_error_variants_display() {
+        // Test that all error variants can be displayed
+        let errors = vec![
+            Error::PtyCreationFailed {
+                command: "cmd".to_string(),
+                reason: "reason".to_string(),
+            },
+            Error::CommandSpawnFailed {
+                command: "cmd".to_string(),
+                reason: "reason".to_string(),
+            },
+            Error::PtyReaderCloneFailed {
+                reason: "reason".to_string(),
+            },
+            Error::PtyWriterTakeFailed {
+                reason: "reason".to_string(),
+            },
+            Error::PtyInputSendFailed {
+                reason: "reason".to_string(),
+            },
+            Error::PtyReadFailed {
+                reason: "reason".to_string(),
+            },
+            Error::ProcessNotRegistered {
+                handle_id: "id".to_string(),
+            },
+            Error::SignalSendFailed {
+                signal: "SIGINT".to_string(),
+                reason: "reason".to_string(),
+            },
+            Error::SignalNotSupported {
+                signal: "SIGINT".to_string(),
+                platform: "windows".to_string(),
+            },
+            Error::NoPidAvailable {
+                handle_id: "id".to_string(),
+            },
+            Error::CommandValidationFailed {
+                command: "cmd".to_string(),
+                reason: "reason".to_string(),
+            },
+            Error::ConfigSaveFailed {
+                path: PathBuf::from("/test"),
+                reason: "reason".to_string(),
+            },
+            Error::ConfigWatchFailed {
+                reason: "reason".to_string(),
+            },
+            Error::ConfigValidationFailed {
+                field: "field".to_string(),
+                reason: "reason".to_string(),
+            },
+            Error::ConfigSerializationFailed {
+                format: "toml".to_string(),
+                reason: "reason".to_string(),
+            },
+            Error::ConfigParseFailed {
+                format: "toml".to_string(),
+                reason: "reason".to_string(),
+            },
+            Error::ShellConfigNotFound {
+                shell_type: "bash".to_string(),
+            },
+            Error::ThemeAlreadyExists {
+                theme_name: "theme".to_string(),
+            },
+            Error::ThemeExportFailed {
+                theme_name: "theme".to_string(),
+                reason: "reason".to_string(),
+            },
+            Error::ThemeImportFailed {
+                reason: "reason".to_string(),
+            },
+            Error::UnknownComponent {
+                component: "comp".to_string(),
+            },
+            Error::UnknownColorScheme {
+                scheme: "scheme".to_string(),
+            },
+            Error::OutputBufferFull {
+                command: "cmd".to_string(),
+                size: 1000,
+            },
+        ];
+
+        for err in errors {
+            let display = err.to_string();
+            assert!(!display.is_empty(), "Error display should not be empty");
+        }
+    }
+}

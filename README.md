@@ -24,11 +24,9 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 ### Prerequisites
 
 - **Rust**: 1.90+ stable toolchain
-- **macOS**: 14.0+ (primary platform)
-- **Linux**: Most modern distributions (Ubuntu 20.04+, Fedora 34+, Debian 11+, etc.)
-- **Dependencies**: 
-  - **Shell**: bash, zsh, or fish
-  - **Optional**: fzf, eza, bat, rg, fd, jq (for enhanced CLI experience)
+- **macOS**: 14.0+ (fully supported) or **Linux** (Ubuntu 20.04+, Fedora 34+, Debian 11+, or similar)
+- **Shell**: bash, zsh, or fish
+- **Optional**: fzf, eza, bat, rg, fd, jq (for enhanced CLI experience)
 
 ### Installation
 
@@ -48,25 +46,7 @@ cargo run --release
 3. Press Enter to execute - output appears in a new block above
 4. Scroll through command history while keeping the input prompt always visible
 
-## 📋 Requirements
-
-### System Requirements
-- **Operating System**: 
-  - macOS 14.0+ (fully supported)
-  - Linux (Ubuntu 20.04+, Fedora 34+, Debian 11+, or similar)
-  - Windows (experimental)
-- **Memory**: 200MB RAM minimum
-- **Storage**: 50MB disk space
-- **Display**: X11 or Wayland (Linux), requires GUI environment
-
-### CLI Tool Integration
-MosaicTerm works best with modern CLI tools:
-- **Shell**: bash, zsh (with Oh My Zsh), or fish
-- **Search**: fzf, rg (ripgrep), fd
-- **Display**: bat (syntax highlighting), eza (modern ls)
-- **Processing**: jq (JSON), various development tools
-
-### Linux-Specific Notes
+## 📋 Linux-Specific Notes
 - **Config Location**: Uses XDG Base Directory specification
   - Primary: `$XDG_CONFIG_HOME/mosaicterm/config.toml` (defaults to `~/.config/mosaicterm/config.toml`)
   - Fallback: `~/.mosaicterm/config.toml`
@@ -155,46 +135,14 @@ buffer_size = 1048576
 
 ### Custom Prompts
 
-MosaicTerm allows you to fully customize your command prompt with variable substitution:
-
-```toml
-[terminal]
-# Standard Unix-style
-prompt_format = "$USER@$HOSTNAME:$PWD$ "
-
-# Minimalist
-prompt_format = "$PWD > "
-
-# Multi-line with emoji
-prompt_format = "🚀 $USER@$HOSTNAME\n$PWD ❯ "
-```
-
-**Supported Variables:**
-- `$USER` - Current username
-- `$HOSTNAME` - System hostname
-- `$PWD` - Current working directory (with ~ for home)
-- `$HOME` - Home directory path
-- `$SHELL` - Current shell path
-
-📖 **[Full Custom Prompt Documentation](docs/CUSTOM_PROMPT.md)**
+MosaicTerm supports fully customizable prompts with variable substitution (`$USER`, `$HOSTNAME`, `$PWD`, etc.). See the **[Custom Prompt Guide](docs/CUSTOM_PROMPT.md)** for details and examples.
 
 ### Environment Variables
 
 - `MOSAICTERM_CONFIG`: Override default config path
 - `MOSAICTERM_LOG`: Set logging level (`error`, `warn`, `info`, `debug`, `trace`)
 
-## 🎯 Current Limitations
-
-### MVP Scope (Phase 4 - Active Development)
-- **Platform**: macOS 14+ (fully supported), Linux (supported), Windows (experimental)
-- **Shell**: bash, zsh, fish with basic integration (advanced plugin features developing)
-- **Features**: Core terminal functionality complete, advanced UI polish in progress
-- **Performance**: Target <16ms frame time, <200MB memory usage
-
-### Known Issues
-- Some placeholder implementations in test suite
-- Limited cross-platform testing
-- Advanced UI features still in development (see roadmap)
+## 🎯 Limitations
 
 ### Interactive Programs (TUI Applications)
 
@@ -289,30 +237,11 @@ cargo doc --open
 
 ### Releases
 
-MosaicTerm uses GitHub Actions for automated releases. To create a new release:
-
-1. **Update version** in `Cargo.toml`:
-   ```toml
-   version = "0.2.0"
-   ```
-
-2. **Create and push a version tag**:
-   ```bash
-   git tag v0.2.0
-   git push origin v0.2.0
-   ```
-
-3. **GitHub Actions will automatically**:
-   - Build binaries for Linux, macOS, and Windows
-   - Run the full test suite
-   - Create a GitHub release with downloadable binaries
-   - Generate release notes
-
-Alternatively, you can trigger a release manually from the [Actions tab](https://github.com/djdanielsson/mosaicterm/actions) by running the "Release" workflow.
+Releases are automated via GitHub Actions. Create a version tag (e.g., `v0.2.0`) and push it to trigger automated builds for all platforms.
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions! 
 
 ### Development Setup
 
@@ -355,14 +284,9 @@ MosaicTerm uses GitHub Actions for automated code quality checks. The following 
 - **[Tasks](specs/001-mosaicterm-terminal-emulator/tasks.md)**: Development roadmap
 - **[Contracts](specs/001-mosaicterm-terminal-emulator/contracts/)**: API specifications
 
-## 🐛 Issue Tracking
+## 🐛 Issues & Support
 
-Found a bug or have a feature request? Please [open an issue](https://github.com/djdanielsson/mosaicterm/issues) with:
-
-- Clear description of the issue
-- Steps to reproduce (if applicable)
-- Expected vs. actual behavior
-- System information (OS, Rust version)
+Found a bug or have a feature request? Please [open an issue](https://github.com/djdanielsson/mosaicterm/issues) or start a [discussion](https://github.com/djdanielsson/mosaicterm/discussions).
 
 ## 📄 License
 
@@ -374,11 +298,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Alacritty**: Terminal emulation techniques and ANSI handling
 - **WezTerm**: Cross-platform PTY management patterns
 - **egui**: Modern immediate mode GUI framework
-
-## 📞 Contact
-
-- **Issues**: [GitHub Issues](https://github.com/djdanielsson/mosaicterm/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/djdanielsson/mosaicterm/discussions)
 
 ---
 

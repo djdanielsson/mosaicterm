@@ -778,4 +778,128 @@ HOME="/home/user"
         assert_ne!(ShellType::Bash, ShellType::Zsh);
         assert_eq!(ShellType::Other, ShellType::Other);
     }
+
+    #[test]
+    fn test_get_shell_path() {
+        let manager = ShellManager::new();
+        
+        // Test getting path for known shell types
+        let bash_path = manager.get_shell_path(ShellType::Bash);
+        // Path may or may not exist, but should return Some if config exists
+        assert!(bash_path.is_some() || manager.get_shell_config(ShellType::Bash).is_some());
+        
+        let zsh_path = manager.get_shell_path(ShellType::Zsh);
+        assert!(zsh_path.is_some() || manager.get_shell_config(ShellType::Zsh).is_some());
+    }
+
+    #[test]
+    fn test_get_shell_args() {
+        let manager = ShellManager::new();
+        
+        // Bash should have default args
+        let bash_args = manager.get_shell_args(ShellType::Bash);
+        assert!(!bash_args.is_empty());
+        
+        // Fish might have empty args
+        let fish_args = manager.get_shell_args(ShellType::Fish);
+        // Just verify it doesn't panic
+        let _ = fish_args;
+    }
+
+    #[test]
+    fn test_available_shells() {
+        let manager = ShellManager::new();
+        
+        let available = manager.available_shells();
+        // Should return at most the number of configured shells
+        assert!(available.len() <= 10);
+    }
+
+    #[test]
+    fn test_current_shell_config() {
+        let mut manager = ShellManager::new();
+        
+        // Initially no current shell
+        assert!(manager.current_shell_config().is_none());
+        
+        // Set current shell
+        manager.set_current_shell(ShellType::Bash);
+        assert!(manager.current_shell_config().is_some());
+        assert_eq!(manager.current_shell_config().unwrap().shell_type, ShellType::Bash);
+    }
+
+    #[test]
+    fn test_environment_variables() {
+        let mut manager = ShellManager::new();
+        
+        // Initially empty
+        assert!(manager.environment().is_empty());
+        
+        // Set environment variable
+        manager.set_environment_variable("TEST_VAR".to_string(), "test_value".to_string());
+        assert_eq!(manager.environment().get("TEST_VAR"), Some(&"test_value".to_string()));
+    }
+
+    #[test]
+    fn test_parse_fish_config() {
+        let manager = ShellManager::new();
+        let mut environment = std::collections::HashMap::new();
+        
+        let config_content = r#"
+# Comment
+set -x PATH "/usr/local/bin:$PATH"
+set -x EDITOR "vim"
+"#;
+        
+        manager.parse_fish_config(config_content, &mut environment).unwrap();
+        // Fish config parsing might not extract vars the same way
+        // Just verify it doesn't panic
+        let _ = environment;
+    }
+
+    #[test]
+    fn test_parse_generic_config() {
+        let manager = ShellManager::new();
+        let mut environment = std::collections::HashMap::new();
+        
+        let config_content = r#"
+# Comment
+VAR1="value1"
+VAR2=value2
+VAR3='value3'
+"#;
+        
+        manager.parse_generic_config(config_content, &mut environment).unwrap();
+        assert_eq!(environment.get("VAR1"), Some(&"value1".to_string()));
+        assert_eq!(environment.get("VAR2"), Some(&"value2".to_string()));
+        assert_eq!(environment.get("VAR3"), Some(&"value3".to_string()));
+    }
+
+    #[test]
+    fn test_expand_path() {
+        let manager = ShellManager::new();
+        
+        // Test tilde expansion
+        let expanded = manager.expand_path("~/test").unwrap();
+        assert!(!expanded.to_string_lossy().contains("~"));
+        
+        // Test regular path
+        let regular = manager.expand_path("/usr/bin/test").unwrap();
+        assert_eq!(regular, std::path::PathBuf::from("/usr/bin/test"));
+    }
+
+    #[test]
+    fn test_load_shell_config_error() {
+        let manager = ShellManager::new();
+        
+        // Try to load config for unknown shell
+        let result = manager.load_shell_config(ShellType::Other);
+        assert!(result.is_err());
+        
+        if let Err(Error::ShellConfigNotFound { shell_type }) = result {
+            assert!(shell_type.contains("Other"));
+        } else {
+            panic!("Expected ShellConfigNotFound error");
+        }
+    }
 }

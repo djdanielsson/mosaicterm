@@ -186,7 +186,7 @@ pub enum FontWeight {
     Black = 900,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum FontStyle {
     Normal,
     Italic,
@@ -1296,5 +1296,250 @@ mod tests {
         assert_eq!(FontWeight::Bold as u32, 700);
         assert_eq!(FontWeight::Thin as u32, 100);
         assert_eq!(FontWeight::Black as u32, 900);
+    }
+
+    #[test]
+    fn test_list_themes() {
+        let manager = ThemeManager::new();
+        let themes = manager.list_themes();
+        
+        assert!(themes.contains(&"default-dark"));
+        assert!(themes.contains(&"default-light"));
+        assert!(themes.contains(&"high-contrast"));
+        assert_eq!(themes.len(), 3);
+    }
+
+    #[test]
+    fn test_remove_theme() {
+        let mut manager = ThemeManager::new();
+        
+        // Cannot remove built-in themes
+        assert!(manager.remove_theme("default-dark").is_err());
+        assert!(manager.remove_theme("default-light").is_err());
+        
+        // Add custom theme
+        let custom_theme = create_test_theme("custom-test");
+        manager.add_theme(custom_theme).unwrap();
+        
+        // Can remove custom theme
+        assert!(manager.remove_theme("custom-test").is_ok());
+        assert!(!manager.list_themes().contains(&"custom-test"));
+    }
+
+    #[test]
+    fn test_remove_current_theme_switches_to_default() {
+        let mut manager = ThemeManager::new();
+        
+        // Add and set custom theme
+        let custom_theme = create_test_theme("custom-current");
+        manager.add_theme(custom_theme).unwrap();
+        manager.set_theme("custom-current").unwrap();
+        
+        // Remove it - should switch to default-dark
+        manager.remove_theme("custom-current").unwrap();
+        assert_eq!(manager.current_theme().unwrap().name, "Default Dark");
+    }
+
+    #[test]
+    fn test_add_duplicate_theme() {
+        let mut manager = ThemeManager::new();
+        
+        let custom_theme = create_test_theme("duplicate");
+        manager.add_theme(custom_theme.clone()).unwrap();
+        
+        // Try to add again
+        assert!(manager.add_theme(custom_theme).is_err());
+    }
+
+    #[test]
+    fn test_apply_color_schemes() {
+        let mut manager = ThemeManager::new();
+        
+        // Test all color schemes
+        assert!(manager.apply_color_scheme("monokai").is_ok());
+        assert!(manager.apply_color_scheme("solarized_dark").is_ok());
+        assert!(manager.apply_color_scheme("solarized_light").is_ok());
+        assert!(manager.apply_color_scheme("dracula").is_ok());
+        assert!(manager.apply_color_scheme("nord").is_ok());
+        
+        // Unknown scheme
+        assert!(manager.apply_color_scheme("unknown").is_err());
+    }
+
+    #[test]
+    fn test_get_component_colors() {
+        let manager = ThemeManager::new();
+        
+        // Test known components
+        assert!(manager.get_component_colors("command_block").is_ok());
+        assert!(manager.get_component_colors("input_prompt").is_ok());
+        assert!(manager.get_component_colors("status_bar").is_ok());
+        
+        // Unknown component
+        assert!(manager.get_component_colors("unknown_component").is_err());
+    }
+
+    #[test]
+    fn test_color_utilities() {
+        let white = Color::from_rgb(255, 255, 255);
+        let black = Color::from_rgb(0, 0, 0);
+        
+        // Test contrast ratio
+        let ratio = utils::contrast_ratio(&white, &black);
+        assert!(ratio > 0.0);
+        
+        // Test is_light
+        assert!(utils::is_light(&white));
+        assert!(!utils::is_light(&black));
+        
+        // Test complementary color
+        let comp = utils::complementary_color(&white);
+        assert_eq!(comp.r, 0.0);
+        assert_eq!(comp.g, 0.0);
+        assert_eq!(comp.b, 0.0);
+        
+        // Test adjust brightness
+        let gray = Color::from_rgb(128, 128, 128);
+        let brighter = utils::adjust_brightness(&gray, 1.5);
+        assert!(brighter.r > gray.r);
+        
+        // Test blend colors
+        let blended = utils::blend_colors(&white, &black, 0.5);
+        assert_eq!(blended.r, 0.5);
+        assert_eq!(blended.g, 0.5);
+        assert_eq!(blended.b, 0.5);
+    }
+
+    #[test]
+    fn test_color_from_rgba() {
+        let color = Color::from_rgba(255, 128, 64, 200);
+        assert_eq!(color.r, 1.0);
+        assert_eq!(color.g, 128.0 / 255.0);
+        assert_eq!(color.b, 64.0 / 255.0);
+        assert_eq!(color.a, 200.0 / 255.0);
+    }
+
+    #[test]
+    fn test_color_to_egui() {
+        let color = Color::from_rgb(255, 128, 64);
+        let egui_color = color.to_egui();
+        
+        // Verify conversion
+        assert_eq!(egui_color.r(), 255);
+        assert_eq!(egui_color.g(), 128);
+        assert_eq!(egui_color.b(), 64);
+    }
+
+    #[test]
+    fn test_system_theme() {
+        let mut manager = ThemeManager::new();
+        
+        // Test system theme getter/setter
+        manager.set_system_theme(SystemTheme::Light);
+        assert_eq!(manager.system_theme(), SystemTheme::Light);
+        
+        manager.set_system_theme(SystemTheme::Dark);
+        assert_eq!(manager.system_theme(), SystemTheme::Dark);
+        
+        // Test apply system theme
+        manager.set_system_theme(SystemTheme::Light);
+        manager.apply_system_theme();
+        assert_eq!(manager.current_theme().unwrap().name, "Default Light");
+    }
+
+    #[test]
+    fn test_font_style_equality() {
+        assert_eq!(FontStyle::Normal, FontStyle::Normal);
+        assert_eq!(FontStyle::Italic, FontStyle::Italic);
+        assert_eq!(FontStyle::Oblique, FontStyle::Oblique);
+        assert_ne!(FontStyle::Normal, FontStyle::Italic);
+    }
+
+    // Helper function to create a test theme
+    fn create_test_theme(name: &str) -> Theme {
+        Theme {
+            name: name.to_string(),
+            description: "Test theme".to_string(),
+            author: Some("Test".to_string()),
+            version: "1.0.0".to_string(),
+            colors: ColorPalette {
+                background: BackgroundColors {
+                    primary: Color::from_rgb(255, 255, 255),
+                    secondary: Color::from_rgb(240, 240, 240),
+                    tertiary: Color::from_rgb(220, 220, 220),
+                    hover: Color::from_rgb(200, 200, 200),
+                    selected: Color::from_rgb(180, 180, 180),
+                },
+                text: TextColors {
+                    primary: Color::from_rgb(0, 0, 0),
+                    secondary: Color::from_rgb(64, 64, 64),
+                    tertiary: Color::from_rgb(128, 128, 128),
+                    muted: Color::from_rgb(160, 160, 160),
+                    error: Color::from_rgb(220, 53, 69),
+                    success: Color::from_rgb(40, 167, 69),
+                    warning: Color::from_rgb(255, 193, 7),
+                },
+                accent: AccentColors {
+                    primary: Color::from_rgb(0, 123, 255),
+                    secondary: Color::from_rgb(108, 117, 125),
+                    tertiary: Color::from_rgb(52, 58, 64),
+                    link: Color::from_rgb(0, 123, 255),
+                    border: Color::from_rgb(200, 200, 200),
+                },
+                status: StatusColors {
+                    success: Color::from_rgb(40, 167, 69),
+                    error: Color::from_rgb(220, 53, 69),
+                    warning: Color::from_rgb(255, 193, 7),
+                    info: Color::from_rgb(23, 162, 184),
+                    running: Color::from_rgb(111, 66, 193),
+                },
+                ansi_colors: AnsiColorPalette {
+                    black: Color::from_rgb(0, 0, 0),
+                    red: Color::from_rgb(195, 39, 43),
+                    green: Color::from_rgb(40, 174, 96),
+                    yellow: Color::from_rgb(224, 147, 0),
+                    blue: Color::from_rgb(66, 113, 174),
+                    magenta: Color::from_rgb(170, 60, 135),
+                    cyan: Color::from_rgb(0, 163, 181),
+                    white: Color::from_rgb(36, 36, 36),
+                    bright_black: Color::from_rgb(102, 102, 102),
+                    bright_red: Color::from_rgb(237, 85, 59),
+                    bright_green: Color::from_rgb(0, 188, 120),
+                    bright_yellow: Color::from_rgb(244, 191, 117),
+                    bright_blue: Color::from_rgb(59, 142, 234),
+                    bright_magenta: Color::from_rgb(214, 112, 214),
+                    bright_cyan: Color::from_rgb(41, 184, 219),
+                    bright_white: Color::from_rgb(0, 0, 0),
+                },
+            },
+            typography: Typography {
+                terminal_font: FontFamily {
+                    name: "JetBrains Mono".to_string(),
+                    weight: FontWeight::Normal,
+                    style: FontStyle::Normal,
+                },
+                ui_font: FontFamily {
+                    name: "Inter".to_string(),
+                    weight: FontWeight::Normal,
+                    style: FontStyle::Normal,
+                },
+                terminal_size: 12.0,
+                ui_size: 14.0,
+                heading_size: 18.0,
+                line_height: 1.4,
+            },
+            styles: UiStyles {
+                border_radius: 6.0,
+                border_width: 1.0,
+                padding: Padding {
+                    top: 8.0,
+                    right: 12.0,
+                    bottom: 8.0,
+                    left: 12.0,
+                },
+                spacing: 8.0,
+                shadow: None,
+            },
+        }
     }
 }
