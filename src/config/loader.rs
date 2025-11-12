@@ -220,18 +220,31 @@ impl ConfigLoader {
     fn get_search_paths() -> Vec<PathBuf> {
         let mut paths = Vec::new();
 
-        // User config directory
+        // XDG config home (Linux) - prioritize this on Linux
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(xdg_config) = env::var("XDG_CONFIG_HOME") {
+                let xdg_path = PathBuf::from(&xdg_config);
+                paths.push(xdg_path.join("mosaicterm"));
+                paths.push(xdg_path.join("mosaicterm").join("config"));
+            }
+        }
+
+        // User config directory (uses XDG_CONFIG_HOME on Linux if set, otherwise ~/.config)
         if let Some(user_config) = dirs::config_dir() {
             paths.push(user_config.join("mosaicterm"));
             paths.push(user_config.join("mosaicterm").join("config"));
         }
 
-        // XDG config home (Linux)
-        if let Ok(xdg_config) = env::var("XDG_CONFIG_HOME") {
-            paths.push(PathBuf::from(xdg_config).join("mosaicterm"));
+        // XDG config home fallback (non-Linux platforms that might set it)
+        #[cfg(not(target_os = "linux"))]
+        {
+            if let Ok(xdg_config) = env::var("XDG_CONFIG_HOME") {
+                paths.push(PathBuf::from(xdg_config).join("mosaicterm"));
+            }
         }
 
-        // Home directory
+        // Home directory fallbacks
         if let Some(home) = dirs::home_dir() {
             paths.push(home.join(".mosaicterm"));
             paths.push(home.join(".config").join("mosaicterm"));

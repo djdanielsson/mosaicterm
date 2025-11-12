@@ -155,14 +155,14 @@ impl TuiOverlay {
     /// Process text with ANSI escape sequences and update screen buffer
     fn process_ansi_text(&mut self, text: &str) {
         let mut chars = text.chars().peekable();
-        
+
         while let Some(ch) = chars.next() {
             if ch == '\x1b' {
                 // ANSI escape sequence
                 if chars.peek() == Some(&'[') {
                     chars.next(); // consume '['
                     let mut params = String::new();
-                    
+
                     // Collect parameters
                     while let Some(&next_ch) = chars.peek() {
                         if next_ch.is_ascii_digit() || next_ch == ';' || next_ch == '?' {
@@ -172,7 +172,7 @@ impl TuiOverlay {
                             break;
                         }
                     }
-                    
+
                     // Get command character
                     if let Some(cmd) = chars.next() {
                         self.handle_ansi_command(&params, cmd);
@@ -239,20 +239,19 @@ impl TuiOverlay {
         }
 
         let mut should_close = false;
-
-        // Request focus for the window to capture keyboard input
-        ctx.memory_mut(|mem| {
-            mem.request_focus(egui::Id::new("tui_overlay_window"));
-        });
+        let window_id = egui::Id::new("tui_overlay_window");
 
         // Fullscreen modal window
+        // Use default_open to ensure window is shown, but avoid aggressive focus requests
+        // that can cause accesskit assertion failures on Linux
         egui::Window::new("TUI Application")
-            .id(egui::Id::new("tui_overlay_window"))
+            .id(window_id)
             .title_bar(true)
             .resizable(false)
             .collapsible(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .fixed_size(ctx.available_rect().size() * 0.95) // 95% of available space
+            .default_open(true)
             .show(ctx, |ui| {
                 // Show command in header
                 if let Some(cmd) = &self.command {
@@ -281,7 +280,7 @@ impl TuiOverlay {
 
                         // Display the virtual screen buffer
                         let screen_text = self.screen_buffer.render_to_string();
-                        
+
                         ui.add(
                             egui::TextEdit::multiline(&mut screen_text.as_ref())
                                 .font(egui::TextStyle::Monospace)

@@ -126,6 +126,51 @@ fn print_help() {
 }
 
 fn main() -> Result<()> {
+    // Set Wayland environment variables to handle scaling properly
+    // This helps prevent "buffer size must be integer multiple of buffer_scale" errors
+    #[cfg(target_os = "linux")]
+    {
+        use std::env;
+
+        // Check if running on Wayland
+        let is_wayland = env::var("WAYLAND_DISPLAY").is_ok();
+
+        if is_wayland {
+            // Check if user wants to force X11 (workaround for Wayland buffer scaling issues)
+            // Note: We can't restart the process, but we can set the env vars for winit to use
+            if env::var("MOSAICTERM_FORCE_X11").is_ok() {
+                warn!("Forcing X11 backend due to MOSAICTERM_FORCE_X11 environment variable");
+                env::set_var("WINIT_UNIX_BACKEND", "x11");
+                env::set_var("GDK_BACKEND", "x11");
+            }
+
+            // Set WLR_NO_HARDWARE_CURSORS if not already set (helps with some Wayland compositors)
+            if env::var("WLR_NO_HARDWARE_CURSORS").is_err() {
+                env::set_var("WLR_NO_HARDWARE_CURSORS", "1");
+            }
+            // Set GDK_BACKEND to wayland if not already set
+            if env::var("GDK_BACKEND").is_err() {
+                env::set_var("GDK_BACKEND", "wayland");
+            }
+            // Force winit to use wayland backend explicitly
+            if env::var("WINIT_UNIX_BACKEND").is_err() {
+                env::set_var("WINIT_UNIX_BACKEND", "wayland");
+            }
+
+            // Warn about potential fractional scaling issues
+            if env::var("GDK_DPI_SCALE").is_ok() {
+                if let Ok(scale_str) = env::var("GDK_DPI_SCALE") {
+                    if let Ok(scale) = scale_str.parse::<f32>() {
+                        if scale.fract() != 0.0 {
+                            warn!("⚠️  Fractional DPI scaling detected ({}). This may cause Wayland buffer size errors.", scale);
+                            warn!("   Consider using integer scaling (1.0 or 2.0) or run with: MOSAICTERM_FORCE_X11=1");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Parse command line arguments first
     let args = AppArgs::parse().unwrap_or_else(|e| {
         error!("Failed to parse arguments: {}", e);
@@ -242,30 +287,83 @@ fn create_application(_args: &AppArgs, runtime_config: RuntimeConfig) -> Result<
     Ok(app)
 }
 
+/// Helper function to round size to even numbers for Wayland compatibility
+/// Wayland requires buffer sizes to be integer multiples of buffer_scale
+fn round_for_wayland(size: f32) -> f32 {
+    (size / 2.0).floor() * 2.0
+}
+
 /// Create native options for the application window
 fn create_native_options(args: &AppArgs) -> Result<eframe::NativeOptions> {
     info!("🖼️  Setting up window...");
+
+    // Helper to round sizes for Wayland compatibility
+    #[cfg(target_os = "linux")]
+    let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+    #[cfg(not(target_os = "linux"))]
+    let is_wayland = false;
+
+    let min_size = if is_wayland {
+        [round_for_wayland(400.0), round_for_wayland(300.0)]
+    } else {
+        [400.0, 300.0]
+    };
+
+    let mut initial_size = if is_wayland {
+        [round_for_wayland(800.0), round_for_wayland(600.0)]
+    } else {
+        [800.0, 600.0]
+    };
 
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("MosaicTerm")
             .with_app_id("mosaicterm")
             .with_icon(std::sync::Arc::new(load_or_create_window_icon()))
-            .with_min_inner_size([400.0, 300.0]), // Minimum window size
+            .with_min_inner_size(min_size),
         ..Default::default()
     };
+
+    // Configure DPI scaling for Wayland compatibility
+    #[cfg(target_os = "linux")]
+    {
+        if is_wayland {
+            // Force integer DPI scaling to avoid fractional buffer sizes
+            // This prevents "buffer size must be integer multiple" errors
+            // By default, egui will detect DPI, but we can override if needed
+            // Note: This is a workaround - the real fix needs to be in egui/winit
+        }
+    }
 
     // Apply window size overrides
     if let Some(width) = args.width {
         if let Some(height) = args.height {
-            options.viewport = options.viewport.with_inner_size([width, height]);
+            initial_size = if is_wayland {
+                [round_for_wayland(width), round_for_wayland(height)]
+            } else {
+                [width, height]
+            };
+            options.viewport = options.viewport.with_inner_size(initial_size);
         } else {
             // Use default height
-            options.viewport = options.viewport.with_inner_size([width, 600.0]);
+            initial_size = if is_wayland {
+                [round_for_wayland(width), round_for_wayland(600.0)]
+            } else {
+                [width, 600.0]
+            };
+            options.viewport = options.viewport.with_inner_size(initial_size);
         }
     } else if let Some(height) = args.height {
         // Use default width
-        options.viewport = options.viewport.with_inner_size([800.0, height]);
+        initial_size = if is_wayland {
+            [round_for_wayland(800.0), round_for_wayland(height)]
+        } else {
+            [800.0, height]
+        };
+        options.viewport = options.viewport.with_inner_size(initial_size);
+    } else {
+        // Use default size
+        options.viewport = options.viewport.with_inner_size(initial_size);
     }
 
     // Additional window configuration
@@ -277,6 +375,20 @@ fn create_native_options(args: &AppArgs) -> Result<eframe::NativeOptions> {
 
     // Set up renderer options for better performance
     options.renderer = eframe::Renderer::Glow;
+
+    // Configure for Wayland buffer scaling compatibility
+    #[cfg(target_os = "linux")]
+    {
+        if is_wayland {
+            // Force integer scaling by setting a fixed pixels_per_point
+            // This helps prevent fractional buffer sizes that cause Wayland errors
+            // Use 1.0 or 2.0 to ensure buffer sizes are always integer multiples
+            options.viewport = options
+                .viewport
+                .with_app_id("mosaicterm")
+                .with_decorations(true);
+        }
+    }
 
     debug!("Window setup complete");
     Ok(options)

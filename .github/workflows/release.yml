@@ -52,11 +52,14 @@ jobs:
             target: x86_64-apple-darwin
             name: macos-x64
             artifact: mosaicterm
-          # Uncomment to enable Linux builds
-          # - os: ubuntu-latest
-          #   target: x86_64-unknown-linux-gnu
-          #   name: linux-x64
-          #   artifact: mosaicterm
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: macos-arm64
+            artifact: mosaicterm
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: linux-x64
+            artifact: mosaicterm
           # Uncomment to enable Windows builds
           # - os: windows-latest
           #   target: x86_64-pc-windows-msvc
@@ -66,6 +69,22 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libssl-dev \
+            pkg-config \
+            libx11-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libgtk-3-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -96,11 +115,18 @@ jobs:
           Compress-Archive -Path ${{ matrix.artifact }} -DestinationPath mosaicterm-${{ matrix.name }}.zip
           Move-Item mosaicterm-${{ matrix.name }}.zip ../../..
 
-      - name: Upload to release
+      - name: Upload Linux/macOS release
+        if: matrix.os != 'windows-latest'
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            mosaicterm-${{ matrix.name }}.tar.gz
-            mosaicterm-${{ matrix.name }}.zip
+          files: mosaicterm-${{ matrix.name }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows release
+        if: matrix.os == 'windows-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: mosaicterm-${{ matrix.name }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

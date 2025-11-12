@@ -607,16 +607,16 @@ impl MosaicTermApp {
                 // Send command to PTY
                 {
                     let mut pty_manager = self.pty_manager.lock().await;
-                    
+
                     // Set TERM to xterm-256color for proper TUI support
                     let env_cmd = "export TERM=xterm-256color\n";
                     if let Err(e) = pty_manager.send_input(handle, env_cmd.as_bytes()).await {
                         warn!("Failed to set TERM for TUI command: {}", e);
                     }
-                    
+
                     // Brief delay to let env command process
                     std::thread::sleep(std::time::Duration::from_millis(10));
-                    
+
                     let cmd = format!("{}\n", command);
                     if let Err(e) = pty_manager.send_input(handle, cmd.as_bytes()).await {
                         warn!("Failed to send TUI command to PTY: {}", e);
@@ -1342,7 +1342,10 @@ impl eframe::App for MosaicTermApp {
         if self.tui_overlay.is_active() {
             // Handle input for TUI app BEFORE rendering
             if let Some(input_data) = self.tui_overlay.handle_input(ctx) {
-                debug!("TUI overlay: Sending {} bytes of input to PTY", input_data.len());
+                debug!(
+                    "TUI overlay: Sending {} bytes of input to PTY",
+                    input_data.len()
+                );
                 // Send input to PTY
                 if let Some(_handle_id) = self.tui_overlay.pty_handle() {
                     if let Ok(mut pty_manager) = self.pty_manager.try_lock() {
@@ -1366,7 +1369,7 @@ impl eframe::App for MosaicTermApp {
             let overlay_closed = self.tui_overlay.render(ctx);
             if overlay_closed || self.tui_overlay.has_exited() {
                 info!("TUI overlay closing");
-                
+
                 // Send Ctrl+C to kill the TUI process and reset terminal
                 if let Some(terminal) = &self.terminal {
                     if let Some(pty_handle) = terminal.pty_handle() {
@@ -1374,27 +1377,30 @@ impl eframe::App for MosaicTermApp {
                             executor::block_on(async {
                                 // Send Ctrl+C (ASCII 3) to terminate the process
                                 let _ = pty_manager.send_input(pty_handle, &[3]).await;
-                                
+
                                 // Wait a moment for process to die
                                 std::thread::sleep(std::time::Duration::from_millis(50));
-                                
+
                                 // Reset terminal to dumb mode for regular commands
                                 let reset_cmd = "export TERM=dumb\n";
-                                let _ = pty_manager.send_input(pty_handle, reset_cmd.as_bytes()).await;
-                                
+                                let _ = pty_manager
+                                    .send_input(pty_handle, reset_cmd.as_bytes())
+                                    .await;
+
                                 // Send a reset sequence to clear any weird state
-                                let _ = pty_manager.send_input(pty_handle, b"\x1bc").await; // ESC c (reset)
+                                let _ = pty_manager.send_input(pty_handle, b"\x1bc").await;
+                                // ESC c (reset)
                             });
                             info!("Sent Ctrl+C and reset terminal");
                         }
                     }
                 }
-                
+
                 // TUI app exited, mark command block as completed with empty output
                 if let Some(cmd) = self.tui_overlay.command() {
                     self.handle_tui_exit(cmd.to_string());
                 }
-                
+
                 self.tui_overlay.stop();
             }
         }
@@ -1419,7 +1425,7 @@ impl eframe::App for MosaicTermApp {
         if needs_repaint {
             // Repaint immediately for active operations
             ctx.request_repaint();
-            
+
             // For TUI overlay, request very fast repaints (16ms = ~60fps) for smooth updates
             if self.tui_overlay.is_active() {
                 ctx.request_repaint_after(std::time::Duration::from_millis(16));
@@ -2242,22 +2248,23 @@ impl MosaicTermApp {
                             // If TUI overlay is active, send RAW output there (don't process it!)
                             if self.tui_overlay.is_active() {
                                 debug!("Routing {} bytes to TUI overlay", data.len());
-                                
+
                                 // Send raw bytes directly to overlay - TUI apps need ANSI codes!
                                 self.tui_overlay.add_raw_output(&data);
-                                
+
                                 // Check if output contains shell prompt (indicating TUI app exited)
                                 let data_str = String::from_utf8_lossy(&data);
                                 let has_prompt = data_str.ends_with("$ ")
                                     || data_str.ends_with("% ")
                                     || data_str.ends_with("> ")
-                                    || data_str.contains("@") && (data_str.contains("$") || data_str.contains("%"));
-                                
+                                    || data_str.contains("@")
+                                        && (data_str.contains("$") || data_str.contains("%"));
+
                                 if has_prompt {
                                     debug!("Detected prompt in TUI output, marking as exited");
                                     self.tui_overlay.mark_exited();
                                 }
-                                
+
                                 return; // Don't process output for command blocks
                             }
 
@@ -2306,11 +2313,13 @@ impl MosaicTermApp {
                                 {
                                     if let Some(last_block) = command_history.last_mut() {
                                         // Skip output processing if this command is in TUI mode
-                                        if last_block.status == mosaicterm::models::ExecutionStatus::TuiMode {
+                                        if last_block.status
+                                            == mosaicterm::models::ExecutionStatus::TuiMode
+                                        {
                                             debug!("Skipping output for TUI mode command");
                                             return;
                                         }
-                                        
+
                                         let has_ready_lines = !ready_lines.is_empty();
 
                                         // Batch process all lines at once for better performance

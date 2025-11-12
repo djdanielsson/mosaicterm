@@ -24,8 +24,11 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 ### Prerequisites
 
 - **Rust**: 1.90+ stable toolchain
-- **macOS**: 14.0+ (MVP platform)
-- **Dependencies**: zsh, fzf, eza, bat, rg, fd, jq (Oh My Zsh recommended)
+- **macOS**: 14.0+ (primary platform)
+- **Linux**: Most modern distributions (Ubuntu 20.04+, Fedora 34+, Debian 11+, etc.)
+- **Dependencies**: 
+  - **Shell**: bash, zsh, or fish
+  - **Optional**: fzf, eza, bat, rg, fd, jq (for enhanced CLI experience)
 
 ### Installation
 
@@ -48,16 +51,51 @@ cargo run --release
 ## 📋 Requirements
 
 ### System Requirements
-- **Operating System**: macOS 14.0+ (primary), Linux/Windows (planned)
+- **Operating System**: 
+  - macOS 14.0+ (fully supported)
+  - Linux (Ubuntu 20.04+, Fedora 34+, Debian 11+, or similar)
+  - Windows (experimental)
 - **Memory**: 200MB RAM minimum
 - **Storage**: 50MB disk space
+- **Display**: X11 or Wayland (Linux), requires GUI environment
 
 ### CLI Tool Integration
 MosaicTerm works best with modern CLI tools:
-- **Shell**: zsh (with Oh My Zsh)
+- **Shell**: bash, zsh (with Oh My Zsh), or fish
 - **Search**: fzf, rg (ripgrep), fd
 - **Display**: bat (syntax highlighting), eza (modern ls)
 - **Processing**: jq (JSON), various development tools
+
+### Linux-Specific Notes
+- **Config Location**: Uses XDG Base Directory specification
+  - Primary: `$XDG_CONFIG_HOME/mosaicterm/config.toml` (defaults to `~/.config/mosaicterm/config.toml`)
+  - Fallback: `~/.mosaicterm/config.toml`
+- **Display Server**: Works with both X11 and Wayland
+- **Wayland Support**: 
+  - MosaicTerm automatically detects and configures for Wayland
+  - **Important**: If you encounter "buffer size must be integer multiple of buffer_scale" errors:
+    ```bash
+    # Option 1: Use X11 instead (recommended workaround)
+    GDK_BACKEND=x11 mosaicterm
+    # Or force X11 backend:
+    WINIT_UNIX_BACKEND=x11 mosaicterm
+    
+    # Option 2: Disable fractional scaling (best long-term solution)
+    # In GNOME: Settings > Displays > Scale to 100% or 200% (not 125%, 150%, etc.)
+    # In KDE: System Settings > Display and Monitor > Scale Display to 100% or 200%
+    
+    # Option 3: Set environment variable to force integer scaling
+    GDK_DPI_SCALE=1 mosaicterm  # or GDK_DPI_SCALE=2 for 2x scaling
+    ```
+  - **Note**: This is a known limitation with fractional scaling on Wayland. The application rounds window sizes, but buffer creation happens at a lower level in egui/winit. Using X11 or integer scaling avoids this issue.
+- **Dependencies**: Most Linux distributions include required system libraries. If you encounter build issues, install:
+  ```bash
+  # Ubuntu/Debian
+  sudo apt-get install build-essential libssl-dev pkg-config libx11-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev
+  
+  # Fedora/RHEL
+  sudo dnf install gcc openssl-devel pkg-config libX11-devel libxcb-devel libxkbcommon-devel gtk3-devel
+  ```
 
 ## 🏗️ Architecture
 
@@ -144,8 +182,8 @@ prompt_format = "🚀 $USER@$HOSTNAME\n$PWD ❯ "
 ## 🎯 Current Limitations
 
 ### MVP Scope (Phase 4 - Active Development)
-- **Platform**: macOS 14+ only (Linux/Windows support planned)
-- **Shell**: zsh with basic integration (advanced plugin features developing)
+- **Platform**: macOS 14+ (fully supported), Linux (supported), Windows (experimental)
+- **Shell**: bash, zsh, fish with basic integration (advanced plugin features developing)
 - **Features**: Core terminal functionality complete, advanced UI polish in progress
 - **Performance**: Target <16ms frame time, <200MB memory usage
 
@@ -172,7 +210,7 @@ prompt_format = "🚀 $USER@$HOSTNAME\n$PWD ❯ "
 - [ ] Inline search and filtering
 - [ ] Configuration hot-reload
 - [ ] Export blocks to markdown
-- [ ] Cross-platform builds (Linux/Windows)
+- [x] Cross-platform builds (Linux support complete)
 
 ### Future Goals
 - [ ] Plugin system architecture

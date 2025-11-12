@@ -115,8 +115,31 @@ pub struct TerminalConfig {
 
 impl Default for TerminalConfig {
     fn default() -> Self {
+        // Try to detect a shell that exists on the system
+        let shell_path = std::env::var("SHELL")
+            .ok()
+            .map(PathBuf::from)
+            .filter(|p| p.exists())
+            .or_else(|| {
+                // Try common shell paths
+                for path in [
+                    "/bin/bash",
+                    "/bin/zsh",
+                    "/usr/bin/bash",
+                    "/usr/bin/zsh",
+                    "/bin/sh",
+                ] {
+                    let pb = PathBuf::from(path);
+                    if pb.exists() {
+                        return Some(pb);
+                    }
+                }
+                None
+            })
+            .unwrap_or_else(|| PathBuf::from("/bin/bash")); // Fallback
+
         Self {
-            shell_path: PathBuf::from("/bin/zsh"),
+            shell_path,
             shell_args: vec!["--login".to_string()],
             working_directory: None,
             environment: std::collections::HashMap::new(),
@@ -512,7 +535,17 @@ mod tests {
 
         assert_eq!(config.ui.font_family, "Monaco");
         assert_eq!(config.ui.font_size, 12);
-        assert_eq!(config.terminal.shell_path, PathBuf::from("/bin/zsh"));
+        // Shell path should exist and be valid (detected from system)
+        assert!(
+            config.terminal.shell_path.exists(),
+            "Default shell path should exist: {:?}",
+            config.terminal.shell_path
+        );
+        assert!(
+            config.terminal.shell_path.is_file(),
+            "Default shell path should be a file: {:?}",
+            config.terminal.shell_path
+        );
         assert!(config.terminal.inherit_env);
     }
 

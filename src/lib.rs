@@ -207,6 +207,16 @@ fn validate_system_requirements() -> Result<()> {
         info!("✅ Running on macOS - supported platform");
     }
 
+    #[cfg(target_os = "linux")]
+    {
+        info!("✅ Running on Linux - supported platform");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        info!("✅ Running on Windows - supported platform (experimental)");
+    }
+
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         warn!("⚠️  Running on unsupported platform - functionality may be limited");
