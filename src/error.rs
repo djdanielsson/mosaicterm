@@ -473,10 +473,8 @@ mod tests {
 
     #[test]
     fn test_error_from_box_dyn_error() {
-        let box_err: Box<dyn std::error::Error> = Box::new(io::Error::new(
-            io::ErrorKind::Other,
-            "boxed error",
-        ));
+        let box_err: Box<dyn std::error::Error> =
+            Box::new(io::Error::new(io::ErrorKind::Other, "boxed error"));
         let err: Error = box_err.into();
         match err {
             Error::Other(msg) => assert!(msg.contains("boxed error")),

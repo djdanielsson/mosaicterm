@@ -1302,7 +1302,7 @@ mod tests {
     fn test_list_themes() {
         let manager = ThemeManager::new();
         let themes = manager.list_themes();
-        
+
         assert!(themes.contains(&"default-dark"));
         assert!(themes.contains(&"default-light"));
         assert!(themes.contains(&"high-contrast"));
@@ -1312,15 +1312,15 @@ mod tests {
     #[test]
     fn test_remove_theme() {
         let mut manager = ThemeManager::new();
-        
+
         // Cannot remove built-in themes
         assert!(manager.remove_theme("default-dark").is_err());
         assert!(manager.remove_theme("default-light").is_err());
-        
+
         // Add custom theme
         let custom_theme = create_test_theme("custom-test");
         manager.add_theme(custom_theme).unwrap();
-        
+
         // Can remove custom theme
         assert!(manager.remove_theme("custom-test").is_ok());
         assert!(!manager.list_themes().contains(&"custom-test"));
@@ -1329,12 +1329,12 @@ mod tests {
     #[test]
     fn test_remove_current_theme_switches_to_default() {
         let mut manager = ThemeManager::new();
-        
+
         // Add and set custom theme
         let custom_theme = create_test_theme("custom-current");
         manager.add_theme(custom_theme).unwrap();
         manager.set_theme("custom-current").unwrap();
-        
+
         // Remove it - should switch to default-dark
         manager.remove_theme("custom-current").unwrap();
         assert_eq!(manager.current_theme().unwrap().name, "Default Dark");
@@ -1343,10 +1343,10 @@ mod tests {
     #[test]
     fn test_add_duplicate_theme() {
         let mut manager = ThemeManager::new();
-        
+
         let custom_theme = create_test_theme("duplicate");
         manager.add_theme(custom_theme.clone()).unwrap();
-        
+
         // Try to add again
         assert!(manager.add_theme(custom_theme).is_err());
     }
@@ -1354,14 +1354,14 @@ mod tests {
     #[test]
     fn test_apply_color_schemes() {
         let mut manager = ThemeManager::new();
-        
+
         // Test all color schemes
         assert!(manager.apply_color_scheme("monokai").is_ok());
         assert!(manager.apply_color_scheme("solarized_dark").is_ok());
         assert!(manager.apply_color_scheme("solarized_light").is_ok());
         assert!(manager.apply_color_scheme("dracula").is_ok());
         assert!(manager.apply_color_scheme("nord").is_ok());
-        
+
         // Unknown scheme
         assert!(manager.apply_color_scheme("unknown").is_err());
     }
@@ -1369,12 +1369,12 @@ mod tests {
     #[test]
     fn test_get_component_colors() {
         let manager = ThemeManager::new();
-        
+
         // Test known components
         assert!(manager.get_component_colors("command_block").is_ok());
         assert!(manager.get_component_colors("input_prompt").is_ok());
         assert!(manager.get_component_colors("status_bar").is_ok());
-        
+
         // Unknown component
         assert!(manager.get_component_colors("unknown_component").is_err());
     }
@@ -1383,26 +1383,26 @@ mod tests {
     fn test_color_utilities() {
         let white = Color::from_rgb(255, 255, 255);
         let black = Color::from_rgb(0, 0, 0);
-        
+
         // Test contrast ratio
         let ratio = utils::contrast_ratio(&white, &black);
         assert!(ratio > 0.0);
-        
+
         // Test is_light
         assert!(utils::is_light(&white));
         assert!(!utils::is_light(&black));
-        
+
         // Test complementary color
         let comp = utils::complementary_color(&white);
         assert_eq!(comp.r, 0.0);
         assert_eq!(comp.g, 0.0);
         assert_eq!(comp.b, 0.0);
-        
+
         // Test adjust brightness
         let gray = Color::from_rgb(128, 128, 128);
         let brighter = utils::adjust_brightness(&gray, 1.5);
         assert!(brighter.r > gray.r);
-        
+
         // Test blend colors
         let blended = utils::blend_colors(&white, &black, 0.5);
         assert_eq!(blended.r, 0.5);
@@ -1423,7 +1423,7 @@ mod tests {
     fn test_color_to_egui() {
         let color = Color::from_rgb(255, 128, 64);
         let egui_color = color.to_egui();
-        
+
         // Verify conversion
         assert_eq!(egui_color.r(), 255);
         assert_eq!(egui_color.g(), 128);
@@ -1433,14 +1433,14 @@ mod tests {
     #[test]
     fn test_system_theme() {
         let mut manager = ThemeManager::new();
-        
+
         // Test system theme getter/setter
         manager.set_system_theme(SystemTheme::Light);
         assert_eq!(manager.system_theme(), SystemTheme::Light);
-        
+
         manager.set_system_theme(SystemTheme::Dark);
         assert_eq!(manager.system_theme(), SystemTheme::Dark);
-        
+
         // Test apply system theme
         manager.set_system_theme(SystemTheme::Light);
         manager.apply_system_theme();

@@ -380,12 +380,12 @@ mod tests {
     #[test]
     fn test_signal_handler_registration() {
         let mut handler = SignalHandler::new();
-        
+
         handler.register_process("handle1".to_string(), 12345);
         handler.register_process("handle2".to_string(), 67890);
-        
+
         assert_eq!(handler.registered_count(), 2);
-        
+
         handler.unregister_process("handle1");
         assert_eq!(handler.registered_count(), 1);
     }
@@ -393,10 +393,10 @@ mod tests {
     #[tokio::test]
     async fn test_send_signal_to_unregistered() {
         let handler = SignalHandler::new();
-        
+
         let result = handler.send_signal("nonexistent", Signal::Terminate).await;
         assert!(result.is_err());
-        
+
         if let Err(Error::ProcessNotRegistered { handle_id }) = result {
             assert_eq!(handle_id, "nonexistent");
         } else {
@@ -421,7 +421,7 @@ mod tests {
             send_interrupt_first: false,
             max_signal_attempts: 10,
         };
-        
+
         let handler = SignalHandler::with_config(config);
         assert_eq!(handler.config.graceful_timeout_ms, 3000);
         assert!(!handler.config.send_interrupt_first);

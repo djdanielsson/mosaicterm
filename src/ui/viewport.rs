@@ -173,7 +173,7 @@ mod tests {
             smooth_scrolling: false,
             max_scroll_speed: 100.0,
         };
-        
+
         let viewport = TerminalViewport::with_config(config);
         assert_eq!(viewport.config().background_color, egui::Color32::BLACK);
         assert_eq!(viewport.config().border_width, 2.0);

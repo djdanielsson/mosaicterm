@@ -271,12 +271,12 @@ mod tests {
     #[test]
     fn test_metrics_panel_visibility() {
         let mut panel = MetricsPanel::new();
-        
+
         assert!(!panel.is_visible());
-        
+
         panel.set_visible(true);
         assert!(panel.is_visible());
-        
+
         panel.set_visible(false);
         assert!(!panel.is_visible());
     }
@@ -284,12 +284,12 @@ mod tests {
     #[test]
     fn test_metrics_panel_toggle() {
         let mut panel = MetricsPanel::new();
-        
+
         assert!(!panel.is_visible());
-        
+
         panel.toggle();
         assert!(panel.is_visible());
-        
+
         panel.toggle();
         assert!(!panel.is_visible());
     }
