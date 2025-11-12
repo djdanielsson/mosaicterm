@@ -131,11 +131,15 @@ impl Terminal {
         let (shell_command, shell_args) = match session.shell_type {
             crate::models::ShellType::Bash => (
                 "bash".to_string(),
-                vec!["--norc".to_string(), "--noprofile".to_string(), "--noediting".to_string()],
+                vec![
+                    "--norc".to_string(),
+                    "--noprofile".to_string(),
+                    "--noediting".to_string(),
+                ],
             ),
             crate::models::ShellType::Zsh => (
-                "zsh".to_string(), 
-                vec!["-f".to_string(), "+Z".to_string()] // -f = no .zshrc, +Z = no zle (line editor)
+                "zsh".to_string(),
+                vec!["-f".to_string(), "+Z".to_string()], // -f = no .zshrc, +Z = no zle (line editor)
             ),
             crate::models::ShellType::Fish => ("fish".to_string(), vec!["--no-config".to_string()]),
             crate::models::ShellType::Ksh => ("ksh".to_string(), vec![]),
