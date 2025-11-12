@@ -1,6 +1,6 @@
 [package]
 name = "mosaicterm"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["MosaicTerm Team"]
 description = "A Rust GUI terminal emulator inspired by Warp with block-based command history"
