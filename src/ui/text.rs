@@ -965,8 +965,8 @@ mod tests {
     #[test]
     fn test_render_output_line() {
         use crate::models::output_line::{AnsiCode, OutputLine};
-        let mut renderer = AnsiTextRenderer::new();
-        let line = OutputLine {
+        let _renderer = AnsiTextRenderer::new();
+        let _line = OutputLine {
             text: "test".to_string(),
             ansi_codes: vec![AnsiCode {
                 code: "\x1b[31m".to_string(),
@@ -983,8 +983,8 @@ mod tests {
     #[test]
     fn test_render_output_lines() {
         use crate::models::output_line::OutputLine;
-        let mut renderer = AnsiTextRenderer::new();
-        let lines = vec![
+        let _renderer = AnsiTextRenderer::new();
+        let _lines = [
             OutputLine {
                 text: "line1".to_string(),
                 ansi_codes: vec![],

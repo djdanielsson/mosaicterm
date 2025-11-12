@@ -453,7 +453,10 @@ mod tests {
 
     #[test]
     fn test_error_from_regex() {
-        let regex_err = regex::Regex::new("[").unwrap_err();
+        // Use an invalid regex pattern (unclosed character class) that will fail to compile
+        // We intentionally use an invalid regex to test error conversion, so suppress clippy warning
+        #[allow(clippy::invalid_regex)]
+        let regex_err = regex::Regex::new(r"[a-z").unwrap_err();
         let err: Error = regex_err.into();
         match err {
             Error::Regex(_) => {}
