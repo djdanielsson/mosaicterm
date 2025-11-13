@@ -7,6 +7,7 @@ pub mod manager;
 pub mod manager_v2;
 pub mod operations;
 pub mod process;
+pub mod process_tree;
 pub mod signals;
 pub mod streams;
 

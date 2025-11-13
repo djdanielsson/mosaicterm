@@ -137,6 +137,14 @@ MosaicTerm supports TOML-based configuration. Create `~/.config/mosaicterm/confi
 [ui]
 font_family = "JetBrains Mono"
 font_size = 12
+
+[key_bindings.bindings]
+# Interrupt/kill running command (default: Ctrl+C)
+interrupt = { key = "Ctrl+C", enabled = true }
+# Copy text (default: Ctrl+Shift+C to avoid conflict with interrupt)
+copy = { key = "Ctrl+Shift+C", enabled = true }
+# Clear screen (default: Ctrl+L)
+clear = { key = "Ctrl+L", enabled = true }
 theme_name = "default-dark"
 
 [terminal]

@@ -2,13 +2,13 @@
 name = "mosaicterm"
 version = "0.1.1"
 edition = "2021"
-authors = ["MosaicTerm Team"]
+authors = ["David Danielsson"]
 description = "A Rust GUI terminal emulator inspired by Warp with block-based command history"
 license = "MIT"
 keywords = ["terminal", "emulator", "gui", "rust", "cli"]
 categories = ["command-line-utilities", "gui"]
-repository = "https://github.com/your-repo/mosaicterm"
-homepage = "https://github.com/your-repo/mosaicterm"
+repository = "https://github.com/djdanielsson/mosaicterm"
+homepage = "https://github.com/djdanielsson/mosaicterm"
 
 [dependencies]
 # GUI Framework

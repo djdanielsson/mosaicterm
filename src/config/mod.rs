@@ -212,7 +212,8 @@ impl Default for KeyBindings {
         let mut bindings = std::collections::HashMap::new();
 
         // Default key bindings
-        bindings.insert("copy".to_string(), KeyBinding::new("Ctrl+C"));
+        bindings.insert("interrupt".to_string(), KeyBinding::new("Ctrl+C"));
+        bindings.insert("copy".to_string(), KeyBinding::new("Ctrl+Shift+C"));
         bindings.insert("paste".to_string(), KeyBinding::new("Ctrl+V"));
         bindings.insert("new_tab".to_string(), KeyBinding::new("Ctrl+T"));
         bindings.insert("close_tab".to_string(), KeyBinding::new("Ctrl+W"));
