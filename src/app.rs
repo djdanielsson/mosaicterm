@@ -458,11 +458,19 @@ impl MosaicTermApp {
 
         if let Some(_terminal) = &mut self.terminal {
             // Send command directly to PTY with newline so the shell executes it
+            // Then send a command to echo the exit code with a special marker
             if let Some(handle) = _terminal.pty_handle() {
                 let mut pty_manager = self.pty_manager.lock().await;
                 let cmd = format!("{}\n", command);
                 if let Err(e) = pty_manager.send_input(handle, cmd.as_bytes()).await {
                     warn!("Failed to send input to PTY: {}", e);
+                }
+                
+                // Send a command to echo the exit code after the command completes
+                // Use a unique marker so we can detect it
+                let exit_code_cmd = "echo \"MOSAICTERM_EXITCODE:$?\"\n";
+                if let Err(e) = pty_manager.send_input(handle, exit_code_cmd.as_bytes()).await {
+                    warn!("Failed to send exit code check to PTY: {}", e);
                 }
             }
 
@@ -872,7 +880,7 @@ impl MosaicTermApp {
                             if status == ExecutionStatus::Running
                                 && ui.button("❌ Kill Command").clicked()
                             {
-                                self.handle_interrupt_command();
+                                self.handle_interrupt_specific_command(block_id.clone());
                                 menu_open = false;
                             }
 
@@ -1685,6 +1693,63 @@ impl MosaicTermApp {
         }
     }
 
+    /// Handle interruption of a specific command block (right-click kill)
+    fn handle_interrupt_specific_command(&mut self, block_id: String) {
+        if let Some(terminal) = &mut self.terminal {
+            // Get the current PTY handle from the terminal
+            if let Some(pty_handle) = terminal.pty_handle() {
+                let handle_id = pty_handle.id.clone();
+
+                // Send interrupt signal to the PTY process (non-blocking)
+                info!("Sending interrupt signal for block {}", block_id);
+                if let Err(e) = self
+                    .async_tx
+                    .send(AsyncRequest::SendInterrupt(handle_id.clone()))
+                {
+                    error!("Failed to send interrupt request: {}", e);
+                    self.set_status_message(Some("Failed to interrupt command".to_string()));
+                } else {
+                    self.set_status_message(Some("Interrupting command...".to_string()));
+                }
+
+                // Mark the specific command block as cancelled
+                self.state_manager.update_command_block_status(
+                    &block_id,
+                    mosaicterm::models::ExecutionStatus::Cancelled,
+                );
+
+                // Clear the command time so new commands can be submitted
+                self.state_manager.set_last_command_time(chrono::Utc::now());
+
+                // Check if the command being killed is interactive
+                let command_history = self.state_manager.get_command_history();
+                let is_interactive = command_history
+                    .iter()
+                    .find(|block| block.id == block_id)
+                    .map(|block| self.is_interactive_command(&block.command))
+                    .unwrap_or(false);
+
+                // For interactive programs, restart the PTY session
+                if is_interactive {
+                    info!("Restarting PTY session after interactive program cancel");
+                    self.start_loading("Restarting shell session...");
+
+                    if let Err(e) = self.async_tx.send(AsyncRequest::RestartPty) {
+                        error!("Failed to send RestartPty request: {}", e);
+                        self.stop_loading();
+                        self.set_status_message(Some("Failed to restart session".to_string()));
+                    }
+                }
+            } else {
+                warn!("No active PTY process to interrupt");
+                self.set_status_message(Some("No running command to interrupt".to_string()));
+            }
+        } else {
+            warn!("Terminal not available for interrupt");
+            self.set_status_message(Some("Terminal not ready".to_string()));
+        }
+    }
+
     /// Handle screen clearing (Ctrl+L)
     fn handle_clear_screen(&mut self) {
         // Clear command history (visual blocks) but preserve input history for arrow keys
@@ -2352,21 +2417,74 @@ impl MosaicTermApp {
                                         // Batch process all lines at once for better performance
                                         let mut lines_to_add =
                                             Vec::with_capacity(ready_lines.len());
-                                        let command_text = last_block.command.trim();
+                                        let command_text = last_block.command.trim().to_string();
+                                        let command_text_for_log = last_block.command.clone();
                                         let current_output_count = last_block.output.len();
+                                        
+                                        // Check for exit code marker first
+                                        let mut found_exit_code: Option<i32> = None;
+                                        for line in ready_lines.iter() {
+                                            let line_text = line.text.trim();
+                                            if line_text.starts_with("MOSAICTERM_EXITCODE:") {
+                                                if let Some(exit_code_str) = line_text.strip_prefix("MOSAICTERM_EXITCODE:") {
+                                                    if let Ok(exit_code) = exit_code_str.trim().parse::<i32>() {
+                                                        found_exit_code = Some(exit_code);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        // Apply exit code if found
+                                        if let Some(exit_code) = found_exit_code {
+                                            let elapsed_ms = if let Some(start_time) = last_command_time {
+                                                start_time.elapsed().as_millis()
+                                            } else {
+                                                0
+                                            };
+                                            
+                                            if exit_code == 0 {
+                                                last_block.mark_completed(
+                                                    std::time::Duration::from_millis(
+                                                        elapsed_ms.try_into().unwrap_or(1000),
+                                                    ),
+                                                );
+                                                debug!("✅ Command completed with exit code 0: {}", command_text_for_log);
+                                            } else {
+                                                last_block.mark_failed(
+                                                    std::time::Duration::from_millis(
+                                                        elapsed_ms.try_into().unwrap_or(1000),
+                                                    ),
+                                                    exit_code,
+                                                );
+                                                debug!("❌ Command failed with exit code {}: {}", exit_code, command_text_for_log);
+                                            }
+                                            should_clear_command_time = true;
+                                        }
 
                                         for (idx, line) in ready_lines.iter().enumerate() {
                                             let line_text = line.text.trim();
                                             let is_first_few_lines = current_output_count + idx < 5;
 
+                                            // Skip exit code marker and the echo command itself
+                                            if line_text.starts_with("MOSAICTERM_EXITCODE:")
+                                                || line_text.contains("echo \"MOSAICTERM_EXITCODE:")
+                                                || line_text == "echo \"MOSAICTERM_EXITCODE:$?\""
+                                            {
+                                                continue;
+                                            }
+
                                             // Skip if:
                                             // 1. Exact match of command
                                             // 2. First few lines and is a prefix of command (partial echo)
+                                            // 3. Contains "^C" (Ctrl+C echo from shell) or is empty
                                             let should_skip = line_text == command_text
                                                 || (is_first_few_lines
                                                     && !line_text.is_empty()
-                                                    && command_text.starts_with(line_text)
-                                                    && line_text.len() <= 3); // Only skip very short prefixes
+                                                    && command_text.starts_with(&line_text)
+                                                    && line_text.len() <= 3) // Only skip very short prefixes
+                                                || line_text.contains("^C") // Skip any line with Ctrl+C echo
+                                                || line_text.is_empty(); // Skip empty lines
 
                                             if !should_skip {
                                                 // Truncate line if too long
