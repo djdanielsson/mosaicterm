@@ -1568,16 +1568,17 @@ impl MosaicTermApp {
             // If no running command, let the input field handle it normally
         }
         
+        // Ctrl+L works ALWAYS, even when input is focused - clears screen
+        if ctx.input(|i| i.key_pressed(egui::Key::L) && i.modifiers.ctrl) {
+            self.handle_clear_screen();
+            ctx.input_mut(|i| i.events.clear());
+        }
+        
         // Only handle other shortcuts when no text input is focused
         if ctx.memory(|mem| mem.focus().is_none()) {
             // Application shortcuts
             if ctx.input(|i| i.key_pressed(egui::Key::Q) && i.modifiers.ctrl) {
                 std::process::exit(0); // Ctrl+Q to quit
-            }
-
-            if ctx.input(|i| i.key_pressed(egui::Key::L) && i.modifiers.ctrl) {
-                // Ctrl+L to clear screen
-                self.handle_clear_screen();
             }
 
             if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl) {
@@ -1686,15 +1687,9 @@ impl MosaicTermApp {
 
     /// Handle screen clearing (Ctrl+L)
     fn handle_clear_screen(&mut self) {
-        // Clear command history in state manager
-        // Note: StateManager doesn't expose a clear() method yet, so we create a new one
-        self.state_manager = StateManager::new();
+        // Clear command history (visual blocks) but preserve input history for arrow keys
+        self.state_manager.clear_command_history();
 
-        // DEPRECATED: Also update old field during migration
-        // Clear terminal screen (would send clear command to shell)
-        if let Some(_terminal) = &mut self.terminal {
-            std::mem::drop(_terminal.process_input("clear"));
-        }
         info!("Clear screen requested (Ctrl+L)");
         self.set_status_message(Some("Screen cleared".to_string()));
     }
