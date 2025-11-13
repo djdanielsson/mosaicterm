@@ -307,6 +307,9 @@ impl MosaicTermApp {
         // Create environment with prompt suppression
         let mut environment: std::collections::HashMap<String, String> = std::env::vars().collect();
 
+        // Disable terminal echo explicitly
+        environment.insert("STTY".to_string(), "-echo".to_string());
+
         // Suppress shell prompts by setting PS1 to empty for bash/zsh
         // This prevents prompts from appearing in output at all
         match shell_type {
@@ -1042,7 +1045,7 @@ impl MosaicTermApp {
     ) -> Result<()> {
         info!("Async interrupt signal for handle: {}", handle_id);
 
-        let pty_manager = pty_manager.lock().await;
+        let mut pty_manager = pty_manager.lock().await;
 
         // Find the PTY handle
         let pty_handle = mosaicterm::pty::PtyHandle {
@@ -1050,18 +1053,35 @@ impl MosaicTermApp {
             pid: None,
         };
 
+        // First, send Ctrl+C (ASCII 3) directly to the PTY input
+        // This is the polite way - gives the process a chance to clean up
+        info!("Sending Ctrl+C to PTY");
+        let _ = pty_manager.send_input(&pty_handle, &[3]).await;
+        
+        // Get the shell PID
         if let Ok(pty_info) = pty_manager.get_info(&pty_handle) {
-            if let Some(pid) = pty_info.pid {
+            if let Some(shell_pid) = pty_info.pid {
                 #[cfg(unix)]
                 {
-                    use nix::sys::signal::{kill, Signal};
-                    use nix::unistd::Pid;
-
-                    if let Err(e) = kill(Pid::from_raw(pid as i32), Signal::SIGINT) {
-                        return Err(mosaicterm::error::Error::SignalSendFailed {
-                            signal: "SIGINT".to_string(),
-                            reason: e.to_string(),
-                        });
+                    use nix::sys::signal::Signal;
+                    
+                    info!("Killing process tree for shell PID: {}", shell_pid);
+                    
+                    // Kill the entire process tree (shell + all children)
+                    // This ensures long-running commands like sleep, find, etc. are all killed
+                    if let Err(e) = mosaicterm::pty::process_tree::kill_process_tree(shell_pid, Signal::SIGINT) {
+                        warn!("Failed to kill process tree: {}", e);
+                    }
+                    
+                    // Wait a moment for processes to terminate gracefully
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    
+                    // If still running, force kill with SIGKILL
+                    if let Ok(children) = mosaicterm::pty::process_tree::get_all_descendant_pids(shell_pid) {
+                        if !children.is_empty() {
+                            info!("Some processes still running, sending SIGKILL");
+                            let _ = mosaicterm::pty::process_tree::kill_process_tree(shell_pid, Signal::SIGKILL);
+                        }
                     }
                 }
 
@@ -1530,17 +1550,29 @@ impl MosaicTermApp {
 
     /// Handle keyboard shortcuts and navigation
     fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Only handle shortcuts when no text input is focused
+        // Ctrl+C works ALWAYS, even when input is focused - kills running command
+        if ctx.input(|i| i.key_pressed(egui::Key::C) && i.modifiers.ctrl && !i.modifiers.shift) {
+            // Check if there's a running command
+            let has_running_command = self
+                .state_manager
+                .get_command_history()
+                .iter()
+                .any(|block| block.is_running());
+            
+            if has_running_command {
+                // Ctrl+C to interrupt current command
+                self.handle_interrupt_command();
+                // Consume the event so it doesn't get processed elsewhere
+                ctx.input_mut(|i| i.events.clear());
+            }
+            // If no running command, let the input field handle it normally
+        }
+        
+        // Only handle other shortcuts when no text input is focused
         if ctx.memory(|mem| mem.focus().is_none()) {
             // Application shortcuts
             if ctx.input(|i| i.key_pressed(egui::Key::Q) && i.modifiers.ctrl) {
                 std::process::exit(0); // Ctrl+Q to quit
-            }
-
-            // Terminal shortcuts
-            if ctx.input(|i| i.key_pressed(egui::Key::C) && i.modifiers.ctrl) {
-                // Ctrl+C to interrupt current command
-                self.handle_interrupt_command();
             }
 
             if ctx.input(|i| i.key_pressed(egui::Key::L) && i.modifiers.ctrl) {
@@ -2325,9 +2357,23 @@ impl MosaicTermApp {
                                         // Batch process all lines at once for better performance
                                         let mut lines_to_add =
                                             Vec::with_capacity(ready_lines.len());
-                                        for line in &ready_lines {
-                                            // Only skip exact command echo
-                                            if line.text.trim() != last_block.command.trim() {
+                                        let command_text = last_block.command.trim();
+                                        let current_output_count = last_block.output.len();
+
+                                        for (idx, line) in ready_lines.iter().enumerate() {
+                                            let line_text = line.text.trim();
+                                            let is_first_few_lines = current_output_count + idx < 5;
+
+                                            // Skip if:
+                                            // 1. Exact match of command
+                                            // 2. First few lines and is a prefix of command (partial echo)
+                                            let should_skip = line_text == command_text
+                                                || (is_first_few_lines
+                                                    && !line_text.is_empty()
+                                                    && command_text.starts_with(line_text)
+                                                    && line_text.len() <= 3); // Only skip very short prefixes
+
+                                            if !should_skip {
                                                 // Truncate line if too long
                                                 let mut line_to_add = line.clone();
                                                 if line_to_add.text.len() > MAX_LINE_LENGTH {

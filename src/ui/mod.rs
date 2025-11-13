@@ -408,3 +408,234 @@ impl ResponsiveGrid {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_layout_manager_new() {
+        let manager = LayoutManager::new();
+        assert_eq!(manager.window_size, egui::vec2(800.0, 600.0));
+        assert_eq!(manager.min_window_size, egui::vec2(400.0, 300.0));
+        assert_eq!(manager.current_mode, LayoutMode::Desktop);
+    }
+
+    #[test]
+    fn test_layout_manager_default() {
+        let manager = LayoutManager::default();
+        assert_eq!(manager.current_mode, LayoutMode::Desktop);
+    }
+
+    #[test]
+    fn test_layout_manager_with_initial_size() {
+        let manager = LayoutManager::with_initial_size(1200.0, 800.0);
+        assert_eq!(manager.window_size, egui::vec2(1200.0, 800.0));
+    }
+
+    #[test]
+    fn test_layout_breakpoints_default() {
+        let breakpoints = LayoutBreakpoints::default();
+        assert_eq!(breakpoints.mobile, 600.0);
+        assert_eq!(breakpoints.tablet, 900.0);
+        assert_eq!(breakpoints.desktop, 1200.0);
+    }
+
+    #[test]
+    fn test_update_window_size() {
+        let mut manager = LayoutManager::new();
+        manager.update_window_size(egui::vec2(500.0, 400.0));
+        assert_eq!(manager.window_size, egui::vec2(500.0, 400.0));
+        assert_eq!(manager.current_mode, LayoutMode::Mobile);
+    }
+
+    #[test]
+    fn test_update_window_size_respects_min() {
+        let mut manager = LayoutManager::new();
+        manager.update_window_size(egui::vec2(100.0, 100.0));
+        assert_eq!(manager.window_size, manager.min_window_size);
+    }
+
+    #[test]
+    fn test_layout_mode_mobile() {
+        let mut manager = LayoutManager::new();
+        manager.update_window_size(egui::vec2(500.0, 400.0));
+        assert_eq!(manager.current_mode, LayoutMode::Mobile);
+        assert!(manager.is_mobile());
+        assert!(!manager.is_tablet());
+        assert!(!manager.is_desktop());
+    }
+
+    #[test]
+    fn test_layout_mode_tablet() {
+        let mut manager = LayoutManager::new();
+        manager.update_window_size(egui::vec2(800.0, 600.0));
+        assert_eq!(manager.current_mode, LayoutMode::Tablet);
+        assert!(!manager.is_mobile());
+        assert!(manager.is_tablet());
+        assert!(!manager.is_desktop());
+    }
+
+    #[test]
+    fn test_layout_mode_desktop() {
+        let mut manager = LayoutManager::new();
+        manager.update_window_size(egui::vec2(1300.0, 900.0));
+        assert_eq!(manager.current_mode, LayoutMode::Desktop);
+        assert!(!manager.is_mobile());
+        assert!(!manager.is_tablet());
+        assert!(manager.is_desktop());
+    }
+
+    #[test]
+    fn test_responsive_spacing() {
+        let mut manager = LayoutManager::new();
+        manager.update_window_size(egui::vec2(500.0, 400.0));
+        assert_eq!(manager.responsive_spacing(), egui::vec2(4.0, 4.0));
+
+        manager.update_window_size(egui::vec2(800.0, 600.0));
+        assert_eq!(manager.responsive_spacing(), egui::vec2(6.0, 6.0));
+
+        manager.update_window_size(egui::vec2(1300.0, 900.0));
+        assert_eq!(manager.responsive_spacing(), egui::vec2(8.0, 8.0));
+    }
+
+    #[test]
+    fn test_responsive_font_size() {
+        let mut manager = LayoutManager::new();
+        manager.update_window_size(egui::vec2(500.0, 400.0));
+        assert_eq!(manager.responsive_font_size(), 11.0);
+        assert_eq!(manager.responsive_mono_font_size(), 10.0);
+
+        manager.update_window_size(egui::vec2(800.0, 600.0));
+        assert_eq!(manager.responsive_font_size(), 12.0);
+        assert_eq!(manager.responsive_mono_font_size(), 11.0);
+
+        manager.update_window_size(egui::vec2(1300.0, 900.0));
+        assert_eq!(manager.responsive_font_size(), 13.0);
+        assert_eq!(manager.responsive_mono_font_size(), 12.0);
+    }
+
+    #[test]
+    fn test_responsive_columns() {
+        let mut manager = LayoutManager::new();
+        manager.update_window_size(egui::vec2(500.0, 400.0));
+        assert_eq!(manager.responsive_columns(), 1);
+
+        manager.update_window_size(egui::vec2(800.0, 600.0));
+        assert_eq!(manager.responsive_columns(), 1);
+
+        manager.update_window_size(egui::vec2(1300.0, 900.0));
+        assert_eq!(manager.responsive_columns(), 2);
+    }
+
+    #[test]
+    fn test_content_area_size() {
+        let manager = LayoutManager::new();
+        assert_eq!(manager.content_area_size(), manager.window_size);
+    }
+
+    #[test]
+    fn test_layout_proportions() {
+        let mut manager = LayoutManager::new();
+        manager.update_window_size(egui::vec2(500.0, 400.0));
+        let props = manager.layout_proportions();
+        assert_eq!(props.sidebar_width, 0.0);
+
+        manager.update_window_size(egui::vec2(800.0, 600.0));
+        let props = manager.layout_proportions();
+        assert_eq!(props.sidebar_width, 200.0);
+
+        manager.update_window_size(egui::vec2(1300.0, 900.0));
+        let props = manager.layout_proportions();
+        assert_eq!(props.sidebar_width, 250.0);
+    }
+
+    #[test]
+    fn test_adaptive_font_sizes() {
+        let manager = LayoutManager::new();
+        let sizes = manager.adaptive_font_sizes();
+        assert!(sizes.terminal >= 9.0 && sizes.terminal <= 18.0);
+        assert!(sizes.ui_body >= 11.0 && sizes.ui_body <= 20.0);
+        assert!(sizes.ui_heading >= 14.0 && sizes.ui_heading <= 24.0);
+        assert!(sizes.input >= 12.0 && sizes.input <= 18.0);
+    }
+
+    #[test]
+    fn test_optimal_grid_layout() {
+        let mut manager = LayoutManager::new();
+        manager.update_window_size(egui::vec2(500.0, 400.0));
+        let grid = manager.optimal_grid_layout();
+        assert_eq!(grid.columns, 1);
+
+        manager.update_window_size(egui::vec2(800.0, 600.0));
+        let grid = manager.optimal_grid_layout();
+        assert_eq!(grid.columns, 2);
+
+        manager.update_window_size(egui::vec2(1300.0, 900.0));
+        let grid = manager.optimal_grid_layout();
+        assert_eq!(grid.columns, 3);
+    }
+
+    #[test]
+    fn test_has_size_changed() {
+        let manager = LayoutManager::new();
+        assert!(manager.has_size_changed(egui::vec2(900.0, 700.0), 50.0));
+        assert!(!manager.has_size_changed(egui::vec2(805.0, 605.0), 50.0));
+    }
+
+    #[test]
+    fn test_transition_duration() {
+        let manager = LayoutManager::new();
+        assert_eq!(
+            manager.transition_duration(LayoutMode::Mobile, LayoutMode::Desktop),
+            0.3
+        );
+        assert_eq!(
+            manager.transition_duration(LayoutMode::Desktop, LayoutMode::Desktop),
+            0.1
+        );
+    }
+
+    #[test]
+    fn test_constrain_ui_element() {
+        let manager = LayoutManager::new();
+        let available = egui::vec2(1000.0, 800.0);
+
+        let status_size = manager.constrain_ui_element(available, UiElementType::StatusBar);
+        assert_eq!(status_size.y, 36.0); // Desktop status bar height
+
+        let input_size = manager.constrain_ui_element(available, UiElementType::InputArea);
+        assert_eq!(input_size.y, 100.0); // Desktop input area height
+
+        let sidebar_size = manager.constrain_ui_element(available, UiElementType::Sidebar);
+        assert_eq!(sidebar_size.x, 250.0); // Desktop sidebar width
+    }
+
+    #[test]
+    fn test_recommended_panel_sizes() {
+        let mut manager = LayoutManager::new();
+        manager.update_window_size(egui::vec2(500.0, 400.0));
+        let sizes = manager.recommended_panel_sizes();
+        assert_eq!(sizes.status_bar_height, 24.0);
+        assert_eq!(sizes.input_area_height, 60.0);
+
+        manager.update_window_size(egui::vec2(1300.0, 900.0));
+        let sizes = manager.recommended_panel_sizes();
+        assert_eq!(sizes.status_bar_height, 32.0);
+        assert_eq!(sizes.input_area_height, 80.0);
+    }
+
+    #[test]
+    fn test_layout_mode_equality() {
+        assert_eq!(LayoutMode::Mobile, LayoutMode::Mobile);
+        assert_ne!(LayoutMode::Mobile, LayoutMode::Desktop);
+    }
+
+    #[test]
+    fn test_responsive_grid_new() {
+        let manager = LayoutManager::new();
+        let grid = ResponsiveGrid::new(&manager);
+        assert_eq!(grid.columns, 2); // Desktop has 2 columns
+        assert_eq!(grid.spacing, egui::vec2(8.0, 8.0));
+    }
+}

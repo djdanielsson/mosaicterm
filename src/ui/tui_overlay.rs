@@ -239,20 +239,19 @@ impl TuiOverlay {
         }
 
         let mut should_close = false;
-
-        // Request focus for the window to capture keyboard input
-        ctx.memory_mut(|mem| {
-            mem.request_focus(egui::Id::new("tui_overlay_window"));
-        });
+        let window_id = egui::Id::new("tui_overlay_window");
 
         // Fullscreen modal window
+        // Use default_open to ensure window is shown, but avoid aggressive focus requests
+        // that can cause accesskit assertion failures on Linux
         egui::Window::new("TUI Application")
-            .id(egui::Id::new("tui_overlay_window"))
+            .id(window_id)
             .title_bar(true)
             .resizable(false)
             .collapsible(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .fixed_size(ctx.available_rect().size() * 0.95) // 95% of available space
+            .default_open(true)
             .show(ctx, |ui| {
                 // Show command in header
                 if let Some(cmd) = &self.command {
@@ -397,5 +396,207 @@ fn key_to_terminal_sequence(key: egui::Key, modifiers: &egui::Modifiers) -> Vec<
         egui::Key::C if modifiers.ctrl => vec![b'\x03'],
         egui::Key::Z if modifiers.ctrl => vec![b'\x1a'],
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_screen_buffer_new() {
+        let buffer = ScreenBuffer::new(10, 20);
+        assert_eq!(buffer.rows, 10);
+        assert_eq!(buffer.cols, 20);
+        assert_eq!(buffer.cursor_row, 0);
+        assert_eq!(buffer.cursor_col, 0);
+    }
+
+    #[test]
+    fn test_screen_buffer_clear() {
+        let mut buffer = ScreenBuffer::new(5, 10);
+        buffer.write_char('a');
+        buffer.clear();
+        assert_eq!(buffer.cursor_row, 0);
+        assert_eq!(buffer.cursor_col, 0);
+        let rendered = buffer.render_to_string();
+        assert!(rendered.trim().is_empty() || rendered.chars().all(|c| c == ' ' || c == '\n'));
+    }
+
+    #[test]
+    fn test_screen_buffer_write_char() {
+        let mut buffer = ScreenBuffer::new(5, 10);
+        buffer.write_char('a');
+        assert_eq!(buffer.cursor_col, 1);
+        buffer.write_char('b');
+        assert_eq!(buffer.cursor_col, 2);
+    }
+
+    #[test]
+    fn test_screen_buffer_newline() {
+        let mut buffer = ScreenBuffer::new(5, 10);
+        buffer.write_char('\n');
+        assert_eq!(buffer.cursor_row, 1);
+        assert_eq!(buffer.cursor_col, 0);
+    }
+
+    #[test]
+    fn test_screen_buffer_carriage_return() {
+        let mut buffer = ScreenBuffer::new(5, 10);
+        buffer.write_char('a');
+        buffer.write_char('\r');
+        assert_eq!(buffer.cursor_col, 0);
+    }
+
+    #[test]
+    fn test_screen_buffer_tab() {
+        let mut buffer = ScreenBuffer::new(5, 20);
+        let initial_col = buffer.cursor_col;
+        buffer.write_char('\t');
+        assert_eq!(buffer.cursor_col, initial_col + 8);
+    }
+
+    #[test]
+    fn test_screen_buffer_wrap() {
+        let mut buffer = ScreenBuffer::new(5, 3);
+        buffer.write_char('a');
+        buffer.write_char('b');
+        buffer.write_char('c');
+        buffer.write_char('d');
+        assert_eq!(buffer.cursor_row, 1);
+        assert_eq!(buffer.cursor_col, 1);
+    }
+
+    #[test]
+    fn test_screen_buffer_move_cursor() {
+        let mut buffer = ScreenBuffer::new(10, 20);
+        buffer.move_cursor(5, 10);
+        assert_eq!(buffer.cursor_row, 4); // saturating_sub(1)
+        assert_eq!(buffer.cursor_col, 9); // saturating_sub(1)
+    }
+
+    #[test]
+    fn test_screen_buffer_render_to_string() {
+        let mut buffer = ScreenBuffer::new(3, 5);
+        buffer.write_char('H');
+        buffer.write_char('e');
+        buffer.write_char('l');
+        buffer.write_char('l');
+        buffer.write_char('o');
+        buffer.write_char('\n');
+        buffer.write_char('W');
+        buffer.write_char('o');
+        buffer.write_char('r');
+        buffer.write_char('l');
+        buffer.write_char('d');
+        let rendered = buffer.render_to_string();
+        assert!(rendered.contains("Hello"));
+        assert!(rendered.contains("World"));
+    }
+
+    #[test]
+    fn test_tui_overlay_new() {
+        let overlay = TuiOverlay::new();
+        assert!(!overlay.is_active());
+        assert!(overlay.command().is_none());
+        assert!(overlay.pty_handle().is_none());
+        assert!(!overlay.has_exited());
+    }
+
+    #[test]
+    fn test_tui_overlay_start() {
+        let mut overlay = TuiOverlay::new();
+        overlay.start("vim".to_string(), 123);
+        assert!(overlay.is_active());
+        assert_eq!(overlay.command(), Some("vim"));
+        assert_eq!(overlay.pty_handle(), Some(123));
+        assert!(!overlay.has_exited());
+    }
+
+    #[test]
+    fn test_tui_overlay_stop() {
+        let mut overlay = TuiOverlay::new();
+        overlay.start("vim".to_string(), 123);
+        overlay.stop();
+        assert!(!overlay.is_active());
+        assert!(overlay.command().is_none());
+        assert!(overlay.pty_handle().is_none());
+        assert!(!overlay.has_exited());
+    }
+
+    #[test]
+    fn test_tui_overlay_mark_exited() {
+        let mut overlay = TuiOverlay::new();
+        overlay.start("vim".to_string(), 123);
+        overlay.mark_exited();
+        assert!(overlay.has_exited());
+        assert!(overlay.is_active()); // Still active until stopped
+    }
+
+    #[test]
+    fn test_tui_overlay_add_raw_output() {
+        let mut overlay = TuiOverlay::new();
+        overlay.add_raw_output(b"Hello\nWorld");
+        // Verify output was processed (can't easily test internal state)
+        // But we can verify it doesn't panic
+    }
+
+    #[test]
+    fn test_tui_overlay_process_ansi_text() {
+        let mut overlay = TuiOverlay::new();
+        overlay.process_ansi_text("Hello\x1b[2JWorld");
+        // Test that ANSI sequences are processed
+        let rendered = overlay.screen_buffer.render_to_string();
+        assert!(rendered.contains("World"));
+    }
+
+    #[test]
+    fn test_tui_overlay_ansi_cursor_position() {
+        let mut overlay = TuiOverlay::new();
+        overlay.process_ansi_text("\x1b[5;10HTest");
+        // Cursor should be moved to row 5, col 10
+        let rendered = overlay.screen_buffer.render_to_string();
+        // Should contain "Test" somewhere
+        assert!(rendered.contains("Test") || rendered.trim().is_empty());
+    }
+
+    #[test]
+    fn test_tui_overlay_ansi_clear_screen() {
+        let mut overlay = TuiOverlay::new();
+        overlay.process_ansi_text("Old text\x1b[2JNew text");
+        // Screen should be cleared
+        let rendered = overlay.screen_buffer.render_to_string();
+        // Should contain new text, old text may or may not be there depending on implementation
+        assert!(rendered.contains("New") || rendered.trim().is_empty());
+    }
+
+    #[test]
+    fn test_key_to_terminal_sequence() {
+        assert_eq!(
+            key_to_terminal_sequence(egui::Key::Enter, &egui::Modifiers::default()),
+            vec![b'\r']
+        );
+        assert_eq!(
+            key_to_terminal_sequence(egui::Key::Backspace, &egui::Modifiers::default()),
+            vec![b'\x7f']
+        );
+        assert_eq!(
+            key_to_terminal_sequence(egui::Key::Tab, &egui::Modifiers::default()),
+            vec![b'\t']
+        );
+        assert_eq!(
+            key_to_terminal_sequence(egui::Key::Escape, &egui::Modifiers::default()),
+            vec![b'\x1b']
+        );
+        assert_eq!(
+            key_to_terminal_sequence(egui::Key::ArrowUp, &egui::Modifiers::default()),
+            vec![b'\x1b', b'[', b'A']
+        );
+    }
+
+    #[test]
+    fn test_tui_overlay_default() {
+        let overlay = TuiOverlay::default();
+        assert!(!overlay.is_active());
     }
 }

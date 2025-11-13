@@ -24,10 +24,27 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 ### Prerequisites
 
 - **Rust**: 1.90+ stable toolchain
-- **macOS**: 14.0+ (MVP platform)
-- **Dependencies**: zsh, fzf, eza, bat, rg, fd, jq (Oh My Zsh recommended)
+- **macOS**: 14.0+ (fully supported) or **Linux** (Ubuntu 20.04+, Fedora 34+, Debian 11+, or similar)
+- **Shell**: bash, zsh, or fish
+- **Optional**: fzf, eza, bat, rg, fd, jq (for enhanced CLI experience)
 
 ### Installation
+
+#### Option 1: Download Pre-built Release (Recommended)
+
+**macOS:**
+1. Download the latest `MosaicTerm-macos-{arm64|x64}.app.tar.gz` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
+2. Extract: `tar xzf MosaicTerm-macos-*.app.tar.gz`
+3. Move to Applications: `mv MosaicTerm.app /Applications/`
+4. Launch from Applications folder or Spotlight
+
+**Linux:**
+1. Download the latest `mosaicterm-linux-x64.tar.gz` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
+2. Extract: `tar xzf mosaicterm-linux-x64.tar.gz`
+3. Move to PATH: `sudo mv mosaicterm /usr/local/bin/`
+4. Run: `mosaicterm`
+
+#### Option 2: Build from Source
 
 ```bash
 # Clone the repository
@@ -45,19 +62,40 @@ cargo run --release
 3. Press Enter to execute - output appears in a new block above
 4. Scroll through command history while keeping the input prompt always visible
 
-## 📋 Requirements
-
-### System Requirements
-- **Operating System**: macOS 14.0+ (primary), Linux/Windows (planned)
-- **Memory**: 200MB RAM minimum
-- **Storage**: 50MB disk space
-
-### CLI Tool Integration
-MosaicTerm works best with modern CLI tools:
-- **Shell**: zsh (with Oh My Zsh)
-- **Search**: fzf, rg (ripgrep), fd
-- **Display**: bat (syntax highlighting), eza (modern ls)
-- **Processing**: jq (JSON), various development tools
+## 📋 Linux-Specific Notes
+- **Config Location**: Uses XDG Base Directory specification
+  - Primary: `$XDG_CONFIG_HOME/mosaicterm/config.toml` (defaults to `~/.config/mosaicterm/config.toml`)
+  - Fallback: `~/.mosaicterm/config.toml`
+- **Display Server**: Works with both X11 and Wayland
+- **Wayland Support**: 
+  - MosaicTerm automatically detects and configures for Wayland
+  - The application automatically forces integer DPI scaling (1x or 2x) to help prevent buffer size errors
+  - **If you still encounter "buffer size must be integer multiple of buffer_scale" errors:**
+    ```bash
+    # Option 1: Use X11 instead (MOST RELIABLE - recommended)
+    WINIT_UNIX_BACKEND=x11 mosaicterm
+    # Or set environment variable before running:
+    export WINIT_UNIX_BACKEND=x11
+    mosaicterm
+    
+    # Option 2: Disable fractional scaling in system settings
+    # GNOME: Settings > Displays > Scale to 100% or 200% (not 125%, 150%, etc.)
+    # KDE: System Settings > Display and Monitor > Scale Display to 100% or 200%
+    # Fedora: Settings > Displays > Fractional Scaling OFF, use 100% or 200%
+    
+    # Option 3: Force X11 via environment variable (persists across sessions)
+    echo 'export WINIT_UNIX_BACKEND=x11' >> ~/.bashrc  # or ~/.zshrc
+    ```
+  - **Why this happens**: Wayland requires buffer sizes to be integer multiples of the buffer scale. Even with integer DPI scaling, some window operations can create odd-sized buffers. This is a limitation in how egui/winit handles Wayland buffer creation.
+  - **Best solution**: Use X11 (`WINIT_UNIX_BACKEND=x11`) which doesn't have this limitation.
+- **Dependencies**: Most Linux distributions include required system libraries. If you encounter build issues, install:
+  ```bash
+  # Ubuntu/Debian
+  sudo apt-get install build-essential libssl-dev pkg-config libx11-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev
+  
+  # Fedora/RHEL
+  sudo dnf install gcc openssl-devel pkg-config libX11-devel libxcb-devel libxkbcommon-devel gtk3-devel
+  ```
 
 ## 🏗️ Architecture
 
@@ -99,6 +137,14 @@ MosaicTerm supports TOML-based configuration. Create `~/.config/mosaicterm/confi
 [ui]
 font_family = "JetBrains Mono"
 font_size = 12
+
+[key_bindings.bindings]
+# Interrupt/kill running command (default: Ctrl+C)
+interrupt = { key = "Ctrl+C", enabled = true }
+# Copy text (default: Ctrl+Shift+C to avoid conflict with interrupt)
+copy = { key = "Ctrl+Shift+C", enabled = true }
+# Clear screen (default: Ctrl+L)
+clear = { key = "Ctrl+L", enabled = true }
 theme_name = "default-dark"
 
 [terminal]
@@ -113,46 +159,30 @@ buffer_size = 1048576
 
 ### Custom Prompts
 
-MosaicTerm allows you to fully customize your command prompt with variable substitution:
-
-```toml
-[terminal]
-# Standard Unix-style
-prompt_format = "$USER@$HOSTNAME:$PWD$ "
-
-# Minimalist
-prompt_format = "$PWD > "
-
-# Multi-line with emoji
-prompt_format = "🚀 $USER@$HOSTNAME\n$PWD ❯ "
-```
-
-**Supported Variables:**
-- `$USER` - Current username
-- `$HOSTNAME` - System hostname
-- `$PWD` - Current working directory (with ~ for home)
-- `$HOME` - Home directory path
-- `$SHELL` - Current shell path
-
-📖 **[Full Custom Prompt Documentation](docs/CUSTOM_PROMPT.md)**
+MosaicTerm supports fully customizable prompts with variable substitution (`$USER`, `$HOSTNAME`, `$PWD`, etc.). See the **[Custom Prompt Guide](docs/CUSTOM_PROMPT.md)** for details and examples.
 
 ### Environment Variables
 
 - `MOSAICTERM_CONFIG`: Override default config path
 - `MOSAICTERM_LOG`: Set logging level (`error`, `warn`, `info`, `debug`, `trace`)
 
-## 🎯 Current Limitations
+## 🎯 Limitations
 
-### MVP Scope (Phase 4 - Active Development)
-- **Platform**: macOS 14+ only (Linux/Windows support planned)
-- **Shell**: zsh with basic integration (advanced plugin features developing)
-- **Features**: Core terminal functionality complete, advanced UI polish in progress
-- **Performance**: Target <16ms frame time, <200MB memory usage
+### Interactive Programs (TUI Applications)
 
-### Known Issues
-- Some placeholder implementations in test suite
-- Limited cross-platform testing
-- Advanced UI features still in development (see roadmap)
+MosaicTerm uses a **block-based command history** model that works great for standard CLI commands, but has limitations with full-screen interactive (TUI) applications like `vim`, `htop`, `nano`, `less`, `tmux`, etc.
+
+**What happens**: These programs expect full terminal control and may display garbled output or escape sequences as text. MosaicTerm will show a warning when you attempt to run them.
+
+**If you accidentally run one**: Right-click the command block and select "Kill Process", or press **Ctrl+C** to terminate it.
+
+**Recommended alternatives**:
+- **Text editing**: Use external editors (`open file.txt` on macOS, `xdg-open file.txt` on Linux)
+- **File viewing**: Use `cat`, `bat`, `head`, `tail` instead of `less`/`more`
+- **System monitoring**: Use `ps aux` instead of `htop`/`top`
+- **Git operations**: Use `git log`, `git status`, `git diff` instead of `tig`/`gitui`
+
+For full-screen interactive programs, use a traditional terminal emulator. Support for interactive programs is planned for a future release.
 
 ## 🗺️ Roadmap
 
@@ -172,7 +202,7 @@ prompt_format = "🚀 $USER@$HOSTNAME\n$PWD ❯ "
 - [ ] Inline search and filtering
 - [ ] Configuration hot-reload
 - [ ] Export blocks to markdown
-- [ ] Cross-platform builds (Linux/Windows)
+- [x] Cross-platform builds (Linux support complete)
 
 ### Future Goals
 - [ ] Plugin system architecture
@@ -231,30 +261,11 @@ cargo doc --open
 
 ### Releases
 
-MosaicTerm uses GitHub Actions for automated releases. To create a new release:
-
-1. **Update version** in `Cargo.toml`:
-   ```toml
-   version = "0.2.0"
-   ```
-
-2. **Create and push a version tag**:
-   ```bash
-   git tag v0.2.0
-   git push origin v0.2.0
-   ```
-
-3. **GitHub Actions will automatically**:
-   - Build binaries for Linux, macOS, and Windows
-   - Run the full test suite
-   - Create a GitHub release with downloadable binaries
-   - Generate release notes
-
-Alternatively, you can trigger a release manually from the [Actions tab](https://github.com/djdanielsson/mosaicterm/actions) by running the "Release" workflow.
+Releases are automated via GitHub Actions. Create a version tag (e.g., `v0.2.0`) and push it to trigger automated builds for all platforms.
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions! 
 
 ### Development Setup
 
@@ -286,23 +297,20 @@ MosaicTerm uses GitHub Actions for automated code quality checks. The following 
 - `src/`: Main application code
 - `tests/`: Test suites (unit, integration, contract)
 - `benches/`: Performance benchmarks
-- `docs/`: Documentation (planned)
+- `docs/`: Documentation (architecture, guides)
 
 ## 📚 Documentation
 
+- **[Architecture Guide](docs/ARCHITECTURE.md)**: System architecture and design patterns
+- **[Custom Prompt Guide](docs/CUSTOM_PROMPT.md)**: How to customize your command prompt
 - **[Specification](specs/001-mosaicterm-terminal-emulator/spec.md)**: Feature requirements and design
 - **[Implementation Plan](specs/001-mosaicterm-terminal-emulator/plan.md)**: Technical architecture
 - **[Tasks](specs/001-mosaicterm-terminal-emulator/tasks.md)**: Development roadmap
 - **[Contracts](specs/001-mosaicterm-terminal-emulator/contracts/)**: API specifications
 
-## 🐛 Issue Tracking
+## 🐛 Issues & Support
 
-Found a bug or have a feature request? Please [open an issue](https://github.com/djdanielsson/mosaicterm/issues) with:
-
-- Clear description of the issue
-- Steps to reproduce (if applicable)
-- Expected vs. actual behavior
-- System information (OS, Rust version)
+Found a bug or have a feature request? Please [open an issue](https://github.com/djdanielsson/mosaicterm/issues) or start a [discussion](https://github.com/djdanielsson/mosaicterm/discussions).
 
 ## 📄 License
 
@@ -314,11 +322,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Alacritty**: Terminal emulation techniques and ANSI handling
 - **WezTerm**: Cross-platform PTY management patterns
 - **egui**: Modern immediate mode GUI framework
-
-## 📞 Contact
-
-- **Issues**: [GitHub Issues](https://github.com/djdanielsson/mosaicterm/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/djdanielsson/mosaicterm/discussions)
 
 ---
 

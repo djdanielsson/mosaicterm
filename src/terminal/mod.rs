@@ -126,13 +126,21 @@ impl Terminal {
         let session = &self.state.session;
 
         // Determine shell command and args based on shell type
-        // Use arguments that prevent config file loading to ensure PS1 suppression works
+        // Use arguments that prevent config file loading AND disable interactive features
+        // This prevents echo and other interactive behaviors
         let (shell_command, shell_args) = match session.shell_type {
             crate::models::ShellType::Bash => (
                 "bash".to_string(),
-                vec!["--norc".to_string(), "--noprofile".to_string()],
+                vec![
+                    "--norc".to_string(),
+                    "--noprofile".to_string(),
+                    "--noediting".to_string(),
+                ],
             ),
-            crate::models::ShellType::Zsh => ("zsh".to_string(), vec!["-f".to_string()]), // -f = no .zshrc
+            crate::models::ShellType::Zsh => (
+                "zsh".to_string(),
+                vec!["-f".to_string(), "+Z".to_string()], // -f = no .zshrc, +Z = no zle (line editor)
+            ),
             crate::models::ShellType::Fish => ("fish".to_string(), vec!["--no-config".to_string()]),
             crate::models::ShellType::Ksh => ("ksh".to_string(), vec![]),
             crate::models::ShellType::Csh => ("csh".to_string(), vec![]),

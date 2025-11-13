@@ -327,4 +327,152 @@ mod tests {
         popup.select_next();
         assert_eq!(popup.selected_index, 0);
     }
+
+    #[test]
+    fn test_get_selected_item() {
+        let mut popup = CompletionPopup::new();
+        let result = CompletionResult {
+            suggestions: vec![
+                CompletionItem {
+                    text: "test1".to_string(),
+                    label: "test1".to_string(),
+                    item_type: CompletionItemType::File,
+                    description: None,
+                },
+                CompletionItem {
+                    text: "test2".to_string(),
+                    label: "test2".to_string(),
+                    item_type: CompletionItemType::File,
+                    description: None,
+                },
+            ],
+            prefix: "te".to_string(),
+            completion_type: CompletionType::Path,
+        };
+
+        popup.show(result, egui::pos2(0.0, 0.0));
+        assert_eq!(popup.get_selected_item().unwrap().text, "test1");
+
+        popup.select_next();
+        assert_eq!(popup.get_selected_item().unwrap().text, "test2");
+    }
+
+    #[test]
+    fn test_get_selected_item_empty() {
+        let popup = CompletionPopup::new();
+        assert!(popup.get_selected_item().is_none());
+    }
+
+    #[test]
+    fn test_select_previous_wraps() {
+        let mut popup = CompletionPopup::new();
+        let result = CompletionResult {
+            suggestions: vec![
+                CompletionItem {
+                    text: "test1".to_string(),
+                    label: "test1".to_string(),
+                    item_type: CompletionItemType::File,
+                    description: None,
+                },
+                CompletionItem {
+                    text: "test2".to_string(),
+                    label: "test2".to_string(),
+                    item_type: CompletionItemType::File,
+                    description: None,
+                },
+            ],
+            prefix: "te".to_string(),
+            completion_type: CompletionType::Path,
+        };
+
+        popup.show(result, egui::pos2(0.0, 0.0));
+        assert_eq!(popup.selected_index, 0);
+
+        popup.select_previous(); // Should wrap to last item
+        assert_eq!(popup.selected_index, 1);
+    }
+
+    #[test]
+    fn test_show_with_empty_result() {
+        let mut popup = CompletionPopup::new();
+        let empty_result = CompletionResult {
+            suggestions: vec![],
+            prefix: "te".to_string(),
+            completion_type: CompletionType::Path,
+        };
+
+        popup.show(empty_result, egui::pos2(0.0, 0.0));
+        // Should not show if empty
+        assert!(!popup.is_visible());
+    }
+
+    #[test]
+    fn test_completion_result_accessor() {
+        let mut popup = CompletionPopup::new();
+        let result = CompletionResult {
+            suggestions: vec![CompletionItem {
+                text: "test".to_string(),
+                label: "test".to_string(),
+                item_type: CompletionItemType::File,
+                description: None,
+            }],
+            prefix: "te".to_string(),
+            completion_type: CompletionType::Path,
+        };
+
+        popup.show(result.clone(), egui::pos2(0.0, 0.0));
+        assert!(popup.completion_result().is_some());
+        assert_eq!(popup.completion_result().unwrap().len(), 1);
+
+        popup.hide();
+        assert!(popup.completion_result().is_none());
+    }
+
+    #[test]
+    fn test_default_implementation() {
+        let popup = CompletionPopup::default();
+        assert!(!popup.is_visible());
+        assert_eq!(popup.selected_index, 0);
+    }
+
+    #[test]
+    fn test_select_next_empty() {
+        let mut popup = CompletionPopup::new();
+        // Should not panic when no completion result
+        popup.select_next();
+        assert_eq!(popup.selected_index, 0);
+    }
+
+    #[test]
+    fn test_select_previous_empty() {
+        let mut popup = CompletionPopup::new();
+        // Should not panic when no completion result
+        popup.select_previous();
+        assert_eq!(popup.selected_index, 0);
+    }
+
+    #[test]
+    fn test_hide_resets_state() {
+        let mut popup = CompletionPopup::new();
+        let result = CompletionResult {
+            suggestions: vec![CompletionItem {
+                text: "test".to_string(),
+                label: "test".to_string(),
+                item_type: CompletionItemType::File,
+                description: None,
+            }],
+            prefix: "te".to_string(),
+            completion_type: CompletionType::Path,
+        };
+
+        popup.show(result, egui::pos2(10.0, 20.0));
+        popup.select_next();
+        assert_eq!(popup.selected_index, 0); // Wraps around
+
+        popup.hide();
+        assert!(!popup.is_visible());
+        assert_eq!(popup.selected_index, 0);
+        assert!(popup.completion_result().is_none());
+        assert!(popup.position.is_none());
+    }
 }

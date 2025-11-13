@@ -83,4 +83,4 @@ Constitutional changes require:
 - Review and approval by project stakeholders
 - Migration plan for existing code if needed
 
-**Version**: 1.1.0 | **Ratified**: 2025-09-17 | **Last Amended**: 2025-09-17
+**Version**: 1.2.0 | **Ratified**: 2025-09-17 | **Last Amended**: 2025-11-11
