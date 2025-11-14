@@ -4,7 +4,7 @@
 //! and provides search functionality (fuzzy or regex-based).
 
 use std::collections::VecDeque;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
@@ -102,7 +102,7 @@ impl HistoryManager {
 
         // Remove duplicates - keep only the most recent occurrence
         self.history.retain(|c| c != &command);
-        
+
         // Add to end
         self.history.push_back(command.clone());
 
@@ -133,13 +133,14 @@ impl HistoryManager {
         }
 
         let query_lower = query.to_lowercase();
-        
+
         // Try fuzzy matching first
-        let mut results: Vec<(usize, String)> = self.history
+        let mut results: Vec<(usize, String)> = self
+            .history
             .iter()
             .filter_map(|entry| {
                 let entry_lower = entry.to_lowercase();
-                
+
                 // Simple fuzzy matching: check if all query chars appear in order
                 let score = fuzzy_score(&query_lower, &entry_lower);
                 if score > 0 {
@@ -152,10 +153,11 @@ impl HistoryManager {
 
         // Sort by score (descending) and recency (later entries are better)
         results.sort_by(|a, b| b.0.cmp(&a.0));
-        
+
         // Remove duplicates while preserving order
         let mut seen = std::collections::HashSet::new();
-        results.into_iter()
+        results
+            .into_iter()
             .filter_map(|(_, entry)| {
                 if seen.insert(entry.clone()) {
                     Some(entry)
@@ -169,19 +171,21 @@ impl HistoryManager {
     /// Search history with regex
     pub fn search_regex(&self, pattern: &str) -> Result<Vec<String>> {
         let re = regex::Regex::new(pattern)?;
-        
-        let mut results: Vec<String> = self.history
+
+        let mut results: Vec<String> = self
+            .history
             .iter()
             .filter(|entry| re.is_match(entry))
             .cloned()
             .collect();
-        
+
         // Reverse to show most recent first
         results.reverse();
-        
+
         // Remove duplicates
         let mut seen = std::collections::HashSet::new();
-        Ok(results.into_iter()
+        Ok(results
+            .into_iter()
             .filter(|entry| seen.insert(entry.clone()))
             .collect())
     }
@@ -214,12 +218,12 @@ impl Default for HistoryManager {
 fn fuzzy_score(query: &str, target: &str) -> usize {
     let query_chars: Vec<char> = query.chars().collect();
     let target_chars: Vec<char> = target.chars().collect();
-    
+
     let mut query_idx = 0;
     let mut target_idx = 0;
     let mut score = 0;
     let mut consecutive = 0;
-    
+
     while query_idx < query_chars.len() && target_idx < target_chars.len() {
         if query_chars[query_idx] == target_chars[target_idx] {
             score += 1 + consecutive * 5; // Bonus for consecutive matches
@@ -230,7 +234,7 @@ fn fuzzy_score(query: &str, target: &str) -> usize {
         }
         target_idx += 1;
     }
-    
+
     // Only count as a match if all query characters were found
     if query_idx == query_chars.len() {
         score
@@ -261,35 +265,58 @@ mod tests {
 
     #[test]
     fn test_search_empty_query() {
-        let mut manager = HistoryManager::default();
+        // Create manager with temp file to avoid loading existing history
+        let temp_file = std::env::temp_dir().join("test_history_empty.txt");
+        let mut manager =
+            HistoryManager::with_path(temp_file.clone()).unwrap_or_else(|_| HistoryManager {
+                history_file: temp_file,
+                history: VecDeque::new(),
+                max_size: MAX_HISTORY_ENTRIES,
+            });
+        manager.history.clear(); // Ensure empty
         manager.history.push_back("ls".to_string());
         manager.history.push_back("pwd".to_string());
-        
+
         let results = manager.search("");
         assert_eq!(results.len(), 2);
     }
 
     #[test]
     fn test_search_fuzzy() {
-        let mut manager = HistoryManager::default();
+        // Create manager with temp file to avoid loading existing history
+        let temp_file = std::env::temp_dir().join("test_history_fuzzy.txt");
+        let mut manager =
+            HistoryManager::with_path(temp_file.clone()).unwrap_or_else(|_| HistoryManager {
+                history_file: temp_file,
+                history: VecDeque::new(),
+                max_size: MAX_HISTORY_ENTRIES,
+            });
+        manager.history.clear(); // Ensure empty
         manager.history.push_back("git status".to_string());
         manager.history.push_back("git commit".to_string());
         manager.history.push_back("ls -la".to_string());
-        
+
         let results = manager.search("gst");
         assert!(results.iter().any(|r| r.contains("git status")));
     }
 
     #[test]
     fn test_add_removes_duplicates() {
-        let mut manager = HistoryManager::default();
+        // Create manager with temp file to avoid loading existing history
+        let temp_file = std::env::temp_dir().join("test_history_dupes.txt");
+        let mut manager =
+            HistoryManager::with_path(temp_file.clone()).unwrap_or_else(|_| HistoryManager {
+                history_file: temp_file,
+                history: VecDeque::new(),
+                max_size: MAX_HISTORY_ENTRIES,
+            });
+        manager.history.clear(); // Ensure empty
         manager.add("ls".to_string()).unwrap();
         manager.add("pwd".to_string()).unwrap();
         manager.add("ls".to_string()).unwrap();
-        
+
         // Should only have 2 entries, with "ls" at the end
         assert_eq!(manager.history.len(), 2);
         assert_eq!(manager.history.back().unwrap(), "ls");
     }
 }
-

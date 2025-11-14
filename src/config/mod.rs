@@ -161,7 +161,7 @@ pub struct TimeoutConfig {
 impl Default for TimeoutConfig {
     fn default() -> Self {
         Self {
-            regular_command_timeout_secs: 0, // Disabled by default
+            regular_command_timeout_secs: 0,     // Disabled by default
             interactive_command_timeout_secs: 0, // Disabled by default
             kill_on_timeout: false,
             kill_grace_period_secs: 5,

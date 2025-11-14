@@ -133,12 +133,13 @@ impl InputPrompt {
                         .margin(egui::Vec2::new(10.0, 8.0))
                         .text_color_opt(Some(egui::Color32::from_rgb(220, 220, 240))),
                 );
-                
+
                 // Request focus and move cursor to end if needed (e.g., after completion)
                 if self.request_focus {
                     input_response.request_focus();
                     // Force cursor to the stored position by modifying the widget state
-                    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), input_response.id) {
+                    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), input_response.id)
+                    {
                         let ccursor = egui::text::CCursor::new(self.cursor_position);
                         state.set_ccursor_range(Some(egui::text::CCursorRange::one(ccursor)));
                         state.store(ui.ctx(), input_response.id);
@@ -237,14 +238,14 @@ impl InputPrompt {
     pub fn add_to_history(&mut self, command: String) {
         if !command.trim().is_empty() {
             eprintln!("DEBUG: Adding command to history: {}", command);
-            
+
             // Remove the command if it already exists (to avoid duplicates in different positions)
             // but add it again at the end as the most recent command
             if let Some(pos) = self.history.iter().position(|c| c == &command) {
                 self.history.remove(pos);
                 eprintln!("DEBUG: Removed duplicate at position: {}", pos);
             }
-            
+
             self.history.push_back(command.clone());
             eprintln!("DEBUG: History size after add: {}", self.history.len());
             eprintln!("DEBUG: History contents: {:?}", self.history);
@@ -253,7 +254,7 @@ impl InputPrompt {
             while self.history.len() > self.max_history {
                 self.history.pop_front();
             }
-            
+
             // Reset history position when adding new command
             self.history_position = None;
         }
@@ -266,7 +267,11 @@ impl InputPrompt {
             return;
         }
 
-        eprintln!("DEBUG: History size: {}, Current position: {:?}", self.history.len(), self.history_position);
+        eprintln!(
+            "DEBUG: History size: {}, Current position: {:?}",
+            self.history.len(),
+            self.history_position
+        );
         eprintln!("DEBUG: History contents: {:?}", self.history);
 
         let position = match self.history_position {
@@ -331,7 +336,7 @@ impl InputPrompt {
         self.cursor_position = self.current_input.len();
         self.request_focus = true; // Request focus to move cursor to end
     }
-    
+
     /// Set current input text and explicit cursor position
     pub fn set_input_with_cursor(&mut self, text: String, cursor_pos: usize) {
         // Only reset history position if the text actually changed from user input
@@ -488,11 +493,12 @@ mod tests {
 
         prompt.add_to_history("echo hello".to_string());
         prompt.add_to_history("ls -la".to_string());
-        prompt.add_to_history("echo hello".to_string()); // Duplicate, should not be added
+        prompt.add_to_history("echo hello".to_string()); // Duplicate, should be moved to end
 
         assert_eq!(prompt.history().len(), 2);
-        assert_eq!(prompt.history()[0], "echo hello");
-        assert_eq!(prompt.history()[1], "ls -la");
+        // After adding duplicate "echo hello", it should be moved to the end
+        assert_eq!(prompt.history()[0], "ls -la");
+        assert_eq!(prompt.history()[1], "echo hello");
     }
 
     #[test]

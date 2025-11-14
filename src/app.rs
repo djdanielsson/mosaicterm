@@ -233,11 +233,10 @@ impl MosaicTermApp {
             metrics_panel,
             runtime_config,
             completion_provider: CompletionProvider::new(),
-            history_manager: mosaicterm::history::HistoryManager::new()
-                .unwrap_or_else(|e| {
-                    error!("Failed to create history manager: {}", e);
-                    mosaicterm::history::HistoryManager::default()
-                }),
+            history_manager: mosaicterm::history::HistoryManager::new().unwrap_or_else(|e| {
+                error!("Failed to create history manager: {}", e);
+                mosaicterm::history::HistoryManager::default()
+            }),
             history_search_active: false,
             history_search_query: String::new(),
             prompt_formatter,
@@ -395,7 +394,7 @@ impl MosaicTermApp {
         }
 
         info!("Processing command: {}", command);
-        
+
         // Add command to persistent history
         if let Err(e) = self.history_manager.add(command.clone()) {
             warn!("Failed to add command to history: {}", e);
@@ -483,11 +482,14 @@ impl MosaicTermApp {
                 if let Err(e) = pty_manager.send_input(handle, cmd.as_bytes()).await {
                     warn!("Failed to send input to PTY: {}", e);
                 }
-                
+
                 // Send a command to echo the exit code after the command completes
                 // Use a unique marker so we can detect it
                 let exit_code_cmd = "echo \"MOSAICTERM_EXITCODE:$?\"\n";
-                if let Err(e) = pty_manager.send_input(handle, exit_code_cmd.as_bytes()).await {
+                if let Err(e) = pty_manager
+                    .send_input(handle, exit_code_cmd.as_bytes())
+                    .await
+                {
                     warn!("Failed to send exit code check to PTY: {}", e);
                 }
             }
@@ -1083,30 +1085,37 @@ impl MosaicTermApp {
         // This is the polite way - gives the process a chance to clean up
         info!("Sending Ctrl+C to PTY");
         let _ = pty_manager.send_input(&pty_handle, &[3]).await;
-        
+
         // Get the shell PID
         if let Ok(pty_info) = pty_manager.get_info(&pty_handle) {
             if let Some(shell_pid) = pty_info.pid {
                 #[cfg(unix)]
                 {
                     use nix::sys::signal::Signal;
-                    
+
                     info!("Killing process tree for shell PID: {}", shell_pid);
-                    
+
                     // Kill the entire process tree (shell + all children)
                     // This ensures long-running commands like sleep, find, etc. are all killed
-                    if let Err(e) = mosaicterm::pty::process_tree::kill_process_tree(shell_pid, Signal::SIGINT) {
+                    if let Err(e) =
+                        mosaicterm::pty::process_tree::kill_process_tree(shell_pid, Signal::SIGINT)
+                    {
                         warn!("Failed to kill process tree: {}", e);
                     }
-                    
+
                     // Wait a moment for processes to terminate gracefully
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    
+
                     // If still running, force kill with SIGKILL
-                    if let Ok(children) = mosaicterm::pty::process_tree::get_all_descendant_pids(shell_pid) {
+                    if let Ok(children) =
+                        mosaicterm::pty::process_tree::get_all_descendant_pids(shell_pid)
+                    {
                         if !children.is_empty() {
                             info!("Some processes still running, sending SIGKILL");
-                            let _ = mosaicterm::pty::process_tree::kill_process_tree(shell_pid, Signal::SIGKILL);
+                            let _ = mosaicterm::pty::process_tree::kill_process_tree(
+                                shell_pid,
+                                Signal::SIGKILL,
+                            );
                         }
                     }
                 }
@@ -1584,7 +1593,7 @@ impl MosaicTermApp {
                 .get_command_history()
                 .iter()
                 .any(|block| block.is_running());
-            
+
             if has_running_command {
                 // Ctrl+C to interrupt current command
                 self.handle_interrupt_command();
@@ -1593,13 +1602,13 @@ impl MosaicTermApp {
             }
             // If no running command, let the input field handle it normally
         }
-        
+
         // Ctrl+L works ALWAYS, even when input is focused - clears screen
         if ctx.input(|i| i.key_pressed(egui::Key::L) && i.modifiers.ctrl) {
             self.handle_clear_screen();
             ctx.input_mut(|i| i.events.clear());
         }
-        
+
         // Ctrl+R works ALWAYS, even when input is focused - opens history search
         if ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl) {
             self.history_search_active = !self.history_search_active;
@@ -1608,7 +1617,7 @@ impl MosaicTermApp {
             }
             ctx.input_mut(|i| i.events.clear());
         }
-        
+
         // Only handle other shortcuts when no text input is focused
         if ctx.memory(|mem| mem.focus().is_none()) {
             // Application shortcuts
@@ -1991,7 +2000,7 @@ impl MosaicTermApp {
                 self.completion_popup.hide();
             }
         }
-        
+
         // Render history search popup if active
         if self.history_search_active {
             self.render_history_search_popup(ui.ctx(), input_rect);
@@ -2066,7 +2075,7 @@ impl MosaicTermApp {
         } else {
             // Completing argument (path) - append to existing path
             let last_part = parts.last().unwrap_or(&"");
-            
+
             // Find where the last path component starts
             // Handle cases like "cd Desktop/Do" -> "cd Desktop/Documents/"
             let last_slash_pos = last_part.rfind('/');
@@ -2075,26 +2084,25 @@ impl MosaicTermApp {
             } else {
                 ""
             };
-            
+
             // Build the new last part by combining prefix and completion
             let new_last_part = if prefix.is_empty() {
                 completion.to_string()
             } else {
                 format!("{}{}", prefix, completion)
             };
-            
+
             // Replace the last part with the completed version
             let mut new_parts = parts[..parts.len() - 1].to_vec();
             new_parts.push(&new_last_part);
-            let result = new_parts.join(" ");
-            
+
             // Don't add space after directories to allow continuing to tab through subdirs
-            result
+            new_parts.join(" ")
         };
 
         self.input_prompt.set_input(new_input);
     }
-    
+
     /// Render the history search popup (Ctrl+R)
     fn render_history_search_popup(&mut self, ctx: &egui::Context, input_rect: egui::Rect) {
         // Position popup above the input
@@ -2102,7 +2110,7 @@ impl MosaicTermApp {
         let popup_height = 400.0;
         let popup_x = input_rect.left();
         let popup_y = input_rect.top() - popup_height - 10.0;
-        
+
         // Create popup above input
         egui::Area::new("history_search")
             .fixed_pos(egui::pos2(popup_x, popup_y))
@@ -2110,26 +2118,38 @@ impl MosaicTermApp {
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
                     .fill(egui::Color32::from_rgb(30, 30, 40))
-                    .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 150, 255)))
+                    .stroke(egui::Stroke::new(
+                        2.0,
+                        egui::Color32::from_rgb(100, 150, 255),
+                    ))
                     .show(ui, |ui| {
                         ui.set_width(popup_width);
                         ui.set_height(popup_height);
-                        
+
                         ui.vertical(|ui| {
                             // Title
                             ui.horizontal(|ui| {
-                                ui.heading(egui::RichText::new("🔍 Search Command History (Ctrl+R)")
-                                    .color(egui::Color32::from_rgb(150, 200, 255)));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(egui::RichText::new("↑↓ navigate • Enter to select • Esc to close")
-                                        .color(egui::Color32::GRAY)
-                                        .size(11.0));
-                                });
+                                ui.heading(
+                                    egui::RichText::new("🔍 Search Command History (Ctrl+R)")
+                                        .color(egui::Color32::from_rgb(150, 200, 255)),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            egui::RichText::new(
+                                                "↑↓ navigate • Enter to select • Esc to close",
+                                            )
+                                            .color(egui::Color32::GRAY)
+                                            .size(11.0),
+                                        );
+                                    },
+                                );
                             });
-                            
+
                             ui.separator();
                             ui.add_space(8.0);
-                            
+
                             // Search input - always request focus
                             let search_id = egui::Id::new("history_search_input");
                             let search_response = ui.add(
@@ -2137,24 +2157,24 @@ impl MosaicTermApp {
                                     .hint_text("Type to search... (fuzzy matching)")
                                     .font(egui::FontId::monospace(14.0))
                                     .desired_width(f32::INFINITY)
-                                    .id(search_id)
+                                    .id(search_id),
                             );
-                            
+
                             // Force focus on the search input
                             ui.memory_mut(|mem| mem.request_focus(search_id));
                             search_response.request_focus();
-                            
+
                             ui.add_space(8.0);
                             ui.separator();
                             ui.add_space(8.0);
-                            
+
                             // Search results
                             let results = self.history_manager.search(&self.history_search_query);
-                            
+
                             // Handle arrow key navigation (check if search field is focused)
                             let selected_idx = self.state_manager.get_history_search_selected();
                             let search_has_focus = ui.memory(|mem| mem.focus() == Some(search_id));
-                            
+
                             if search_has_focus || search_response.has_focus() {
                                 if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
                                     let new_selected = if results.is_empty() {
@@ -2168,7 +2188,9 @@ impl MosaicTermApp {
                                     let new_selected = selected_idx.saturating_sub(1);
                                     self.state_manager.set_history_search_selected(new_selected);
                                     ctx.input_mut(|i| i.events.clear()); // Consume event
-                                } else if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !results.is_empty() {
+                                } else if ctx.input(|i| i.key_pressed(egui::Key::Enter))
+                                    && !results.is_empty()
+                                {
                                     // Select the highlighted command
                                     if let Some(command) = results.get(selected_idx) {
                                         self.input_prompt.set_input(command.clone());
@@ -2178,20 +2200,27 @@ impl MosaicTermApp {
                                     }
                                 }
                             }
-                            
+
                             egui::ScrollArea::vertical()
                                 .max_height(280.0)
                                 .show(ui, |ui| {
                                     if results.is_empty() {
-                                        ui.label(egui::RichText::new("No matching commands found")
-                                            .color(egui::Color32::GRAY)
-                                            .italics());
+                                        ui.label(
+                                            egui::RichText::new("No matching commands found")
+                                                .color(egui::Color32::GRAY)
+                                                .italics(),
+                                        );
                                     } else {
-                                        ui.label(egui::RichText::new(format!("{} commands found", results.len()))
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "{} commands found",
+                                                results.len()
+                                            ))
                                             .color(egui::Color32::GRAY)
-                                            .size(11.0));
+                                            .size(11.0),
+                                        );
                                         ui.add_space(4.0);
-                                        
+
                                         for (idx, command) in results.iter().enumerate().take(50) {
                                             let is_selected = idx == selected_idx;
                                             let response = ui.add(
@@ -2202,7 +2231,7 @@ impl MosaicTermApp {
                                                             egui::Color32::from_rgb(255, 255, 255)
                                                         } else {
                                                             egui::Color32::from_rgb(200, 200, 220)
-                                                        })
+                                                        }),
                                                 )
                                                 .fill(if is_selected {
                                                     egui::Color32::from_rgb(60, 100, 180)
@@ -2212,16 +2241,16 @@ impl MosaicTermApp {
                                                     egui::Color32::from_rgb(20, 20, 30)
                                                 })
                                                 .frame(false)
-                                                .min_size(egui::vec2(ui.available_width(), 28.0))
+                                                .min_size(egui::vec2(ui.available_width(), 28.0)),
                                             );
-                                            
+
                                             if response.clicked() {
                                                 // Apply the selected command to input
                                                 self.input_prompt.set_input(command.clone());
                                                 self.history_search_active = false;
                                                 self.state_manager.set_history_search_selected(0);
                                             }
-                                            
+
                                             if response.hovered() {
                                                 self.state_manager.set_history_search_selected(idx);
                                             }
@@ -2231,7 +2260,7 @@ impl MosaicTermApp {
                         });
                     });
             });
-        
+
         // Handle Escape to close
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.history_search_active = false;
@@ -2621,36 +2650,44 @@ impl MosaicTermApp {
                                         let command_text = last_block.command.trim().to_string();
                                         let command_text_for_log = last_block.command.clone();
                                         let current_output_count = last_block.output.len();
-                                        
+
                                         // Check for exit code marker first
                                         let mut found_exit_code: Option<i32> = None;
                                         for line in ready_lines.iter() {
                                             let line_text = line.text.trim();
                                             if line_text.starts_with("MOSAICTERM_EXITCODE:") {
-                                                if let Some(exit_code_str) = line_text.strip_prefix("MOSAICTERM_EXITCODE:") {
-                                                    if let Ok(exit_code) = exit_code_str.trim().parse::<i32>() {
+                                                if let Some(exit_code_str) =
+                                                    line_text.strip_prefix("MOSAICTERM_EXITCODE:")
+                                                {
+                                                    if let Ok(exit_code) =
+                                                        exit_code_str.trim().parse::<i32>()
+                                                    {
                                                         found_exit_code = Some(exit_code);
                                                         break;
                                                     }
                                                 }
                                             }
                                         }
-                                        
+
                                         // Apply exit code if found
                                         if let Some(exit_code) = found_exit_code {
-                                            let elapsed_ms = if let Some(start_time) = last_command_time {
-                                                start_time.elapsed().as_millis()
-                                            } else {
-                                                0
-                                            };
-                                            
+                                            let elapsed_ms =
+                                                if let Some(start_time) = last_command_time {
+                                                    start_time.elapsed().as_millis()
+                                                } else {
+                                                    0
+                                                };
+
                                             if exit_code == 0 {
                                                 last_block.mark_completed(
                                                     std::time::Duration::from_millis(
                                                         elapsed_ms.try_into().unwrap_or(1000),
                                                     ),
                                                 );
-                                                debug!("✅ Command completed with exit code 0: {}", command_text_for_log);
+                                                debug!(
+                                                    "✅ Command completed with exit code 0: {}",
+                                                    command_text_for_log
+                                                );
                                             } else {
                                                 last_block.mark_failed(
                                                     std::time::Duration::from_millis(
@@ -2658,7 +2695,10 @@ impl MosaicTermApp {
                                                     ),
                                                     exit_code,
                                                 );
-                                                debug!("❌ Command failed with exit code {}: {}", exit_code, command_text_for_log);
+                                                debug!(
+                                                    "❌ Command failed with exit code {}: {}",
+                                                    exit_code, command_text_for_log
+                                                );
                                             }
                                             should_clear_command_time = true;
                                         }
@@ -2682,7 +2722,7 @@ impl MosaicTermApp {
                                             let should_skip = line_text == command_text
                                                 || (is_first_few_lines
                                                     && !line_text.is_empty()
-                                                    && command_text.starts_with(&line_text)
+                                                    && command_text.starts_with(line_text)
                                                     && line_text.len() <= 3) // Only skip very short prefixes
                                                 || line_text.contains("^C") // Skip any line with Ctrl+C echo
                                                 || line_text.is_empty(); // Skip empty lines
