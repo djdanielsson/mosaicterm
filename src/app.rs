@@ -128,6 +128,12 @@ pub struct MosaicTermApp {
     runtime_config: RuntimeConfig,
     /// Completion provider
     completion_provider: CompletionProvider,
+    /// History manager for persistent command history
+    history_manager: mosaicterm::history::HistoryManager,
+    /// Flag to show history search popup
+    history_search_active: bool,
+    /// Current history search query
+    history_search_query: String,
     /// Prompt formatter for custom prompts
     prompt_formatter: PromptFormatter,
     /// Tokio runtime for async operations
@@ -227,6 +233,13 @@ impl MosaicTermApp {
             metrics_panel,
             runtime_config,
             completion_provider: CompletionProvider::new(),
+            history_manager: mosaicterm::history::HistoryManager::new()
+                .unwrap_or_else(|e| {
+                    error!("Failed to create history manager: {}", e);
+                    mosaicterm::history::HistoryManager::default()
+                }),
+            history_search_active: false,
+            history_search_query: String::new(),
             prompt_formatter,
             runtime,
             async_tx: request_tx,
@@ -382,6 +395,11 @@ impl MosaicTermApp {
         }
 
         info!("Processing command: {}", command);
+        
+        // Add command to persistent history
+        if let Err(e) = self.history_manager.add(command.clone()) {
+            warn!("Failed to add command to history: {}", e);
+        }
 
         // Check if this is a TUI command that should open in fullscreen overlay
         if self.is_tui_command(&command) {
@@ -1582,6 +1600,15 @@ impl MosaicTermApp {
             ctx.input_mut(|i| i.events.clear());
         }
         
+        // Ctrl+R works ALWAYS, even when input is focused - opens history search
+        if ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl) {
+            self.history_search_active = !self.history_search_active;
+            if self.history_search_active {
+                self.history_search_query.clear();
+            }
+            ctx.input_mut(|i| i.events.clear());
+        }
+        
         // Only handle other shortcuts when no text input is focused
         if ctx.memory(|mem| mem.focus().is_none()) {
             // Application shortcuts
@@ -1864,11 +1891,11 @@ impl MosaicTermApp {
                 // Check if input changed (for filtering)
                 let input_changed = old_input != current_input;
 
-                // Update the input prompt with the current input
-                self.input_prompt.set_input(current_input.clone());
-
-                // If completion was just applied, move cursor to end
-                if self.state_manager.completion_just_applied() {
+                // Update the input prompt with the current input (but avoid resetting if completion was just applied)
+                if !self.state_manager.completion_just_applied() {
+                    self.input_prompt.set_input(current_input.clone());
+                } else {
+                    // Completion was just applied, force cursor to end
                     if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), input_response.id)
                     {
                         let ccursor = egui::text::CCursor::new(current_input.len());
@@ -1878,72 +1905,75 @@ impl MosaicTermApp {
                     self.state_manager.set_completion_just_applied(false);
                 }
 
-                // Handle keys based on popup state
-                if self.completion_popup.is_visible() {
-                    // Popup is open - Tab/arrows navigate, Enter selects, Escape closes
-                    if tab_pressed || down_pressed {
-                        self.completion_popup.select_next();
-                    } else if up_pressed {
-                        self.completion_popup.select_previous();
-                    } else if escape_pressed {
-                        self.completion_popup.hide();
-                    } else if input_changed {
-                        // Update completions when typing
-                        let working_dir = self
-                            .terminal
-                            .as_ref()
-                            .map(|t| t.get_working_directory().to_path_buf())
-                            .unwrap_or_else(|| {
-                                std::env::current_dir()
-                                    .unwrap_or_else(|_| std::path::PathBuf::from("/"))
-                            });
-                        if let Ok(result) = self
-                            .completion_provider
-                            .get_completions(&current_input, &working_dir)
-                        {
-                            if !result.is_empty() {
-                                let popup_pos =
-                                    egui::pos2(input_rect.left(), input_rect.bottom() + 5.0);
-                                self.completion_popup.show(result, popup_pos);
-                            } else {
-                                self.completion_popup.hide();
+                // Skip keyboard handling if history search is active
+                if !self.history_search_active {
+                    // Handle keys based on popup state
+                    if self.completion_popup.is_visible() {
+                        // Popup is open - Tab/arrows navigate, Enter selects, Escape closes
+                        if tab_pressed || down_pressed {
+                            self.completion_popup.select_next();
+                        } else if up_pressed {
+                            self.completion_popup.select_previous();
+                        } else if escape_pressed {
+                            self.completion_popup.hide();
+                        } else if input_changed {
+                            // Update completions when typing
+                            let working_dir = self
+                                .terminal
+                                .as_ref()
+                                .map(|t| t.get_working_directory().to_path_buf())
+                                .unwrap_or_else(|| {
+                                    std::env::current_dir()
+                                        .unwrap_or_else(|_| std::path::PathBuf::from("/"))
+                                });
+                            if let Ok(result) = self
+                                .completion_provider
+                                .get_completions(&current_input, &working_dir)
+                            {
+                                if !result.is_empty() {
+                                    let popup_pos =
+                                        egui::pos2(input_rect.left(), input_rect.bottom() + 5.0);
+                                    self.completion_popup.show(result, popup_pos);
+                                } else {
+                                    self.completion_popup.hide();
+                                }
                             }
                         }
-                    }
-                } else {
-                    // Popup is closed - Tab/Tab opens it
-                    if tab_pressed {
-                        self.handle_tab_completion(&current_input, input_rect);
-                    } else if up_pressed {
-                        // Navigate history when popup is closed
-                        self.input_prompt.navigate_history_previous();
-                    } else if down_pressed {
-                        self.input_prompt.navigate_history_next();
-                    }
-                }
-
-                // Handle Enter key to submit command
-                if input_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    // Check if completion popup is visible
-                    if self.completion_popup.is_visible() {
-                        // Select completion
-                        let selected_text = self
-                            .completion_popup
-                            .get_selected_item()
-                            .map(|item| item.text.clone());
-                        if let Some(text) = selected_text {
-                            self.apply_completion(&text);
-                            self.state_manager.set_completion_just_applied(true);
-                            // Flag for cursor positioning
+                    } else {
+                        // Popup is closed - Tab/Tab opens it
+                        if tab_pressed {
+                            self.handle_tab_completion(&current_input, input_rect);
+                        } else if up_pressed {
+                            // Navigate history when popup is closed
+                            self.input_prompt.navigate_history_previous();
+                        } else if down_pressed {
+                            self.input_prompt.navigate_history_next();
                         }
-                        self.completion_popup.hide();
-                    } else if !current_input.trim().is_empty() {
-                        let command = current_input.clone();
-                        self.input_prompt.add_to_history(command.clone());
-                        self.input_prompt.clear_input();
+                    }
 
-                        // Handle the command (non-blocking)
-                        let _ = executor::block_on(self.handle_command_input(command));
+                    // Handle Enter key to submit command
+                    if input_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        // Check if completion popup is visible
+                        if self.completion_popup.is_visible() {
+                            // Select completion
+                            let selected_text = self
+                                .completion_popup
+                                .get_selected_item()
+                                .map(|item| item.text.clone());
+                            if let Some(text) = selected_text {
+                                self.apply_completion(&text);
+                                self.state_manager.set_completion_just_applied(true);
+                                // Flag for cursor positioning
+                            }
+                            self.completion_popup.hide();
+                        } else if !current_input.trim().is_empty() {
+                            let command = current_input.clone();
+                            self.input_prompt.add_to_history(command.clone());
+                            self.input_prompt.clear_input();
+
+                            // Handle the command (non-blocking)
+                            let _ = executor::block_on(self.handle_command_input(command));
+                        }
                     }
                 }
 
@@ -1960,6 +1990,11 @@ impl MosaicTermApp {
                 self.state_manager.set_completion_just_applied(true); // Flag for cursor positioning
                 self.completion_popup.hide();
             }
+        }
+        
+        // Render history search popup if active
+        if self.history_search_active {
+            self.render_history_search_popup(ui.ctx(), input_rect);
         }
     }
 
@@ -1999,8 +2034,14 @@ impl MosaicTermApp {
                 .get_completions(input, &working_dir)
             {
                 debug!("Got {} completions", result.len());
-                if !result.is_empty() {
-                    // Position popup below input
+                if result.len() == 1 {
+                    // Only one match - auto-complete it
+                    let completion = &result.suggestions[0];
+                    self.apply_completion(&completion.text);
+                    self.state_manager.set_completion_just_applied(true);
+                    debug!("Auto-completed single match: {}", completion.text);
+                } else if !result.is_empty() {
+                    // Multiple matches - show popup
                     let popup_pos = egui::pos2(input_rect.left(), input_rect.bottom() + 5.0);
                     self.completion_popup.show(result, popup_pos);
                     debug!("Showing completion popup at {:?}", popup_pos);
@@ -2023,19 +2064,179 @@ impl MosaicTermApp {
             // Completing command - add space after
             format!("{} ", completion)
         } else {
-            // Completing argument - replace last part
-            let mut new_parts = parts[..parts.len() - 1].to_vec();
-            new_parts.push(completion);
-            let result = new_parts.join(" ");
-            // Add space after if it's a directory, otherwise just the completion
-            if completion.ends_with('/') {
-                result
+            // Completing argument (path) - append to existing path
+            let last_part = parts.last().unwrap_or(&"");
+            
+            // Find where the last path component starts
+            // Handle cases like "cd Desktop/Do" -> "cd Desktop/Documents/"
+            let last_slash_pos = last_part.rfind('/');
+            let prefix = if let Some(pos) = last_slash_pos {
+                &last_part[..=pos]
             } else {
-                format!("{} ", result)
-            }
+                ""
+            };
+            
+            // Build the new last part by combining prefix and completion
+            let new_last_part = if prefix.is_empty() {
+                completion.to_string()
+            } else {
+                format!("{}{}", prefix, completion)
+            };
+            
+            // Replace the last part with the completed version
+            let mut new_parts = parts[..parts.len() - 1].to_vec();
+            new_parts.push(&new_last_part);
+            let result = new_parts.join(" ");
+            
+            // Don't add space after directories to allow continuing to tab through subdirs
+            result
         };
 
         self.input_prompt.set_input(new_input);
+    }
+    
+    /// Render the history search popup (Ctrl+R)
+    fn render_history_search_popup(&mut self, ctx: &egui::Context, input_rect: egui::Rect) {
+        // Position popup above the input
+        let popup_width = input_rect.width().max(600.0);
+        let popup_height = 400.0;
+        let popup_x = input_rect.left();
+        let popup_y = input_rect.top() - popup_height - 10.0;
+        
+        // Create popup above input
+        egui::Area::new("history_search")
+            .fixed_pos(egui::pos2(popup_x, popup_y))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .fill(egui::Color32::from_rgb(30, 30, 40))
+                    .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 150, 255)))
+                    .show(ui, |ui| {
+                        ui.set_width(popup_width);
+                        ui.set_height(popup_height);
+                        
+                        ui.vertical(|ui| {
+                            // Title
+                            ui.horizontal(|ui| {
+                                ui.heading(egui::RichText::new("🔍 Search Command History (Ctrl+R)")
+                                    .color(egui::Color32::from_rgb(150, 200, 255)));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(egui::RichText::new("↑↓ navigate • Enter to select • Esc to close")
+                                        .color(egui::Color32::GRAY)
+                                        .size(11.0));
+                                });
+                            });
+                            
+                            ui.separator();
+                            ui.add_space(8.0);
+                            
+                            // Search input - always request focus
+                            let search_id = egui::Id::new("history_search_input");
+                            let search_response = ui.add(
+                                egui::TextEdit::singleline(&mut self.history_search_query)
+                                    .hint_text("Type to search... (fuzzy matching)")
+                                    .font(egui::FontId::monospace(14.0))
+                                    .desired_width(f32::INFINITY)
+                                    .id(search_id)
+                            );
+                            
+                            // Force focus on the search input
+                            ui.memory_mut(|mem| mem.request_focus(search_id));
+                            search_response.request_focus();
+                            
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(8.0);
+                            
+                            // Search results
+                            let results = self.history_manager.search(&self.history_search_query);
+                            
+                            // Handle arrow key navigation (check if search field is focused)
+                            let selected_idx = self.state_manager.get_history_search_selected();
+                            let search_has_focus = ui.memory(|mem| mem.focus() == Some(search_id));
+                            
+                            if search_has_focus || search_response.has_focus() {
+                                if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                                    let new_selected = if results.is_empty() {
+                                        0
+                                    } else {
+                                        (selected_idx + 1).min(results.len() - 1)
+                                    };
+                                    self.state_manager.set_history_search_selected(new_selected);
+                                    ctx.input_mut(|i| i.events.clear()); // Consume event
+                                } else if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                                    let new_selected = selected_idx.saturating_sub(1);
+                                    self.state_manager.set_history_search_selected(new_selected);
+                                    ctx.input_mut(|i| i.events.clear()); // Consume event
+                                } else if ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !results.is_empty() {
+                                    // Select the highlighted command
+                                    if let Some(command) = results.get(selected_idx) {
+                                        self.input_prompt.set_input(command.clone());
+                                        self.history_search_active = false;
+                                        self.state_manager.set_history_search_selected(0);
+                                        ctx.input_mut(|i| i.events.clear()); // Consume event
+                                    }
+                                }
+                            }
+                            
+                            egui::ScrollArea::vertical()
+                                .max_height(280.0)
+                                .show(ui, |ui| {
+                                    if results.is_empty() {
+                                        ui.label(egui::RichText::new("No matching commands found")
+                                            .color(egui::Color32::GRAY)
+                                            .italics());
+                                    } else {
+                                        ui.label(egui::RichText::new(format!("{} commands found", results.len()))
+                                            .color(egui::Color32::GRAY)
+                                            .size(11.0));
+                                        ui.add_space(4.0);
+                                        
+                                        for (idx, command) in results.iter().enumerate().take(50) {
+                                            let is_selected = idx == selected_idx;
+                                            let response = ui.add(
+                                                egui::Button::new(
+                                                    egui::RichText::new(command)
+                                                        .font(egui::FontId::monospace(13.0))
+                                                        .color(if is_selected {
+                                                            egui::Color32::from_rgb(255, 255, 255)
+                                                        } else {
+                                                            egui::Color32::from_rgb(200, 200, 220)
+                                                        })
+                                                )
+                                                .fill(if is_selected {
+                                                    egui::Color32::from_rgb(60, 100, 180)
+                                                } else if idx % 2 == 0 {
+                                                    egui::Color32::from_rgb(25, 25, 35)
+                                                } else {
+                                                    egui::Color32::from_rgb(20, 20, 30)
+                                                })
+                                                .frame(false)
+                                                .min_size(egui::vec2(ui.available_width(), 28.0))
+                                            );
+                                            
+                                            if response.clicked() {
+                                                // Apply the selected command to input
+                                                self.input_prompt.set_input(command.clone());
+                                                self.history_search_active = false;
+                                                self.state_manager.set_history_search_selected(0);
+                                            }
+                                            
+                                            if response.hovered() {
+                                                self.state_manager.set_history_search_selected(idx);
+                                            }
+                                        }
+                                    }
+                                });
+                        });
+                    });
+            });
+        
+        // Handle Escape to close
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.history_search_active = false;
+            self.state_manager.set_history_search_selected(0);
+        }
     }
 
     /// Render the command history area above the input

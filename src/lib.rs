@@ -90,6 +90,7 @@ extern crate tracing;
 pub mod completion;
 pub mod config;
 pub mod error;
+pub mod history;
 pub mod state;
 pub mod state_manager;
 

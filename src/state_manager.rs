@@ -115,6 +115,8 @@ pub struct ApplicationState {
     pub last_tab_press: Option<std::time::Instant>,
     /// Whether completion was just applied
     pub completion_just_applied: bool,
+    /// Selected index in history search popup
+    pub history_search_selected: usize,
     /// Error dialog to display (title, message)
     pub error_dialog: Option<ErrorDialog>,
 }
@@ -449,6 +451,16 @@ impl StateManager {
     /// Check if completion was just applied
     pub fn completion_just_applied(&self) -> bool {
         self.app_state.completion_just_applied
+    }
+
+    /// Set history search selected index
+    pub fn set_history_search_selected(&mut self, index: usize) {
+        self.app_state.history_search_selected = index;
+    }
+
+    /// Get history search selected index
+    pub fn get_history_search_selected(&self) -> usize {
+        self.app_state.history_search_selected
     }
 
     /// Show an error dialog

@@ -22,6 +22,8 @@ pub struct InputPrompt {
     prompt_text: String,
     /// Maximum history size
     max_history: usize,
+    /// Flag to request focus on next render (for completion)
+    request_focus: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +66,7 @@ impl InputPrompt {
             focused: true,
             prompt_text: "$ ".to_string(),
             max_history: 100,
+            request_focus: false,
         }
     }
 }
@@ -93,6 +96,7 @@ impl InputPrompt {
             focused: true,
             prompt_text: "$ ".to_string(),
             max_history: 100,
+            request_focus: false,
         }
     }
 
@@ -129,6 +133,18 @@ impl InputPrompt {
                         .margin(egui::Vec2::new(10.0, 8.0))
                         .text_color_opt(Some(egui::Color32::from_rgb(220, 220, 240))),
                 );
+                
+                // Request focus and move cursor to end if needed (e.g., after completion)
+                if self.request_focus {
+                    input_response.request_focus();
+                    // Force cursor to the stored position by modifying the widget state
+                    if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), input_response.id) {
+                        let ccursor = egui::text::CCursor::new(self.cursor_position);
+                        state.set_ccursor_range(Some(egui::text::CCursorRange::one(ccursor)));
+                        state.store(ui.ctx(), input_response.id);
+                    }
+                    self.request_focus = false;
+                }
 
                 // Enhanced visual feedback for focused state
                 if input_response.has_focus() {
@@ -313,6 +329,23 @@ impl InputPrompt {
         }
         self.current_input = text;
         self.cursor_position = self.current_input.len();
+        self.request_focus = true; // Request focus to move cursor to end
+    }
+    
+    /// Set current input text and explicit cursor position
+    pub fn set_input_with_cursor(&mut self, text: String, cursor_pos: usize) {
+        // Only reset history position if the text actually changed from user input
+        // Don't reset it if we're just syncing the same text back
+        if self.current_input != text {
+            // If we're browsing history, check if the change is from user editing
+            if self.history_position.is_some() {
+                // User is editing while browsing history, reset position
+                self.history_position = None;
+            }
+        }
+        self.current_input = text;
+        self.cursor_position = cursor_pos.min(self.current_input.len());
+        self.request_focus = true; // Request focus to update cursor position
     }
 
     /// Set prompt text
