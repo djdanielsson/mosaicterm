@@ -12,6 +12,7 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 
 - **Block-Based History**: Commands and their outputs are grouped into discrete, scrollable blocks
 - **Pinned Input Prompt**: Always-visible input field at the bottom for seamless command entry
+- **Environment Support**: Full support for Python venv, nvm, conda, rbenv, rvm, direnv and other environment tools
 - **Custom Prompts**: Fully customizable prompt format with variable substitution ($USER, $HOSTNAME, $PWD, etc.)
 - **Tab Completion**: Intelligent command and path completion with popup UI (double-tab to activate)
 - **Native ANSI Support**: Full color support for `ls`, `bat`, `fzf`, and other CLI tools
@@ -165,6 +166,36 @@ MosaicTerm supports fully customizable prompts with variable substitution (`$USE
 
 - `MOSAICTERM_CONFIG`: Override default config path
 - `MOSAICTERM_LOG`: Set logging level (`error`, `warn`, `info`, `debug`, `trace`)
+
+## 🌍 Environment Management
+
+MosaicTerm fully supports environment management tools like Python virtual environments, Node Version Manager (nvm), Conda, and more. Unlike some terminal emulators, MosaicTerm loads your shell RC files (`.bashrc`, `.zshrc`, etc.) by default, making these tools work seamlessly.
+
+**Smart Prompt Integration**: MosaicTerm automatically detects and displays active environments in your prompt:
+- **Virtual Environments**: Shows `(venv:myproject)` when Python venv, Conda, or similar is active
+- **Git Repositories**: Shows `[main *]` with branch name and dirty status on the right side
+- **Automatic Updates**: Prompt updates after each command to reflect your current environment
+
+The active environment indicator appears only when relevant, keeping your prompt clean when no special environments are active.
+
+### How It Works
+
+MosaicTerm maintains a **persistent shell session** where environment changes naturally persist across commands:
+
+1. Shell RC files (`.bashrc`, `.zshrc`, etc.) are loaded on startup
+2. Environment tools (nvm, conda, etc.) are initialized from your RC files
+3. When you activate an environment (e.g., `source venv/bin/activate`), it stays active
+4. The prompt automatically updates to show the active environment name
+5. All subsequent commands run within that environment until you explicitly deactivate it
+6. Use the environment's deactivation command (e.g., `deactivate` for venv, `conda deactivate` for Conda) to exit
+
+**Note**: If you prefer isolated shell sessions without RC files, you can disable this in the configuration:
+
+```toml
+[terminal]
+# Disable RC file loading for isolated shell environment
+load_rc_files = false
+```
 
 ## 🎯 Limitations
 

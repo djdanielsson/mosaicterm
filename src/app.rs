@@ -49,6 +49,7 @@ use eframe::egui;
 use futures::executor;
 use mosaicterm::completion::CompletionProvider;
 use mosaicterm::config::{prompt::PromptFormatter, RuntimeConfig};
+use mosaicterm::context::ContextDetector;
 use mosaicterm::error::Result;
 use mosaicterm::execution::DirectExecutor;
 use mosaicterm::models::{CommandBlock, ExecutionStatus};
@@ -136,6 +137,11 @@ pub struct MosaicTermApp {
     history_search_query: String,
     /// Prompt formatter for custom prompts
     prompt_formatter: PromptFormatter,
+    /// Context detector for environment tracking (venv, nvm, conda, etc.)
+    context_detector: ContextDetector,
+    /// State tracking for environment query across batches
+    env_query_in_progress: bool,
+    env_query_lines: Vec<String>,
     /// Tokio runtime for async operations
     #[allow(dead_code)]
     runtime: tokio::runtime::Runtime,
@@ -240,6 +246,9 @@ impl MosaicTermApp {
             history_search_active: false,
             history_search_query: String::new(),
             prompt_formatter,
+            context_detector: ContextDetector::new(),
+            env_query_in_progress: false,
+            env_query_lines: Vec::new(),
             runtime,
             async_tx: request_tx,
             async_rx: result_rx,
@@ -380,10 +389,50 @@ impl MosaicTermApp {
 
         // State is now managed through StateManager only
 
-        // Update prompt after terminal initialization
+        // Send PS1 override to ensure prompts don't appear in output
+        // This is necessary because we now load RC files which may set PS1
+        if let Some(terminal) = &self.terminal {
+            if let Some(handle) = terminal.pty_handle() {
+                let mut pty_manager = self.pty_manager.lock().await;
+
+                // Override PS1 set by rc files with a more robust approach
+                // Use PROMPT_COMMAND to ensure PS1 stays empty even if venv/conda modifies it
+                let ps1_override = match shell_type {
+                    ModelShellType::Bash => {
+                        // For bash, use PROMPT_COMMAND to override PS1 before each prompt
+                        "export PROMPT_COMMAND='PS1=\"\"; PS2=\"\"; PS3=\"\"; PS4=\"\"'\n"
+                    }
+                    ModelShellType::Zsh => {
+                        // For zsh, use precmd hook to override PS1 before each prompt
+                        "precmd() { PS1=''; PS2=''; PS3=''; PS4=''; }\n"
+                    }
+                    ModelShellType::Fish => "function fish_prompt; end\n",
+                    ModelShellType::Ksh => "export PS1=''; export PS2=''\n",
+                    ModelShellType::Csh | ModelShellType::Tcsh => "set prompt=''\n",
+                    ModelShellType::Dash => "export PS1=''\n",
+                    _ => "",
+                };
+
+                if !ps1_override.is_empty() {
+                    if let Err(e) = pty_manager
+                        .send_input(handle, ps1_override.as_bytes())
+                        .await
+                    {
+                        warn!("Failed to override PS1 after initialization: {}", e);
+                    } else {
+                        info!("Sent PS1 override with persistent hook to suppress shell prompts");
+                    }
+                    // Note: Shell will process PS1 override asynchronously
+                    // The hook ensures PS1 stays empty even if venv/conda tries to modify it
+                }
+            }
+        }
+
+        // Update contexts and prompt after terminal initialization
+        self.update_contexts();
         self.update_prompt();
 
-        info!("Terminal session initialized successfully");
+        info!("Terminal session initialized successfully with environment support");
         Ok(())
     }
 
@@ -578,7 +627,8 @@ impl MosaicTermApp {
                         "Updated working directory from {:?} to: {:?}",
                         current_dir, canonical
                     );
-                    // Update prompt after directory change
+                    // Update contexts and prompt after directory change
+                    self.update_contexts();
                     self.update_prompt();
                 }
             } else {
@@ -591,13 +641,123 @@ impl MosaicTermApp {
     fn update_prompt(&mut self) {
         if let Some(terminal) = &self.terminal {
             let working_dir = terminal.get_working_directory();
-            let rendered_prompt = self.prompt_formatter.render(working_dir);
+            let base_prompt = self.prompt_formatter.render(working_dir);
+
+            let mut left_context = String::new();
+            let mut right_context = String::new();
+
+            // Add environment contexts (venv, conda, nvm) on the LEFT
+            if let Some(session) = self.state_manager.active_session() {
+                if !session.active_contexts.is_empty() {
+                    let context_str = session.active_contexts.join(" ");
+                    left_context = format!("({}) ", context_str);
+                }
+
+                // Add git context on the RIGHT (if present)
+                if let Some(git) = &session.git_context {
+                    right_context = format!(" [{}]", git);
+                }
+            }
+
+            // Format: (venv:name) ~/path$ [git:branch]
+            let rendered_prompt = format!("{}{}{}", left_context, base_prompt, right_context);
+
             debug!(
                 "Updated prompt to: '{}' (working_dir: {:?})",
                 rendered_prompt, working_dir
             );
             self.input_prompt.set_prompt(&rendered_prompt);
         }
+    }
+
+    /// Update active environment contexts based on current shell environment
+    /// Note: This only updates git context for now. Full env querying happens
+    /// asynchronously after command completion to avoid blocking.
+    fn update_contexts(&mut self) {
+        // For now, just update git context (synchronous filesystem check)
+        // Environment variable detection happens after command completion
+        self.update_git_context();
+    }
+
+    /// Update just the git context (synchronous filesystem check)
+    fn update_git_context(&mut self) {
+        let git_context = if let Some(terminal) = &self.terminal {
+            let working_dir = terminal.get_working_directory();
+
+            if let Ok(repo) = git2::Repository::discover(working_dir) {
+                if let Ok(head) = repo.head() {
+                    if let Some(branch_name) = head.shorthand() {
+                        let has_changes = if let Ok(statuses) = repo.statuses(None) {
+                            !statuses.is_empty()
+                        } else {
+                            false
+                        };
+
+                        if has_changes {
+                            Some(format!("{} *", branch_name))
+                        } else {
+                            Some(branch_name.to_string())
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Update git context
+        if let Some(session) = self.state_manager.active_session_mut() {
+            session.git_context = git_context;
+        }
+    }
+
+    /// Parse environment output and update contexts
+    fn parse_env_output(&mut self, output: &str) {
+        info!("Parsing environment output: {}", output);
+        let mut env = std::collections::HashMap::new();
+
+        // Parse output lines like "VIRTUAL_ENV=/path/to/venv"
+        for line in output.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Some((key, value)) = line.split_once('=') {
+                // Only add non-empty values
+                if !value.is_empty() {
+                    info!("Found env var: {}={}", key, value);
+                    env.insert(key.to_string(), value.to_string());
+                } else {
+                    info!("Skipping empty env var: {}", key);
+                }
+            }
+        }
+
+        // Detect contexts from environment
+        let contexts = self.context_detector.detect_contexts(&env);
+        info!("Detected {} contexts: {:?}", contexts.len(), contexts);
+
+        // Format contexts for display (venv/conda/nvm only - git handled separately)
+        let env_context_strings: Vec<String> = contexts.iter().map(|c| c.format_short()).collect();
+
+        info!("Formatted context strings: {:?}", env_context_strings);
+
+        // Get git context separately (already updated by update_git_context)
+        // No need to recompute it here
+
+        // Update state manager with env contexts
+        if let Some(session) = self.state_manager.active_session_mut() {
+            session.active_contexts = env_context_strings.clone();
+            info!("Updated session contexts to: {:?}", session.active_contexts);
+        }
+
+        info!("Updated contexts from shell environment");
     }
 
     /// Check if a command is a TUI app that should open in fullscreen overlay
@@ -2541,6 +2701,9 @@ impl MosaicTermApp {
     /// Handle async operations (called from update) - SIMPLIFIED VERSION
     fn handle_async_operations(&mut self, _ctx: &egui::Context) {
         // SIMPLIFIED: Poll PTY output and add to current command (no complex prompt detection)
+        let mut should_update_contexts = false; // Track if we need to update contexts
+        let mut env_query_output = None; // Track environment query output
+
         if let Some(_terminal) = &mut self.terminal {
             if let Some(handle) = _terminal.pty_handle() {
                 // Use blocking lock with retry to avoid dropping output
@@ -2651,7 +2814,44 @@ impl MosaicTermApp {
                                         let command_text_for_log = last_block.command.clone();
                                         let current_output_count = last_block.output.len();
 
-                                        // Check for exit code marker first
+                                        // Check for environment query marker (state persists across batches)
+                                        info!("Processing {} ready_lines for env query (in_progress={})", ready_lines.len(), self.env_query_in_progress);
+                                        for (idx, line) in ready_lines.iter().enumerate() {
+                                            let line_text = line.text.trim();
+                                            if line_text.contains("MOSAICTERM_ENV_QUERY:START") {
+                                                info!(
+                                                    "Found ENV_QUERY:START marker at line {}",
+                                                    idx
+                                                );
+                                                self.env_query_in_progress = true;
+                                                self.env_query_lines.clear(); // Start fresh
+                                                continue;
+                                            }
+                                            if line_text.contains("MOSAICTERM_ENV_QUERY:END") {
+                                                info!("Found ENV_QUERY:END marker at line {} (collected {} lines total)", idx, self.env_query_lines.len());
+                                                self.env_query_in_progress = false;
+                                                // Store for processing after borrow ends
+                                                if !self.env_query_lines.is_empty() {
+                                                    env_query_output =
+                                                        Some(self.env_query_lines.join("\n"));
+                                                }
+                                                continue;
+                                            }
+                                            if self.env_query_in_progress {
+                                                info!(
+                                                    "Collecting env line {}: '{}'",
+                                                    idx, line_text
+                                                );
+                                                self.env_query_lines.push(line_text.to_string());
+                                            } else if !line_text.is_empty() {
+                                                info!(
+                                                    "Skipping non-env line {}: '{}'",
+                                                    idx, line_text
+                                                );
+                                            }
+                                        }
+
+                                        // Check for exit code marker
                                         let mut found_exit_code: Option<i32> = None;
                                         for line in ready_lines.iter() {
                                             let line_text = line.text.trim();
@@ -2707,10 +2907,21 @@ impl MosaicTermApp {
                                             let line_text = line.text.trim();
                                             let is_first_few_lines = current_output_count + idx < 5;
 
-                                            // Skip exit code marker and the echo command itself
+                                            // Skip exit code marker, env query markers, and the echo commands
                                             if line_text.starts_with("MOSAICTERM_EXITCODE:")
                                                 || line_text.contains("echo \"MOSAICTERM_EXITCODE:")
                                                 || line_text == "echo \"MOSAICTERM_EXITCODE:$?\""
+                                                || line_text.contains("MOSAICTERM_ENV_QUERY")
+                                                || line_text.starts_with("echo 'MOSAICTERM_ENV_QUERY")
+                                                || line_text.starts_with("echo \"VIRTUAL_ENV=")
+                                                || line_text.starts_with("echo \"CONDA_DEFAULT_ENV=")
+                                                || line_text.starts_with("echo \"NVM_BIN=")
+                                                || line_text.starts_with("echo \"RBENV_VERSION=")
+                                                // Also skip the OUTPUT of those echo commands
+                                                || line_text.starts_with("VIRTUAL_ENV=")
+                                                || line_text.starts_with("CONDA_DEFAULT_ENV=")
+                                                || line_text.starts_with("NVM_BIN=")
+                                                || line_text.starts_with("RBENV_VERSION=")
                                             {
                                                 continue;
                                             }
@@ -3040,12 +3251,51 @@ impl MosaicTermApp {
                                 // Clear command time if needed (after borrow ends)
                                 if should_clear_command_time {
                                     self.state_manager.clear_last_command_time();
+                                    should_update_contexts = true;
                                 }
                             }
                         }
                     }
                 }
             }
+        }
+
+        // Update contexts after pty_manager borrow is released
+        if should_update_contexts {
+            self.update_contexts();
+
+            // Also trigger environment query
+            if let Some(terminal) = &self.terminal {
+                if let Some(handle) = terminal.pty_handle() {
+                    let marker = "MOSAICTERM_ENV_QUERY";
+                    // Print each variable explicitly with its name, even if empty
+                    let query_cmd = format!(
+                        "echo '{}:START'; echo \"VIRTUAL_ENV=${{VIRTUAL_ENV}}\"; echo \"CONDA_DEFAULT_ENV=${{CONDA_DEFAULT_ENV}}\"; echo \"NVM_BIN=${{NVM_BIN}}\"; echo \"RBENV_VERSION=${{RBENV_VERSION}}\"; echo '{}:END'\n",
+                        marker, marker
+                    );
+
+                    info!("Sending environment query command");
+                    // Try to send query (non-blocking)
+                    if let Ok(mut pty_manager) = self.pty_manager.try_lock() {
+                        match futures::executor::block_on(async {
+                            pty_manager.send_input(handle, query_cmd.as_bytes()).await
+                        }) {
+                            Ok(_) => info!("Successfully sent environment query"),
+                            Err(e) => warn!("Failed to send environment query: {}", e),
+                        }
+                    } else {
+                        warn!("Could not acquire pty_manager lock for environment query");
+                    }
+                }
+            }
+
+            self.update_prompt();
+        }
+
+        // Parse environment output if we received one
+        if let Some(env_output) = env_query_output {
+            self.parse_env_output(&env_output);
+            self.update_prompt();
         }
     }
 }

@@ -81,6 +81,10 @@ pub struct SessionState {
     pub last_command_time: Option<std::time::Instant>,
     /// Maximum history size
     pub max_history_size: usize,
+    /// Active environment contexts for display (venv, nvm, conda, etc.)
+    pub active_contexts: Vec<String>,
+    /// Git context for display (branch name, stored separately for right-side display)
+    pub git_context: Option<String>,
 }
 
 /// Session status
@@ -304,6 +308,8 @@ impl StateManager {
             input_history_index: None,
             last_command_time: None,
             max_history_size: 1000,
+            active_contexts: Vec::new(),
+            git_context: None,
         };
 
         self.sessions.insert(session_id.clone(), session);

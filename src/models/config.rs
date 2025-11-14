@@ -111,6 +111,16 @@ pub struct TerminalConfig {
     /// Command execution timeout settings
     #[serde(default)]
     pub timeout: TimeoutConfig,
+
+    /// Whether to load shell RC files (.bashrc, .zshrc, etc.)
+    /// When true, enables venv, nvm, conda, and other environment tools
+    /// When false, uses isolated shell for cleaner output
+    #[serde(default = "default_load_rc_files")]
+    pub load_rc_files: bool,
+}
+
+fn default_load_rc_files() -> bool {
+    true // Default to enabled for better environment tool support
 }
 
 impl Default for TerminalConfig {
@@ -148,6 +158,7 @@ impl Default for TerminalConfig {
             mouse_support: true,
             max_history_size: 1000,
             timeout: TimeoutConfig::default(),
+            load_rc_files: default_load_rc_files(),
         }
     }
 }

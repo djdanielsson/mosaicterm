@@ -126,29 +126,36 @@ impl Terminal {
         let session = &self.state.session;
 
         // Determine shell command and args based on shell type
-        // Use arguments that prevent config file loading AND disable interactive features
-        // This prevents echo and other interactive behaviors
+        // Allow RC files to load (enables venv, nvm, conda, direnv, etc.)
+        // but disable line editor features to prevent interactive behaviors
         let (shell_command, shell_args) = match session.shell_type {
             crate::models::ShellType::Bash => (
                 "bash".to_string(),
                 vec![
-                    "--norc".to_string(),
-                    "--noprofile".to_string(),
-                    "--noediting".to_string(),
+                    // Remove --norc and --noprofile to allow RC files to load
+                    // This enables venv, nvm, conda, and other environment tools
+                    "--noediting".to_string(), // Keep to prevent line editor interference
                 ],
             ),
             crate::models::ShellType::Zsh => (
                 "zsh".to_string(),
-                vec!["-f".to_string(), "+Z".to_string()], // -f = no .zshrc, +Z = no zle (line editor)
+                vec![
+                    // Remove -f flag to allow .zshrc to load
+                    "+Z".to_string(), // Keep +Z to disable ZLE (line editor)
+                ],
             ),
-            crate::models::ShellType::Fish => ("fish".to_string(), vec!["--no-config".to_string()]),
+            crate::models::ShellType::Fish => (
+                "fish".to_string(),
+                vec![], // Allow config loading for fish
+            ),
             crate::models::ShellType::Ksh => ("ksh".to_string(), vec![]),
             crate::models::ShellType::Csh => ("csh".to_string(), vec![]),
             crate::models::ShellType::Tcsh => ("tcsh".to_string(), vec![]),
             crate::models::ShellType::Dash => ("dash".to_string(), vec![]),
-            crate::models::ShellType::PowerShell => {
-                ("powershell".to_string(), vec!["-NoProfile".to_string()])
-            }
+            crate::models::ShellType::PowerShell => (
+                "powershell".to_string(),
+                vec![], // Allow profile loading for PowerShell
+            ),
             crate::models::ShellType::Cmd => ("cmd".to_string(), vec![]),
             crate::models::ShellType::Other => ("sh".to_string(), vec![]), // Fallback to basic shell
         };
