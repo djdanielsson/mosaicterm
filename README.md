@@ -36,8 +36,11 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 **macOS:**
 1. Download the latest `MosaicTerm-macos-{arm64|x64}.app.tar.gz` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
 2. Extract: `tar xzf MosaicTerm-macos-*.app.tar.gz`
-3. Move to Applications: `mv MosaicTerm.app /Applications/`
-4. Launch from Applications folder or Spotlight
+3. **Allow the app to run** (choose one method):
+   - **Terminal method**: `xattr -d com.apple.quarantine MosaicTerm.app`
+   - **Alternative**: `sudo spctl --add /path/to/MosaicTerm.app` (allows this specific app)
+4. Move to Applications: `mv MosaicTerm.app /Applications/`
+5. Launch from Applications folder or Spotlight
 
 **Linux:**
 1. Download the latest `mosaicterm-linux-x64.tar.gz` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
