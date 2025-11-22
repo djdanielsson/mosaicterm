@@ -1249,47 +1249,27 @@ impl MosaicTermApp {
         // Get the shell PID
         if let Ok(pty_info) = pty_manager.get_info(&pty_handle) {
             if let Some(shell_pid) = pty_info.pid {
-                #[cfg(unix)]
-                {
-                    info!("Killing process tree for shell PID: {}", shell_pid);
+                info!("Killing process tree for shell PID: {}", shell_pid);
 
-                    // Kill the entire process tree (shell + all children)
-                    // This ensures long-running commands like sleep, find, etc. are all killed
-                    // First try graceful termination
-                    if let Err(e) = mosaicterm::pty::process_tree::kill_process_tree(shell_pid) {
-                        warn!("Failed to kill process tree: {}", e);
-                    }
-
-                    // Wait a moment for processes to terminate gracefully
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-                    // If still running, check and log
-                    if let Ok(children) =
-                        mosaicterm::pty::process_tree::get_all_descendant_pids(shell_pid)
-                    {
-                        if !children.is_empty() {
-                            info!("Some processes still running, attempting force kill");
-                            // Try again - platform implementation should handle force kill
-                            let _ = mosaicterm::pty::process_tree::kill_process_tree(shell_pid);
-                        }
-                    }
+                // Kill the entire process tree (shell + all children)
+                // This ensures long-running commands like sleep, find, etc. are all killed
+                // Uses platform abstraction for cross-platform support
+                if let Err(e) = mosaicterm::pty::process_tree::kill_process_tree(shell_pid) {
+                    warn!("Failed to kill process tree: {}", e);
                 }
 
-                #[cfg(windows)]
-                {
-                    // Windows signal handling would go here
-                    return Err(mosaicterm::error::Error::SignalNotSupported {
-                        signal: "SIGINT".to_string(),
-                        platform: "Windows".to_string(),
-                    });
-                }
+                // Wait a moment for processes to terminate gracefully
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-                #[cfg(not(any(unix, windows)))]
+                // If still running, check and log
+                if let Ok(children) =
+                    mosaicterm::pty::process_tree::get_all_descendant_pids(shell_pid)
                 {
-                    return Err(mosaicterm::error::Error::SignalNotSupported {
-                        signal: "SIGINT".to_string(),
-                        platform: std::env::consts::OS.to_string(),
-                    });
+                    if !children.is_empty() {
+                        info!("Some processes still running, attempting force kill");
+                        // Try again - platform implementation should handle force kill
+                        let _ = mosaicterm::pty::process_tree::kill_process_tree(shell_pid);
+                    }
                 }
             } else {
                 return Err(mosaicterm::error::Error::NoPidAvailable {

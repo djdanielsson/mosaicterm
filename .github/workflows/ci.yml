@@ -46,11 +46,14 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-
       - name: Install target
         run: rustup target add ${{ matrix.target }}
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ github.workspace }}
+          cache-all-crates: true
 
       - name: Install cross-compilation tools (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -69,7 +72,7 @@ jobs:
           matrix.target == 'x86_64-apple-darwin' ||
           matrix.target == 'aarch64-apple-darwin' ||
           matrix.target == 'x86_64-pc-windows-msvc'
-        run: cargo test --target ${{ matrix.target }}
+        run: cargo test --target ${{ matrix.target }} --no-fail-fast
 
       - name: Check formatting
         run: cargo fmt --check
@@ -114,6 +117,9 @@ jobs:
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ github.workspace }}
+          cache-all-crates: true
 
       - name: Check compilation with MSRV
         run: cargo check

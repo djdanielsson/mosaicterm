@@ -24,6 +24,9 @@ jobs:
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ github.workspace }}
+          cache-all-crates: true
 
       - name: Check compilation
         run: cargo check
@@ -104,11 +107,14 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-
       - name: Install target
         run: rustup target add ${{ matrix.target }}
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ github.workspace }}
+          cache-all-crates: true
 
       - name: Install cross-compilation tools (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
