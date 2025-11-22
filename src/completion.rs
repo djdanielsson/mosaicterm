@@ -315,33 +315,17 @@ impl CompletionProvider {
                 if let Ok(entries) = fs::read_dir(&path_dir) {
                     for entry in entries.flatten() {
                         if let Ok(filename) = entry.file_name().into_string() {
-                            // Check if file is executable
-                            #[cfg(unix)]
-                            {
-                                use std::os::unix::fs::PermissionsExt;
-                                if let Ok(metadata) = entry.metadata() {
-                                    if metadata.is_file()
-                                        && (metadata.permissions().mode() & 0o111 != 0)
+                            // Check if file is executable using platform abstraction
+                            use crate::platform::Platform;
+                            let fs_ops = Platform::filesystem();
+
+                            if let Ok(metadata) = entry.metadata() {
+                                if metadata.is_file() {
+                                    let full_path = path_dir.join(&filename);
+                                    if fs_ops.is_executable(&full_path)
                                         && !commands.contains(&filename)
                                     {
                                         commands.push(filename);
-                                    }
-                                }
-                            }
-
-                            #[cfg(windows)]
-                            {
-                                // On Windows, check for common executable extensions
-                                if let Ok(metadata) = entry.metadata() {
-                                    if metadata.is_file() {
-                                        let is_executable = filename.ends_with(".exe")
-                                            || filename.ends_with(".bat")
-                                            || filename.ends_with(".cmd")
-                                            || filename.ends_with(".ps1");
-
-                                        if is_executable && !commands.contains(&filename) {
-                                            commands.push(filename);
-                                        }
                                     }
                                 }
                             }

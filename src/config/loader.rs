@@ -218,30 +218,20 @@ impl ConfigLoader {
 
     /// Get default search paths for configuration files
     fn get_search_paths() -> Vec<PathBuf> {
+        use crate::platform::Platform;
+
         let mut paths = Vec::new();
+        let path_ops = Platform::paths();
 
-        // XDG config home (Linux) - prioritize this on Linux
-        #[cfg(target_os = "linux")]
-        {
-            if let Ok(xdg_config) = env::var("XDG_CONFIG_HOME") {
-                let xdg_path = PathBuf::from(&xdg_config);
-                paths.push(xdg_path.join("mosaicterm"));
-                paths.push(xdg_path.join("mosaicterm").join("config"));
-            }
+        // Use platform abstraction for config directory
+        if let Ok(config_dir) = path_ops.config_dir() {
+            paths.push(config_dir.join("mosaicterm"));
+            paths.push(config_dir.join("mosaicterm").join("config"));
         }
 
-        // User config directory (uses XDG_CONFIG_HOME on Linux if set, otherwise ~/.config)
-        if let Some(user_config) = dirs::config_dir() {
-            paths.push(user_config.join("mosaicterm"));
-            paths.push(user_config.join("mosaicterm").join("config"));
-        }
-
-        // XDG config home fallback (non-Linux platforms that might set it)
-        #[cfg(not(target_os = "linux"))]
-        {
-            if let Ok(xdg_config) = env::var("XDG_CONFIG_HOME") {
-                paths.push(PathBuf::from(xdg_config).join("mosaicterm"));
-            }
+        // XDG config home fallback (for platforms that might set it)
+        if let Ok(xdg_config) = env::var("XDG_CONFIG_HOME") {
+            paths.push(PathBuf::from(xdg_config).join("mosaicterm"));
         }
 
         // Home directory fallbacks
@@ -260,8 +250,12 @@ impl ConfigLoader {
 
     /// Get the default configuration path
     fn get_default_config_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
+        use crate::platform::Platform;
+
+        let path_ops = Platform::paths();
+        path_ops
+            .config_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
             .join("mosaicterm")
             .join("config.toml")
     }

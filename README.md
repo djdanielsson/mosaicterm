@@ -18,15 +18,16 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 - **Native ANSI Support**: Full color support for `ls`, `bat`, `fzf`, and other CLI tools
 - **Zsh Integration**: Seamless support for zsh with Oh My Zsh, plugins, and completions
 - **Modern GUI**: Built with [egui](https://github.com/emilk/egui) for native performance and feel
-- **Cross-Platform Ready**: Designed for macOS, Linux, and Windows compatibility
+- **Cross-Platform Ready**: Designed for macOS (Intel & Apple Silicon), Linux (x86_64 & ARM64), and Windows (x86_64 & ARM64)
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - **Rust**: 1.90+ stable toolchain
-- **macOS**: 14.0+ (fully supported) or **Linux** (Ubuntu 20.04+, Fedora 34+, Debian 11+, or similar)
-- **Shell**: bash, zsh, or fish
+- **macOS**: 14.0+ (Intel and Apple Silicon) or **Linux** (Ubuntu 20.04+, Fedora 34+, Debian 11+, or similar) on x86_64 or ARM64
+- **Windows**: Windows 10+ on x86_64 or ARM64
+- **Shell**: bash, zsh, or fish (Unix) / PowerShell or cmd.exe (Windows)
 - **Optional**: fzf, eza, bat, rg, fd, jq (for enhanced CLI experience)
 
 ### Installation
@@ -43,10 +44,15 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 5. Launch from Applications folder or Spotlight
 
 **Linux:**
-1. Download the latest `mosaicterm-linux-x64.tar.gz` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
-2. Extract: `tar xzf mosaicterm-linux-x64.tar.gz`
+1. Download the latest `mosaicterm-linux-{x64|arm64}.tar.gz` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
+2. Extract: `tar xzf mosaicterm-linux-*.tar.gz`
 3. Move to PATH: `sudo mv mosaicterm /usr/local/bin/`
 4. Run: `mosaicterm`
+
+**Windows:**
+1. Download the latest `mosaicterm-windows-{x64|arm64}.zip` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
+2. Extract: `Expand-Archive mosaicterm-windows-*.zip`
+3. Add to PATH or run directly: `mosaicterm.exe`
 
 #### Option 2: Build from Source
 

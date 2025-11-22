@@ -1251,31 +1251,26 @@ impl MosaicTermApp {
             if let Some(shell_pid) = pty_info.pid {
                 #[cfg(unix)]
                 {
-                    use nix::sys::signal::Signal;
-
                     info!("Killing process tree for shell PID: {}", shell_pid);
 
                     // Kill the entire process tree (shell + all children)
                     // This ensures long-running commands like sleep, find, etc. are all killed
-                    if let Err(e) =
-                        mosaicterm::pty::process_tree::kill_process_tree(shell_pid, Signal::SIGINT)
-                    {
+                    // First try graceful termination
+                    if let Err(e) = mosaicterm::pty::process_tree::kill_process_tree(shell_pid) {
                         warn!("Failed to kill process tree: {}", e);
                     }
 
                     // Wait a moment for processes to terminate gracefully
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-                    // If still running, force kill with SIGKILL
+                    // If still running, check and log
                     if let Ok(children) =
                         mosaicterm::pty::process_tree::get_all_descendant_pids(shell_pid)
                     {
                         if !children.is_empty() {
-                            info!("Some processes still running, sending SIGKILL");
-                            let _ = mosaicterm::pty::process_tree::kill_process_tree(
-                                shell_pid,
-                                Signal::SIGKILL,
-                            );
+                            info!("Some processes still running, attempting force kill");
+                            // Try again - platform implementation should handle force kill
+                            let _ = mosaicterm::pty::process_tree::kill_process_tree(shell_pid);
                         }
                     }
                 }

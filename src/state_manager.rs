@@ -202,51 +202,21 @@ impl AppStatistics {
 
     /// Update memory usage statistics
     pub fn update_memory(&mut self) {
-        #[cfg(target_os = "macos")]
-        {
-            use std::process::Command;
-            // Get memory usage on macOS using ps
-            if let Ok(output) = Command::new("ps")
-                .args(["-o", "rss=", "-p", &std::process::id().to_string()])
-                .output()
-            {
-                if let Ok(memory_str) = String::from_utf8(output.stdout) {
-                    if let Ok(memory_kb) = memory_str.trim().parse::<usize>() {
-                        self.current_memory_bytes = memory_kb * 1024;
-                        if self.current_memory_bytes > self.peak_memory_bytes {
-                            self.peak_memory_bytes = self.current_memory_bytes;
-                        }
-                    }
+        use crate::platform::Platform;
+
+        let memory_ops = Platform::memory();
+
+        if let Ok(current) = memory_ops.get_current_memory() {
+            self.current_memory_bytes = current;
+            if let Ok(peak) = memory_ops.get_peak_memory() {
+                if peak > self.peak_memory_bytes {
+                    self.peak_memory_bytes = peak;
                 }
             }
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            // Read from /proc/self/status on Linux
-            if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-                for line in status.lines() {
-                    if line.starts_with("VmRSS:") {
-                        if let Some(value) = line.split_whitespace().nth(1) {
-                            if let Ok(memory_kb) = value.parse::<usize>() {
-                                self.current_memory_bytes = memory_kb * 1024;
-                                if self.current_memory_bytes > self.peak_memory_bytes {
-                                    self.peak_memory_bytes = self.current_memory_bytes;
-                                }
-                            }
-                        }
-                        break;
-                    }
-                }
+            // Also update peak if current exceeds it
+            if self.current_memory_bytes > self.peak_memory_bytes {
+                self.peak_memory_bytes = self.current_memory_bytes;
             }
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            // Windows memory tracking would require winapi crate
-            // For now, set to 0 as placeholder
-            self.current_memory_bytes = 0;
-            self.peak_memory_bytes = 0;
         }
     }
 

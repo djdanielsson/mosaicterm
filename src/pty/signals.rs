@@ -4,6 +4,7 @@
 //! signals like SIGINT, SIGTERM, and SIGKILL for process control.
 
 use crate::error::{Error, Result};
+use crate::platform::{Platform, SignalOps};
 use std::collections::HashMap;
 
 /// Signal types that can be sent to PTY processes
@@ -50,6 +51,8 @@ pub struct SignalHandler {
     config: SignalConfig,
     /// Process ID to handle mapping
     process_handles: HashMap<String, u32>,
+    /// Platform-specific signal operations
+    signal_ops: Box<dyn SignalOps>,
 }
 
 impl SignalHandler {
@@ -58,6 +61,7 @@ impl SignalHandler {
         Self {
             config: SignalConfig::default(),
             process_handles: HashMap::new(),
+            signal_ops: Platform::signals(),
         }
     }
 
@@ -66,6 +70,7 @@ impl SignalHandler {
         Self {
             config,
             process_handles: HashMap::new(),
+            signal_ops: Platform::signals(),
         }
     }
 
@@ -93,23 +98,25 @@ impl SignalHandler {
 
     /// Send signal to process by PID
     pub async fn send_signal_to_pid(&self, pid: u32, signal: Signal) -> Result<()> {
-        // Platform-specific signal sending
-        #[cfg(unix)]
-        {
-            self.send_unix_signal(pid, signal).await
-        }
-
-        #[cfg(windows)]
-        {
-            self.send_windows_signal(pid, signal).await
-        }
-
-        #[cfg(not(any(unix, windows)))]
-        {
-            Err(Error::SignalNotSupported {
-                signal: format!("{:?}", signal),
-                platform: std::env::consts::OS.to_string(),
-            })
+        match signal {
+            Signal::Interrupt => self.signal_ops.send_interrupt(pid).await,
+            Signal::Terminate => self.signal_ops.send_terminate(pid).await,
+            Signal::Kill => self.signal_ops.send_kill(pid).await,
+            Signal::Hangup | Signal::Continue | Signal::Stop => {
+                // These signals are Unix-specific
+                #[cfg(unix)]
+                {
+                    // Fall back to Unix-specific implementation for these
+                    self.send_unix_signal(pid, signal).await
+                }
+                #[cfg(not(unix))]
+                {
+                    Err(Error::SignalNotSupported {
+                        signal: format!("{:?}", signal),
+                        platform: std::env::consts::OS.to_string(),
+                    })
+                }
+            }
         }
     }
 
@@ -148,21 +155,7 @@ impl SignalHandler {
 
     /// Check if a process is still running
     pub fn is_process_running(&self, pid: u32) -> bool {
-        // Platform-specific process checking
-        #[cfg(unix)]
-        {
-            self.check_unix_process(pid)
-        }
-
-        #[cfg(windows)]
-        {
-            self.check_windows_process(pid)
-        }
-
-        #[cfg(not(any(unix, windows)))]
-        {
-            false
-        }
+        self.signal_ops.is_process_running(pid)
     }
 
     /// Get the number of registered processes
@@ -170,82 +163,29 @@ impl SignalHandler {
         self.process_handles.len()
     }
 
-    /// Platform-specific Unix signal sending
+    /// Platform-specific Unix signal sending for signals not in the trait
     #[cfg(unix)]
     async fn send_unix_signal(&self, pid: u32, signal: Signal) -> Result<()> {
         use nix::sys::signal::{kill, Signal as NixSignal};
         use nix::unistd::Pid;
 
         let nix_signal = match signal {
-            Signal::Interrupt => NixSignal::SIGINT,
-            Signal::Terminate => NixSignal::SIGTERM,
-            Signal::Kill => NixSignal::SIGKILL,
             Signal::Hangup => NixSignal::SIGHUP,
             Signal::Continue => NixSignal::SIGCONT,
             Signal::Stop => NixSignal::SIGSTOP,
+            _ => {
+                // These should be handled by the trait methods
+                return Err(Error::SignalNotSupported {
+                    signal: format!("{:?}", signal),
+                    platform: "Unix".to_string(),
+                });
+            }
         };
 
         kill(Pid::from_raw(pid as i32), nix_signal).map_err(|e| Error::SignalSendFailed {
             signal: format!("{:?}", signal),
             reason: e.to_string(),
         })
-    }
-
-    /// Platform-specific Windows signal sending
-    #[cfg(windows)]
-    async fn send_windows_signal(&self, pid: u32, signal: Signal) -> Result<()> {
-        // Windows doesn't have signals like Unix
-        // We'll use process termination for kill signal
-        match signal {
-            Signal::Kill => {
-                // Use Windows API to terminate process
-                // This is a simplified implementation
-                Err(Error::SignalNotSupported {
-                    signal: format!("{:?}", signal),
-                    platform: "Windows".to_string(),
-                })
-            }
-            _ => {
-                // Other signals not applicable on Windows
-                Err(Error::SignalNotSupported {
-                    signal: format!("{:?}", signal),
-                    platform: "Windows".to_string(),
-                })
-            }
-        }
-    }
-
-    /// Platform-specific Unix process checking
-    #[cfg(unix)]
-    fn check_unix_process(&self, pid: u32) -> bool {
-        // Check if process exists by sending signal 0
-        use nix::sys::signal::{kill, Signal as NixSignal};
-        use nix::unistd::Pid;
-
-        kill(Pid::from_raw(pid as i32), NixSignal::SIGCONT).is_ok()
-    }
-
-    /// Platform-specific Windows process checking
-    #[cfg(windows)]
-    fn check_windows_process(&self, pid: u32) -> bool {
-        // Windows process checking implementation using WinAPI
-        use std::process::Command;
-
-        // Use tasklist command to check if process exists
-        let output = Command::new("tasklist")
-            .args(&["/FI", &format!("PID eq {}", pid)])
-            .output();
-
-        match output {
-            Ok(output) => {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                output_str.contains(&pid.to_string())
-            }
-            Err(_) => {
-                // If tasklist fails, assume process is not running
-                false
-            }
-        }
     }
 }
 

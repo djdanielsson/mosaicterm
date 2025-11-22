@@ -7,7 +7,6 @@ use portable_pty::{native_pty_system, CommandBuilder, PtyPair, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::process::Stdio;
 use std::sync::mpsc::channel;
 use std::thread;
 use tokio::sync::mpsc::unbounded_channel;
@@ -256,38 +255,34 @@ impl Default for SpawnConfig {
 
 /// Validate command before spawning
 pub fn validate_command(command: &str) -> Result<()> {
-    // Check if command exists in PATH
-    match std::process::Command::new("which")
-        .arg(command)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-    {
-        Ok(status) if status.success() => Ok(()),
-        _ => Err(Error::CommandNotFound {
+    use crate::platform::Platform;
+
+    let fs_ops = Platform::filesystem();
+    match fs_ops.find_command(command) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(Error::CommandNotFound {
             command: command.to_string(),
         }),
+        Err(e) => Err(e),
     }
 }
 
 /// Get the default shell for the current platform
-pub fn get_default_shell() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "cmd.exe"
-    } else {
-        "/bin/bash"
-    }
+pub fn get_default_shell() -> String {
+    use crate::platform::Platform;
+
+    Platform::shell()
+        .default_shell()
+        .to_string_lossy()
+        .to_string()
 }
 
 /// Check if a command is available on the system
 pub fn is_command_available(command: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(command)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    use crate::platform::Platform;
+
+    let fs_ops = Platform::filesystem();
+    fs_ops.find_command(command).ok().flatten().is_some()
 }
 
 /// Get the current user's shell from environment
