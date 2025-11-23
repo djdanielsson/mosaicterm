@@ -6,7 +6,7 @@
 //! - Uptime, active PTY processes
 //! - Recent performance history
 
-use egui::{Color32, RichText, Ui};
+use eframe::egui::{Align, Color32, Layout, RichText, Ui, Window};
 use std::time::{Duration, Instant};
 
 use crate::state_manager::AppStatistics;
@@ -64,7 +64,7 @@ impl MetricsPanel {
         }
         self.last_update = now;
 
-        egui::Window::new("⚡ Performance Metrics")
+        Window::new("⚡ Performance Metrics")
             .collapsible(true)
             .resizable(true)
             .default_width(350.0)
@@ -77,7 +77,7 @@ impl MetricsPanel {
 
                 ui.horizontal(|ui| {
                     ui.label("Uptime:");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let uptime = format_duration(stats.uptime());
                         ui.label(RichText::new(uptime).color(Color32::GREEN));
                     });
@@ -85,7 +85,7 @@ impl MetricsPanel {
 
                 ui.horizontal(|ui| {
                     ui.label("Memory (current):");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let mem = format_bytes(stats.current_memory_bytes);
                         ui.label(
                             RichText::new(mem).color(color_for_memory(stats.current_memory_bytes)),
@@ -95,7 +95,7 @@ impl MetricsPanel {
 
                 ui.horizontal(|ui| {
                     ui.label("Memory (peak):");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let mem = format_bytes(stats.peak_memory_bytes);
                         ui.label(RichText::new(mem).color(Color32::YELLOW));
                     });
@@ -103,7 +103,7 @@ impl MetricsPanel {
 
                 ui.horizontal(|ui| {
                     ui.label("Active PTY processes:");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!("{}", pty_count)).color(Color32::LIGHT_BLUE),
                         );
@@ -118,7 +118,7 @@ impl MetricsPanel {
 
                 ui.horizontal(|ui| {
                     ui.label("Total commands:");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!("{}", stats.total_commands))
                                 .color(Color32::LIGHT_BLUE),
@@ -128,7 +128,7 @@ impl MetricsPanel {
 
                 ui.horizontal(|ui| {
                     ui.label("Successful:");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!("{}", stats.successful_commands))
                                 .color(Color32::GREEN),
@@ -138,7 +138,7 @@ impl MetricsPanel {
 
                 ui.horizontal(|ui| {
                     ui.label("Failed:");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!("{}", stats.failed_commands)).color(Color32::RED),
                         );
@@ -147,7 +147,7 @@ impl MetricsPanel {
 
                 ui.horizontal(|ui| {
                     ui.label("Cancelled:");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!("{}", stats.cancelled_commands))
                                 .color(Color32::YELLOW),
@@ -160,7 +160,7 @@ impl MetricsPanel {
                         (stats.successful_commands as f32 / stats.total_commands as f32) * 100.0;
                     ui.horizontal(|ui| {
                         ui.label("Success rate:");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.1}%", success_rate))
                                     .color(color_for_success_rate(success_rate)),
@@ -177,7 +177,7 @@ impl MetricsPanel {
 
                 ui.horizontal(|ui| {
                     ui.label("Total lines:");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!("{}", stats.total_output_lines))
                                 .color(Color32::LIGHT_BLUE),
@@ -189,7 +189,7 @@ impl MetricsPanel {
                     let avg_lines = stats.total_output_lines as f32 / stats.total_commands as f32;
                     ui.horizontal(|ui| {
                         ui.label("Avg lines per command:");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.label(
                                 RichText::new(format!("{:.1}", avg_lines)).color(Color32::WHITE),
                             );

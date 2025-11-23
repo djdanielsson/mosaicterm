@@ -316,7 +316,7 @@ fn create_native_options(args: &AppArgs) -> Result<eframe::NativeOptions> {
     };
 
     let mut options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+        viewport: eframe::egui::ViewportBuilder::default()
             .with_title("MosaicTerm")
             .with_app_id("mosaicterm")
             .with_icon(std::sync::Arc::new(load_or_create_window_icon()))
@@ -395,7 +395,7 @@ fn create_native_options(args: &AppArgs) -> Result<eframe::NativeOptions> {
 }
 
 /// Create window icon
-fn create_window_icon() -> egui::IconData {
+fn create_window_icon() -> eframe::egui::IconData {
     // Create a simple terminal-inspired icon
     // This creates a 32x32 icon with a terminal-like appearance
     let mut rgba = Vec::with_capacity(32 * 32 * 4);
@@ -432,7 +432,7 @@ fn create_window_icon() -> egui::IconData {
         }
     }
 
-    egui::IconData {
+    eframe::egui::IconData {
         rgba,
         width: 32,
         height: 32,
@@ -440,7 +440,7 @@ fn create_window_icon() -> egui::IconData {
 }
 
 /// Try loading `icon.png` from project root or current working directory; fallback to generated icon
-fn load_or_create_window_icon() -> egui::IconData {
+fn load_or_create_window_icon() -> eframe::egui::IconData {
     // Candidate paths: workspace root, binary crate dir, current dir
     let candidates: [&Path; 3] = [
         Path::new("icon.png"),
@@ -453,7 +453,7 @@ fn load_or_create_window_icon() -> egui::IconData {
             if let Ok(img) = image::open(path) {
                 let rgba = img.to_rgba8();
                 let (width, height) = rgba.dimensions();
-                return egui::IconData {
+                return eframe::egui::IconData {
                     rgba: rgba.into_raw(),
                     width,
                     height,
