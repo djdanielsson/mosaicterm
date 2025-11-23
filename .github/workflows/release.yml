@@ -159,7 +159,7 @@ jobs:
 
       - name: Upload macOS App Bundle
         if: matrix.os == 'macos-latest'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: MosaicTerm-${{ matrix.name }}.app.tar.gz
         env:
@@ -167,7 +167,7 @@ jobs:
 
       - name: Upload CLI binary for Linux/macOS
         if: matrix.os != 'windows-latest'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: mosaicterm-${{ matrix.name }}.tar.gz
         env:
@@ -175,7 +175,7 @@ jobs:
 
       - name: Upload Windows release
         if: matrix.os == 'windows-latest'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: mosaicterm-${{ matrix.name }}.zip
         env:
