@@ -143,6 +143,7 @@ pub struct MosaicTermApp {
     env_query_in_progress: bool,
     env_query_lines: Vec<String>,
     /// Tokio runtime for async operations
+    /// Note: Field is kept alive to prevent runtime shutdown, even though it's not directly accessed
     #[allow(dead_code)]
     runtime: tokio::runtime::Runtime,
     /// Channel for sending async requests from UI to background
@@ -197,12 +198,22 @@ impl MosaicTermApp {
         input_prompt.set_prompt(&initial_prompt);
 
         // Create Tokio runtime for async operations
+        // Try multi-threaded first, fallback to single-threaded if that fails
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2) // Minimal threads for our needs
             .thread_name("mosaicterm-async")
             .enable_all()
             .build()
-            .expect("Failed to create Tokio runtime");
+            .or_else(|e| {
+                warn!("Failed to create multi-threaded runtime: {}, trying single-threaded", e);
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+            })
+            .unwrap_or_else(|e| {
+                error!("Failed to create any Tokio runtime: {}", e);
+                panic!("Critical: Cannot initialize MosaicTerm without Tokio runtime. This is a system configuration issue.");
+            });
 
         // Create channels for async communication
         let (request_tx, mut request_rx) = mpsc::unbounded_channel();
@@ -493,9 +504,11 @@ impl MosaicTermApp {
         if DirectExecutor::should_use_direct_execution(&command) {
             info!("Using direct execution for command: {}", command);
 
-            // For now, fallback to PTY execution to avoid async issues
-            // TODO: Implement proper async execution in background thread
-            info!("Temporarily falling back to PTY execution");
+            // NOTE: Direct execution optimization is planned for future release
+            // This would execute simple commands (like `ls`, `pwd`) directly without PTY overhead
+            // Requires proper async execution in background thread to avoid blocking UI
+            // For now, all commands use PTY execution for consistency and full shell integration
+            info!("Using PTY execution for consistency (direct execution optimization planned)");
         }
 
         info!("Using PTY execution for command: {}", command);
@@ -508,11 +521,13 @@ impl MosaicTermApp {
             .unwrap_or_else(|| {
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"))
             });
-        let mut command_block = CommandBlock::new(command.clone(), working_dir.clone());
+        // Clone command once since it's used later, but move working_dir
+        let command_for_block = command.clone();
+        let mut command_block = CommandBlock::new(command_for_block, working_dir);
         command_block.mark_running();
 
-        // Add to state manager (single source of truth)
-        self.state_manager.add_command_block(command_block.clone());
+        // Add to state manager (single source of truth) - move instead of clone
+        self.state_manager.add_command_block(command_block);
 
         // DEPRECATED: Also update old field during migration
         // Command block is now managed through StateManager only
@@ -783,11 +798,13 @@ impl MosaicTermApp {
             .unwrap_or_else(|| {
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"))
             });
-        let mut command_block = CommandBlock::new(command.clone(), working_dir.clone());
+        // Clone command since it's used later, but move working_dir
+        let command_for_block = command.clone();
+        let mut command_block = CommandBlock::new(command_for_block, working_dir);
         command_block.mark_tui_mode(); // Special marker for TUI commands
 
-        // Add to state manager
-        self.state_manager.add_command_block(command_block.clone());
+        // Add to state manager - move instead of clone
+        self.state_manager.add_command_block(command_block);
 
         // Create a new PTY for the TUI app
         if let Some(_terminal) = &mut self.terminal {
@@ -1049,10 +1066,12 @@ impl MosaicTermApp {
                             // Rerun command
                             if ui.button("🔄 Rerun Command").clicked() {
                                 // Execute the same command again (non-blocking)
-                                self.input_prompt.add_to_history(command.clone());
+                                // Clone once and reuse
+                                let command_to_rerun = command.clone();
+                                self.input_prompt.add_to_history(command_to_rerun.clone());
                                 let _ = self
                                     .async_tx
-                                    .send(AsyncRequest::ExecuteCommand(command.clone()));
+                                    .send(AsyncRequest::ExecuteCommand(command_to_rerun.clone()));
                                 menu_open = false;
                             }
 
@@ -1298,10 +1317,18 @@ impl eframe::App for MosaicTermApp {
         static LAST_DEBUG_TIME: Mutex<Option<std::time::Instant>> = Mutex::new(None);
         {
             let now = std::time::Instant::now();
-            let mut last_time = LAST_DEBUG_TIME.lock().unwrap();
-            if last_time.is_none() || now.duration_since(last_time.unwrap()).as_secs() >= 1 {
-                println!("🔄 MosaicTerm UI is rendering...");
-                *last_time = Some(now);
+            if let Ok(mut last_time) = LAST_DEBUG_TIME.lock() {
+                let should_print = match *last_time {
+                    None => true,
+                    Some(prev) => now.duration_since(prev).as_secs() >= 1,
+                };
+                if should_print {
+                    println!("🔄 MosaicTerm UI is rendering...");
+                    *last_time = Some(now);
+                }
+            } else {
+                // Mutex is poisoned - log but don't panic
+                debug!("Debug time mutex is poisoned, skipping debug print");
             }
         }
 
@@ -1315,25 +1342,30 @@ impl eframe::App for MosaicTermApp {
             use std::sync::Mutex;
             static LAST_CLEANUP_TIME: Mutex<Option<std::time::Instant>> = Mutex::new(None);
             let now = std::time::Instant::now();
-            let mut last_time = LAST_CLEANUP_TIME.lock().unwrap();
-            let should_cleanup =
-                last_time.is_none() || now.duration_since(last_time.unwrap()).as_secs() >= 30;
+            if let Ok(mut last_time) = LAST_CLEANUP_TIME.lock() {
+                let should_cleanup = match *last_time {
+                    None => true,
+                    Some(prev) => now.duration_since(prev).as_secs() >= 30,
+                };
 
-            if should_cleanup {
-                if let Ok(mut pty_manager) = self.pty_manager.try_lock() {
-                    let count_before = pty_manager.active_count();
-                    pty_manager.cleanup_terminated();
-                    let count_after = pty_manager.active_count();
+                if should_cleanup {
+                    if let Ok(mut pty_manager) = self.pty_manager.try_lock() {
+                        let count_before = pty_manager.active_count();
+                        pty_manager.cleanup_terminated();
+                        let count_after = pty_manager.active_count();
 
-                    if count_before > count_after {
-                        info!(
-                            "Cleaned up {} terminated PTY process(es)",
-                            count_before - count_after
-                        );
+                        if count_before > count_after {
+                            info!(
+                                "Cleaned up {} terminated PTY process(es)",
+                                count_before - count_after
+                            );
+                        }
+
+                        *last_time = Some(now);
                     }
-
-                    *last_time = Some(now);
                 }
+            } else {
+                debug!("Cleanup time mutex is poisoned, skipping cleanup");
             }
         }
 
@@ -1342,13 +1374,18 @@ impl eframe::App for MosaicTermApp {
             use std::sync::Mutex;
             static LAST_STATS_UPDATE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
             let now = std::time::Instant::now();
-            let mut last_time = LAST_STATS_UPDATE.lock().unwrap();
-            let should_update =
-                last_time.is_none() || now.duration_since(last_time.unwrap()).as_secs() >= 5;
+            if let Ok(mut last_time) = LAST_STATS_UPDATE.lock() {
+                let should_update = match *last_time {
+                    None => true,
+                    Some(prev) => now.duration_since(prev).as_secs() >= 5,
+                };
 
-            if should_update {
-                self.state_manager.update_memory_stats();
-                *last_time = Some(now);
+                if should_update {
+                    self.state_manager.update_memory_stats();
+                    *last_time = Some(now);
+                }
+            } else {
+                debug!("Stats update mutex is poisoned, skipping stats update");
             }
         }
 
@@ -2678,6 +2715,7 @@ impl MosaicTermApp {
         // SIMPLIFIED: Poll PTY output and add to current command (no complex prompt detection)
         let mut should_update_contexts = false; // Track if we need to update contexts
         let mut env_query_output = None; // Track environment query output
+        let mut timeout_kill_status_message: Option<String> = None; // Track timeout kill status
 
         if let Some(_terminal) = &mut self.terminal {
             if let Some(handle) = _terminal.pty_handle() {
@@ -2785,8 +2823,8 @@ impl MosaicTermApp {
                                         // Batch process all lines at once for better performance
                                         let mut lines_to_add =
                                             Vec::with_capacity(ready_lines.len());
+                                        // Clone command text once for use in multiple places
                                         let command_text = last_block.command.trim().to_string();
-                                        let command_text_for_log = last_block.command.clone();
                                         let current_output_count = last_block.output.len();
 
                                         // Check for environment query marker (state persists across batches)
@@ -2861,7 +2899,7 @@ impl MosaicTermApp {
                                                 );
                                                 debug!(
                                                     "✅ Command completed with exit code 0: {}",
-                                                    command_text_for_log
+                                                    command_text
                                                 );
                                             } else {
                                                 last_block.mark_failed(
@@ -2872,7 +2910,7 @@ impl MosaicTermApp {
                                                 );
                                                 debug!(
                                                     "❌ Command failed with exit code {}: {}",
-                                                    exit_code, command_text_for_log
+                                                    exit_code, command_text
                                                 );
                                             }
                                             should_clear_command_time = true;
@@ -3180,10 +3218,48 @@ impl MosaicTermApp {
                                                 );
                                                 should_clear_command_time = true;
 
-                                                // TODO: If kill_on_timeout is true, send kill signal to PTY process
-                                                // This requires tracking PTY process IDs and implementing signal handling
+                                                // If kill_on_timeout is true, send kill signal to PTY process
                                                 if timeout_config.kill_on_timeout {
-                                                    warn!("⚠️  kill_on_timeout is enabled but not yet implemented - command will continue running");
+                                                    info!(
+                                                        "Killing timed-out command: {}",
+                                                        command_clone
+                                                    );
+                                                    let kill_result = if let Some(terminal) =
+                                                        &self.terminal
+                                                    {
+                                                        if let Some(handle) = terminal.pty_handle()
+                                                        {
+                                                            let handle_id = handle.id.clone();
+                                                            // Send kill signal asynchronously
+                                                            self.async_tx
+                                                                .send(AsyncRequest::SendInterrupt(
+                                                                    handle_id.clone(),
+                                                                ))
+                                                                .map_err(|e| e.to_string())
+                                                        } else {
+                                                            Err("No PTY handle available"
+                                                                .to_string())
+                                                        }
+                                                    } else {
+                                                        Err("No terminal available".to_string())
+                                                    };
+
+                                                    match kill_result {
+                                                        Ok(_) => {
+                                                            info!("Kill signal sent for timed-out command");
+                                                            timeout_kill_status_message = Some(format!(
+                                                                "Command timed out and was killed after {}s",
+                                                                timeout_secs
+                                                            ));
+                                                        }
+                                                        Err(e) => {
+                                                            error!("Failed to send kill request for timeout: {}", e);
+                                                            timeout_kill_status_message = Some(format!(
+                                                                "Failed to kill timed-out command: {}",
+                                                                e
+                                                            ));
+                                                        }
+                                                    }
                                                 }
                                             } else if !is_interactive_command
                                                 && elapsed_ms > 1000
@@ -3233,6 +3309,11 @@ impl MosaicTermApp {
                     }
                 }
             }
+        }
+
+        // Set timeout kill status message after all borrows are released
+        if let Some(msg) = timeout_kill_status_message {
+            self.set_status_message(Some(msg));
         }
 
         // Update contexts after pty_manager borrow is released

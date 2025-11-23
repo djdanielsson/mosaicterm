@@ -5,6 +5,7 @@
 
 use eframe::egui;
 use std::collections::VecDeque;
+use tracing::debug;
 
 /// Input prompt component
 pub struct InputPrompt {
@@ -237,18 +238,18 @@ impl InputPrompt {
     /// Add command to history
     pub fn add_to_history(&mut self, command: String) {
         if !command.trim().is_empty() {
-            eprintln!("DEBUG: Adding command to history: {}", command);
+            debug!("Adding command to history: {}", command);
 
             // Remove the command if it already exists (to avoid duplicates in different positions)
             // but add it again at the end as the most recent command
             if let Some(pos) = self.history.iter().position(|c| c == &command) {
                 self.history.remove(pos);
-                eprintln!("DEBUG: Removed duplicate at position: {}", pos);
+                debug!("Removed duplicate at position: {}", pos);
             }
 
             self.history.push_back(command.clone());
-            eprintln!("DEBUG: History size after add: {}", self.history.len());
-            eprintln!("DEBUG: History contents: {:?}", self.history);
+            debug!("History size after add: {}", self.history.len());
+            debug!("History contents: {:?}", self.history);
 
             // Maintain history size limit
             while self.history.len() > self.max_history {
@@ -263,16 +264,16 @@ impl InputPrompt {
     /// Navigate to previous command in history
     pub fn navigate_history_previous(&mut self) {
         if self.history.is_empty() {
-            eprintln!("DEBUG: History is empty!");
+            debug!("History is empty!");
             return;
         }
 
-        eprintln!(
-            "DEBUG: History size: {}, Current position: {:?}",
+        debug!(
+            "History size: {}, Current position: {:?}",
             self.history.len(),
             self.history_position
         );
-        eprintln!("DEBUG: History contents: {:?}", self.history);
+        debug!("History contents: {:?}", self.history);
 
         let position = match self.history_position {
             None => self.history.len().saturating_sub(1),
@@ -280,13 +281,13 @@ impl InputPrompt {
             _ => return,
         };
 
-        eprintln!("DEBUG: Moving to position: {}", position);
+        debug!("Moving to position: {}", position);
 
         if let Some(command) = self.history.get(position) {
             self.current_input = command.clone();
             self.cursor_position = command.len();
             self.history_position = Some(position);
-            eprintln!("DEBUG: Set input to: {}", command);
+            debug!("Set input to: {}", command);
         }
     }
 

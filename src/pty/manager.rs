@@ -142,7 +142,10 @@ impl PtyManager {
                 id: handle.id.clone(),
                 pid: process.pid,
                 command: process.command.clone(),
-                working_directory: std::path::PathBuf::from("."), // TODO: Get actual working directory
+                working_directory: process
+                    .working_directory
+                    .clone()
+                    .unwrap_or_else(|| std::path::PathBuf::from(".")),
                 start_time: process.start_time.unwrap_or_else(Utc::now),
                 is_alive: process.is_running(),
             })

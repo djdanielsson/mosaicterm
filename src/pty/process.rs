@@ -64,8 +64,12 @@ pub async fn spawn_pty_process(
     // Get the PID
     let pid = child.process_id().unwrap_or(0);
 
-    // Create PTY process model
-    let mut pty_process = PtyProcess::new(command.to_string(), args.to_vec());
+    // Create PTY process model with working directory
+    let mut pty_process = if let Some(dir) = working_directory {
+        PtyProcess::with_working_directory(command.to_string(), args.to_vec(), dir.to_path_buf())
+    } else {
+        PtyProcess::new(command.to_string(), args.to_vec())
+    };
     pty_process.mark_started(pid);
 
     // Create streams wrapper

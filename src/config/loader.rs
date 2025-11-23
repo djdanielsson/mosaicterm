@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 /// Configuration file loader
 pub struct ConfigLoader {
@@ -164,7 +165,7 @@ impl ConfigLoader {
                         Ok(config) => return Ok(Some((config_path, config))),
                         Err(e) => {
                             // Log warning but continue searching
-                            eprintln!(
+                            warn!(
                                 "Failed to load config from {}: {}",
                                 config_path.display(),
                                 e
