@@ -4,7 +4,7 @@
 
 use crate::error::Result;
 use crate::models::CommandBlock;
-use crate::pty::{PtyHandle, PtyManager};
+use crate::pty::{PtyHandle, PtyManagerV2};
 
 /// Command input processor
 #[derive(Debug)]
@@ -239,7 +239,7 @@ impl CommandInputProcessor {
     /// Send command to PTY
     pub async fn send_command(
         &self,
-        manager: &mut PtyManager,
+        manager: &PtyManagerV2,
         handle: &PtyHandle,
         command: &str,
     ) -> Result<()> {
@@ -288,7 +288,7 @@ impl CommandInputProcessor {
     /// Send command to PTY manager
     pub async fn send_command_to_pty(
         &mut self,
-        pty_manager: &mut PtyManager,
+        pty_manager: &PtyManagerV2,
         handle: &PtyHandle,
         command: String,
     ) -> Result<()> {
@@ -315,7 +315,7 @@ impl CommandInputProcessor {
     /// Send raw input to PTY manager (for individual keystrokes)
     pub async fn send_raw_input_to_pty(
         &mut self,
-        pty_manager: &mut PtyManager,
+        pty_manager: &PtyManagerV2,
         handle: &PtyHandle,
         input: &[u8],
     ) -> Result<()> {

@@ -4,63 +4,21 @@
 //! Each PTY process has its own lock, allowing multiple terminals to operate
 //! independently without blocking each other.
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use uuid::Uuid;
 
+use super::manager::PtyHandle;
 use super::process::spawn_pty_process;
 use super::streams::PtyStreams;
 use crate::error::{Error, Result};
 use crate::models::PtyProcess;
 
-/// Handle to a managed PTY process
-#[derive(Debug, Clone)]
-pub struct PtyHandle {
-    /// Unique identifier for this PTY instance
-    pub id: String,
-    /// Process ID of the running process
-    pub pid: Option<u32>,
-}
+// Use PtyHandle from manager.rs for compatibility
 
-impl PtyHandle {
-    /// Create a new PTY handle
-    pub fn new() -> Self {
-        Self {
-            id: Uuid::new_v4().to_string(),
-            pid: None,
-        }
-    }
-
-    /// Set the process ID
-    fn set_pid(&mut self, pid: u32) {
-        self.pid = Some(pid);
-    }
-}
-
-impl Default for PtyHandle {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Information about a PTY process
-#[derive(Debug, Clone)]
-pub struct PtyInfo {
-    /// Handle identifier
-    pub id: String,
-    /// Process ID
-    pub pid: Option<u32>,
-    /// Command being executed
-    pub command: String,
-    /// Working directory
-    pub working_directory: std::path::PathBuf,
-    /// Start time
-    pub start_time: DateTime<Utc>,
-    /// Current status
-    pub is_alive: bool,
-}
+// Use PtyInfo from manager.rs for compatibility
+use super::manager::PtyInfo;
 
 /// A single PTY entry with its own lock
 struct PtyEntry {
@@ -102,7 +60,7 @@ impl PtyManagerV2 {
 
         // Set the PID in the handle
         if let Some(pid) = process.pid {
-            handle.set_pid(pid);
+            handle.pid = Some(pid);
         }
 
         // Create entry with its own lock
@@ -153,7 +111,11 @@ impl PtyManagerV2 {
                 id: handle.id.clone(),
                 pid: entry.process.pid,
                 command: entry.process.command.clone(),
-                working_directory: std::path::PathBuf::from("."),
+                working_directory: entry
+                    .process
+                    .working_directory
+                    .clone()
+                    .unwrap_or_else(|| std::path::PathBuf::from(".")),
                 start_time: entry.process.start_time.unwrap_or_else(Utc::now),
                 is_alive: entry.process.is_running(),
             })

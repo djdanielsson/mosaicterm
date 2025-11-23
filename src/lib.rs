@@ -240,8 +240,8 @@ fn validate_system_requirements() -> Result<()> {
 fn initialize_core_components(config: &Config) -> Result<()> {
     info!("🏗️  Initializing core components...");
 
-    // Initialize PTY manager
-    let pty_mgr = std::sync::Arc::new(tokio::sync::Mutex::new(pty::PtyManager::new()));
+    // Initialize PTY manager V2 (with per-terminal locking)
+    let pty_mgr = std::sync::Arc::new(pty::PtyManagerV2::new());
     let pty_manager = {
         info!("✅ PTY manager initialized");
         pty_mgr
