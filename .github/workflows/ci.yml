@@ -44,7 +44,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          components: rustfmt, clippy
+          # rustfmt and clippy not needed here - handled by separate jobs
 
       - name: Install target
         run: rustup target add ${{ matrix.target }}
@@ -60,17 +60,33 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" \
+            >> $GITHUB_ENV
 
       - name: Check compilation
         run: cargo check --target ${{ matrix.target }}
 
-      - name: Install cargo-nextest
+      - name: Cache cargo-nextest
+        id: cache-cargo-nextest
         if: |
           matrix.target == 'x86_64-unknown-linux-gnu' ||
           matrix.target == 'x86_64-apple-darwin' ||
           matrix.target == 'aarch64-apple-darwin' ||
           matrix.target == 'x86_64-pc-windows-msvc'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: cargo-nextest-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-nextest-${{ runner.os }}-
+
+      - name: Install cargo-nextest
+        if: |
+          (matrix.target == 'x86_64-unknown-linux-gnu' ||
+          matrix.target == 'x86_64-apple-darwin' ||
+          matrix.target == 'aarch64-apple-darwin' ||
+          matrix.target == 'x86_64-pc-windows-msvc') &&
+          steps.cache-cargo-nextest.outputs.cache-hit != 'true'
         run: cargo install cargo-nextest --locked
 
       - name: Run tests
@@ -82,14 +98,8 @@ jobs:
           matrix.target == 'x86_64-pc-windows-msvc'
         run: cargo nextest run --target ${{ matrix.target }} --no-fail-fast
 
-      - name: Check formatting
-        run: cargo fmt --check
-
-      - name: Run clippy
-        run: cargo clippy --target ${{ matrix.target }} -- -D warnings
-
-      - name: Check documentation
-        run: cargo doc --target ${{ matrix.target }} --no-deps
+      # Formatting/clippy/doc checks are handled by separate parallel jobs
+      # to avoid redundancy and improve parallelization
 
   # Formatting check (runs in parallel with other jobs)
   format:
@@ -106,7 +116,29 @@ jobs:
           components: rustfmt
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --check --all
+
+  # Documentation check (runs in parallel with other jobs)
+  doc:
+    name: Check Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ github.workspace }}
+          cache-all-crates: true
+
+      - name: Check documentation
+        run: cargo doc --no-deps --document-private-items
 
   # Clippy check (runs in parallel with other jobs)
   clippy:
@@ -150,7 +182,17 @@ jobs:
           workspaces: ${{ github.workspace }}
           cache-all-crates: true
 
+      - name: Cache cargo-tarpaulin
+        id: cache-cargo-tarpaulin
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tarpaulin
+          key: cargo-tarpaulin-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-tarpaulin-${{ runner.os }}-
+
       - name: Install cargo-tarpaulin
+        if: steps.cache-cargo-tarpaulin.outputs.cache-hit != 'true'
         run: cargo install cargo-tarpaulin
 
       - name: Generate coverage report

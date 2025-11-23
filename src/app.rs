@@ -626,7 +626,6 @@ impl MosaicTermApp {
         trimmed.starts_with("cd") || trimmed.starts_with("pushd") || trimmed.starts_with("popd")
     }
 
-
     /// Update the prompt display based on current working directory
     fn update_prompt(&mut self) {
         if let Some(terminal) = &self.terminal {
@@ -2779,9 +2778,29 @@ impl MosaicTermApp {
                         }
                     }
                 }
-                _ => {
-                    // Other results not yet implemented
-                    debug!("Received unhandled async result");
+                AsyncResult::CommandStarted(command_block) => {
+                    // Command block already added to history when command was sent
+                    // This is just a notification, no action needed
+                    debug!("Command started: {}", command_block.command);
+                }
+                AsyncResult::CommandCompleted {
+                    index,
+                    status,
+                    exit_code,
+                } => {
+                    // Update command block at the given index
+                    if let Some(command_history) = self.state_manager.command_history_mut() {
+                        if let Some(block) = command_history.get_mut(index) {
+                            block.status = status;
+                            block.exit_code = exit_code;
+                            debug!(
+                                "Command at index {} completed with status {:?}",
+                                index, status
+                            );
+                        } else {
+                            warn!("CommandCompleted for invalid index: {}", index);
+                        }
+                    }
                 }
             }
         }
