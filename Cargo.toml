@@ -46,7 +46,7 @@ openssl-sys = { version = "0.9", features = ["vendored"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 arboard = "3.4"
 hostname = "0.4"
-notify = "6.1"
+notify = "8.2"
 
 # Windows-specific dependencies
 [target.'cfg(windows)'.dependencies]
