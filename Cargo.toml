@@ -17,7 +17,7 @@ eframe = { version = "0.24", features = ["persistence"] }
 
 # PTY and Terminal
 portable-pty = "0.9"
-vte = "0.13"
+vte = "0.15"
 
 # Serialization and Configuration
 serde = { version = "1.0", features = ["derive"] }
