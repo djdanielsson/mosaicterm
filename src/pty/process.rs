@@ -7,7 +7,6 @@ use portable_pty::{native_pty_system, CommandBuilder, PtyPair, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::process::Stdio;
 use std::sync::mpsc::channel;
 use std::thread;
 use tokio::sync::mpsc::unbounded_channel;
@@ -65,8 +64,12 @@ pub async fn spawn_pty_process(
     // Get the PID
     let pid = child.process_id().unwrap_or(0);
 
-    // Create PTY process model
-    let mut pty_process = PtyProcess::new(command.to_string(), args.to_vec());
+    // Create PTY process model with working directory
+    let mut pty_process = if let Some(dir) = working_directory {
+        PtyProcess::with_working_directory(command.to_string(), args.to_vec(), dir.to_path_buf())
+    } else {
+        PtyProcess::new(command.to_string(), args.to_vec())
+    };
     pty_process.mark_started(pid);
 
     // Create streams wrapper
@@ -256,38 +259,34 @@ impl Default for SpawnConfig {
 
 /// Validate command before spawning
 pub fn validate_command(command: &str) -> Result<()> {
-    // Check if command exists in PATH
-    match std::process::Command::new("which")
-        .arg(command)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-    {
-        Ok(status) if status.success() => Ok(()),
-        _ => Err(Error::CommandNotFound {
+    use crate::platform::Platform;
+
+    let fs_ops = Platform::filesystem();
+    match fs_ops.find_command(command) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(Error::CommandNotFound {
             command: command.to_string(),
         }),
+        Err(e) => Err(e),
     }
 }
 
 /// Get the default shell for the current platform
-pub fn get_default_shell() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "cmd.exe"
-    } else {
-        "/bin/bash"
-    }
+pub fn get_default_shell() -> String {
+    use crate::platform::Platform;
+
+    Platform::shell()
+        .default_shell()
+        .to_string_lossy()
+        .to_string()
 }
 
 /// Check if a command is available on the system
 pub fn is_command_available(command: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(command)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    use crate::platform::Platform;
+
+    let fs_ops = Platform::filesystem();
+    fs_ops.find_command(command).ok().flatten().is_some()
 }
 
 /// Get the current user's shell from environment
@@ -355,7 +354,20 @@ mod tests {
         assert_eq!(env.get("TEST_VAR"), Some(&"test_value".to_string()));
 
         // Should also contain inherited environment variables
-        assert!(env.contains_key("PATH") || env.contains_key("HOME"));
+        // When inherit=true, the environment should have more than just the custom variable
+        // Check that at least one common environment variable exists (indicating inheritance worked)
+        let has_inherited_env = env.contains_key("PATH")
+            || env.contains_key("HOME")
+            || env.contains_key("USERPROFILE")
+            || env.contains_key("TEMP")
+            || env.contains_key("TMP")
+            || env.contains_key("USERNAME")
+            || env.contains_key("COMPUTERNAME");
+        assert!(
+            has_inherited_env || env.len() > 1,
+            "Expected inherited environment variables when inherit=true, but only found: {:?}",
+            env.keys().collect::<Vec<_>>()
+        );
     }
 
     #[test]

@@ -12,20 +12,22 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 
 - **Block-Based History**: Commands and their outputs are grouped into discrete, scrollable blocks
 - **Pinned Input Prompt**: Always-visible input field at the bottom for seamless command entry
+- **Environment Support**: Full support for Python venv, nvm, conda, rbenv, rvm, direnv and other environment tools
 - **Custom Prompts**: Fully customizable prompt format with variable substitution ($USER, $HOSTNAME, $PWD, etc.)
 - **Tab Completion**: Intelligent command and path completion with popup UI (double-tab to activate)
 - **Native ANSI Support**: Full color support for `ls`, `bat`, `fzf`, and other CLI tools
 - **Zsh Integration**: Seamless support for zsh with Oh My Zsh, plugins, and completions
 - **Modern GUI**: Built with [egui](https://github.com/emilk/egui) for native performance and feel
-- **Cross-Platform Ready**: Designed for macOS, Linux, and Windows compatibility
+- **Cross-Platform Ready**: Designed for macOS (Intel & Apple Silicon), Linux (x86_64 & ARM64), and Windows (x86_64 & ARM64)
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - **Rust**: 1.90+ stable toolchain
-- **macOS**: 14.0+ (fully supported) or **Linux** (Ubuntu 20.04+, Fedora 34+, Debian 11+, or similar)
-- **Shell**: bash, zsh, or fish
+- **macOS**: 14.0+ (Intel and Apple Silicon) or **Linux** (Ubuntu 20.04+, Fedora 34+, Debian 11+, or similar) on x86_64 or ARM64
+- **Windows**: Windows 10+ on x86_64 or ARM64
+- **Shell**: bash, zsh, or fish (Unix) / PowerShell or cmd.exe (Windows)
 - **Optional**: fzf, eza, bat, rg, fd, jq (for enhanced CLI experience)
 
 ### Installation
@@ -35,14 +37,22 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 **macOS:**
 1. Download the latest `MosaicTerm-macos-{arm64|x64}.app.tar.gz` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
 2. Extract: `tar xzf MosaicTerm-macos-*.app.tar.gz`
-3. Move to Applications: `mv MosaicTerm.app /Applications/`
-4. Launch from Applications folder or Spotlight
+3. **Allow the app to run** (choose one method):
+   - **Terminal method**: `xattr -d com.apple.quarantine MosaicTerm.app`
+   - **Alternative**: `sudo spctl --add /path/to/MosaicTerm.app` (allows this specific app)
+4. Move to Applications: `mv MosaicTerm.app /Applications/`
+5. Launch from Applications folder or Spotlight
 
 **Linux:**
-1. Download the latest `mosaicterm-linux-x64.tar.gz` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
-2. Extract: `tar xzf mosaicterm-linux-x64.tar.gz`
+1. Download the latest `mosaicterm-linux-{x64|arm64}.tar.gz` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
+2. Extract: `tar xzf mosaicterm-linux-*.tar.gz`
 3. Move to PATH: `sudo mv mosaicterm /usr/local/bin/`
 4. Run: `mosaicterm`
+
+**Windows:**
+1. Download the latest `mosaicterm-windows-{x64|arm64}.zip` from the [Releases](https://github.com/djdanielsson/mosaicterm/releases) page
+2. Extract: `Expand-Archive mosaicterm-windows-*.zip`
+3. Add to PATH or run directly: `mosaicterm.exe`
 
 #### Option 2: Build from Source
 
@@ -165,6 +175,36 @@ MosaicTerm supports fully customizable prompts with variable substitution (`$USE
 
 - `MOSAICTERM_CONFIG`: Override default config path
 - `MOSAICTERM_LOG`: Set logging level (`error`, `warn`, `info`, `debug`, `trace`)
+
+## 🌍 Environment Management
+
+MosaicTerm fully supports environment management tools like Python virtual environments, Node Version Manager (nvm), Conda, and more. Unlike some terminal emulators, MosaicTerm loads your shell RC files (`.bashrc`, `.zshrc`, etc.) by default, making these tools work seamlessly.
+
+**Smart Prompt Integration**: MosaicTerm automatically detects and displays active environments in your prompt:
+- **Virtual Environments**: Shows `(venv:myproject)` when Python venv, Conda, or similar is active
+- **Git Repositories**: Shows `[main *]` with branch name and dirty status on the right side
+- **Automatic Updates**: Prompt updates after each command to reflect your current environment
+
+The active environment indicator appears only when relevant, keeping your prompt clean when no special environments are active.
+
+### How It Works
+
+MosaicTerm maintains a **persistent shell session** where environment changes naturally persist across commands:
+
+1. Shell RC files (`.bashrc`, `.zshrc`, etc.) are loaded on startup
+2. Environment tools (nvm, conda, etc.) are initialized from your RC files
+3. When you activate an environment (e.g., `source venv/bin/activate`), it stays active
+4. The prompt automatically updates to show the active environment name
+5. All subsequent commands run within that environment until you explicitly deactivate it
+6. Use the environment's deactivation command (e.g., `deactivate` for venv, `conda deactivate` for Conda) to exit
+
+**Note**: If you prefer isolated shell sessions without RC files, you can disable this in the configuration:
+
+```toml
+[terminal]
+# Disable RC file loading for isolated shell environment
+load_rc_files = false
+```
 
 ## 🎯 Limitations
 

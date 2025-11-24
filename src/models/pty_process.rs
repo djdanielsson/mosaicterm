@@ -44,6 +44,9 @@ pub struct PtyProcess {
 
     /// Arguments passed to the command
     pub args: Vec<String>,
+
+    /// Working directory when the process was started
+    pub working_directory: Option<std::path::PathBuf>,
 }
 
 impl PtyProcess {
@@ -57,6 +60,25 @@ impl PtyProcess {
             exit_code: None,
             command,
             args,
+            working_directory: None,
+        }
+    }
+
+    /// Create a new PTY process with a working directory
+    pub fn with_working_directory(
+        command: String,
+        args: Vec<String>,
+        working_directory: std::path::PathBuf,
+    ) -> Self {
+        Self {
+            pid: None,
+            state: PtyState::Created,
+            start_time: None,
+            end_time: None,
+            exit_code: None,
+            command,
+            args,
+            working_directory: Some(working_directory),
         }
     }
 
@@ -131,6 +153,24 @@ impl PtyProcess {
 impl Default for PtyProcess {
     fn default() -> Self {
         Self::new(String::new(), Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod working_directory_tests {
+    use super::*;
+
+    #[test]
+    fn test_pty_process_with_working_directory() {
+        let process = PtyProcess::with_working_directory(
+            "/bin/ls".to_string(),
+            vec![],
+            std::path::PathBuf::from("/tmp"),
+        );
+        assert_eq!(
+            process.working_directory,
+            Some(std::path::PathBuf::from("/tmp"))
+        );
     }
 }
 

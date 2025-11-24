@@ -5,6 +5,7 @@
 use crate::error::Result;
 use crate::models::{OutputLine, ShellType};
 use regex::Regex;
+use tracing::warn;
 
 /// Prompt detector for various shell types
 #[derive(Debug)]
@@ -87,7 +88,7 @@ impl PromptDetector {
                 });
             }
             Err(e) => {
-                eprintln!("Failed to compile regex pattern '{}': {}", pattern, e);
+                warn!("Failed to compile regex pattern '{}': {}", pattern, e);
             }
         }
     }

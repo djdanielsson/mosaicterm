@@ -21,10 +21,9 @@ pub use state::{
 
 use crate::error::Result;
 use crate::models::{OutputLine, ShellType, TerminalSession};
-use crate::pty::{PtyHandle, PtyManager};
+use crate::pty::{PtyHandle, PtyManagerV2};
 use chrono::Utc;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Main terminal emulator
 pub struct Terminal {
@@ -38,15 +37,15 @@ pub struct Terminal {
     prompt_detector: PromptDetector,
     /// Completion detector
     completion_detector: CommandCompletionDetector,
-    /// PTY manager reference
-    pty_manager: Arc<Mutex<PtyManager>>,
+    /// PTY manager reference (V2 with per-terminal locking)
+    pty_manager: Arc<PtyManagerV2>,
     /// Current PTY handle
     pty_handle: Option<PtyHandle>,
 }
 
 impl Terminal {
     /// Create a new terminal emulator
-    pub fn new(session: TerminalSession, pty_manager: Arc<Mutex<PtyManager>>) -> Self {
+    pub fn new(session: TerminalSession, pty_manager: Arc<PtyManagerV2>) -> Self {
         Self {
             state: TerminalState::new(session),
             input_processor: CommandInputProcessor::new(),
@@ -85,7 +84,7 @@ impl Terminal {
     pub fn with_shell(
         session: TerminalSession,
         shell_type: ShellType,
-        pty_manager: Arc<Mutex<PtyManager>>,
+        pty_manager: Arc<PtyManagerV2>,
     ) -> Self {
         let mut terminal = Self::new(session, pty_manager);
         terminal.prompt_detector = PromptDetector::with_shell(shell_type);
@@ -108,47 +107,54 @@ impl Terminal {
     ///
     /// ```no_run
     /// use mosaicterm::terminal::Terminal;
-    /// use mosaicterm::pty::PtyManager;
+    /// use mosaicterm::pty::PtyManagerV2;
     /// use std::sync::Arc;
-    /// use tokio::sync::Mutex;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// // Note: Terminal initialization is handled internally by MosaicTermApp
-    /// let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
+    /// let pty_manager = Arc::new(PtyManagerV2::new());
     /// // Terminal sessions are managed automatically
     /// # Ok(())
     /// # }
     /// ```
     pub async fn initialize_session(&mut self) -> Result<()> {
-        let mut pty_manager = self.pty_manager.lock().await;
+        // PtyManagerV2 is already async and thread-safe, no lock needed
+        let pty_manager = &*self.pty_manager;
 
         // Create PTY process for the terminal session
         let session = &self.state.session;
 
         // Determine shell command and args based on shell type
-        // Use arguments that prevent config file loading AND disable interactive features
-        // This prevents echo and other interactive behaviors
+        // Allow RC files to load (enables venv, nvm, conda, direnv, etc.)
+        // but disable line editor features to prevent interactive behaviors
         let (shell_command, shell_args) = match session.shell_type {
             crate::models::ShellType::Bash => (
                 "bash".to_string(),
                 vec![
-                    "--norc".to_string(),
-                    "--noprofile".to_string(),
-                    "--noediting".to_string(),
+                    // Remove --norc and --noprofile to allow RC files to load
+                    // This enables venv, nvm, conda, and other environment tools
+                    "--noediting".to_string(), // Keep to prevent line editor interference
                 ],
             ),
             crate::models::ShellType::Zsh => (
                 "zsh".to_string(),
-                vec!["-f".to_string(), "+Z".to_string()], // -f = no .zshrc, +Z = no zle (line editor)
+                vec![
+                    // Remove -f flag to allow .zshrc to load
+                    "+Z".to_string(), // Keep +Z to disable ZLE (line editor)
+                ],
             ),
-            crate::models::ShellType::Fish => ("fish".to_string(), vec!["--no-config".to_string()]),
+            crate::models::ShellType::Fish => (
+                "fish".to_string(),
+                vec![], // Allow config loading for fish
+            ),
             crate::models::ShellType::Ksh => ("ksh".to_string(), vec![]),
             crate::models::ShellType::Csh => ("csh".to_string(), vec![]),
             crate::models::ShellType::Tcsh => ("tcsh".to_string(), vec![]),
             crate::models::ShellType::Dash => ("dash".to_string(), vec![]),
-            crate::models::ShellType::PowerShell => {
-                ("powershell".to_string(), vec!["-NoProfile".to_string()])
-            }
+            crate::models::ShellType::PowerShell => (
+                "powershell".to_string(),
+                vec![], // Allow profile loading for PowerShell
+            ),
             crate::models::ShellType::Cmd => ("cmd".to_string(), vec![]),
             crate::models::ShellType::Other => ("sh".to_string(), vec![]), // Fallback to basic shell
         };
@@ -241,9 +247,10 @@ impl Terminal {
 
         // Send to PTY if available
         if let Some(handle) = &self.pty_handle {
-            let mut manager = self.pty_manager.lock().await;
+            // PtyManagerV2 is already async and thread-safe, no lock needed
+            let manager = &*self.pty_manager;
             self.input_processor
-                .send_command(&mut manager, handle, command)
+                .send_command(manager, handle, command)
                 .await?;
         }
 
@@ -367,7 +374,8 @@ impl Terminal {
     /// Read available output from the PTY
     pub async fn read_output(&mut self) -> Result<Vec<OutputLine>> {
         if let Some(pty_handle) = &self.pty_handle {
-            let mut manager = self.pty_manager.lock().await;
+            // PtyManagerV2 is already async and thread-safe, no lock needed
+            let manager = &*self.pty_manager;
 
             // Read raw output from PTY
             let raw_output = manager.read_output(pty_handle, 100).await?;
@@ -394,7 +402,8 @@ impl Terminal {
     /// Check if there's pending PTY output to read
     pub async fn has_pending_pty_output(&mut self) -> Result<bool> {
         if let Some(pty_handle) = &self.pty_handle {
-            let mut manager = self.pty_manager.lock().await;
+            // PtyManagerV2 is already async and thread-safe, no lock needed
+            let manager = &*self.pty_manager;
             let output = manager.read_output(pty_handle, 10).await?;
             Ok(!output.is_empty())
         } else {
@@ -416,12 +425,12 @@ impl Terminal {
 /// Terminal factory for creating terminals with different configurations
 #[derive(Clone)]
 pub struct TerminalFactory {
-    pty_manager: Arc<Mutex<PtyManager>>,
+    pty_manager: Arc<PtyManagerV2>,
 }
 
 impl TerminalFactory {
     /// Create a new terminal factory
-    pub fn new(pty_manager: Arc<Mutex<PtyManager>>) -> Self {
+    pub fn new(pty_manager: Arc<PtyManagerV2>) -> Self {
         Self { pty_manager }
     }
 
@@ -532,8 +541,7 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pty::PtyManager;
-    use tokio;
+    use crate::pty::PtyManagerV2;
 
     fn create_test_session() -> TerminalSession {
         TerminalSession::new(
@@ -542,8 +550,8 @@ mod tests {
         )
     }
 
-    fn create_test_pty_manager() -> Arc<Mutex<PtyManager>> {
-        Arc::new(Mutex::new(PtyManager::new()))
+    fn create_test_pty_manager() -> Arc<PtyManagerV2> {
+        Arc::new(PtyManagerV2::new())
     }
 
     #[test]

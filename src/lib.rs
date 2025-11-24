@@ -64,9 +64,9 @@
 //!
 //! ## Platform Support
 //!
-//! - ✅ macOS (tested)
-//! - ✅ Linux (tested)
-//! - 🚧 Windows (experimental)
+//! - ✅ macOS (Intel & Apple Silicon)
+//! - ✅ Linux (x86_64 & ARM64)
+//! - ✅ Windows (x86_64 & ARM64)
 //!
 //! ## Safety and Reliability
 //!
@@ -89,10 +89,14 @@ extern crate tracing;
 
 pub mod completion;
 pub mod config;
+pub mod context;
 pub mod error;
 pub mod history;
 pub mod state;
 pub mod state_manager;
+
+// Platform abstraction
+pub mod platform;
 
 // Core modules
 pub mod pty;
@@ -236,8 +240,8 @@ fn validate_system_requirements() -> Result<()> {
 fn initialize_core_components(config: &Config) -> Result<()> {
     info!("🏗️  Initializing core components...");
 
-    // Initialize PTY manager
-    let pty_mgr = std::sync::Arc::new(tokio::sync::Mutex::new(pty::PtyManager::new()));
+    // Initialize PTY manager V2 (with per-terminal locking)
+    let pty_mgr = std::sync::Arc::new(pty::PtyManagerV2::new());
     let pty_manager = {
         info!("✅ PTY manager initialized");
         pty_mgr
@@ -687,9 +691,11 @@ fn get_hostname() -> String {
             fn gethostname(name: *mut c_char, len: usize) -> i32;
         }
 
-        let mut buffer = [0i8; 256];
-        if unsafe { gethostname(buffer.as_mut_ptr(), buffer.len()) } == 0 {
-            if let Ok(hostname_cstr) = unsafe { CStr::from_ptr(buffer.as_ptr()) }.to_str() {
+        let mut buffer = vec![0u8; 256];
+        let buffer_ptr = buffer.as_mut_ptr() as *mut c_char;
+        if unsafe { gethostname(buffer_ptr, buffer.len()) } == 0 {
+            let cstr_ptr = buffer.as_ptr() as *const c_char;
+            if let Ok(hostname_cstr) = unsafe { CStr::from_ptr(cstr_ptr) }.to_str() {
                 return hostname_cstr.to_string();
             }
         }

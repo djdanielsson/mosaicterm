@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Shell configuration manager
 #[derive(Debug, Clone)]
@@ -215,7 +214,7 @@ impl ShellManager {
     #[cfg(unix)]
     fn detect_from_parent_process(&self) -> Option<ShellType> {
         // Try to get parent process information
-        if let Ok(output) = Command::new("ps")
+        if let Ok(output) = std::process::Command::new("ps")
             .arg("-p")
             .arg(std::os::unix::process::parent_id().to_string())
             .arg("-o")

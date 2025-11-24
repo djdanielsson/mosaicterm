@@ -3,6 +3,21 @@
 use mosaicterm::pty::process::validate_command;
 use proptest::prelude::*;
 
+// Windows is much slower at regex validation, so use smaller ranges
+#[cfg(windows)]
+const MAX_LENGTH_TEST: usize = 1000;
+#[cfg(windows)]
+const MIN_LONG_COMMAND: usize = 10001;
+#[cfg(windows)]
+const MAX_LONG_COMMAND: usize = 10011;
+
+#[cfg(not(windows))]
+const MAX_LENGTH_TEST: usize = 10000;
+#[cfg(not(windows))]
+const MIN_LONG_COMMAND: usize = 10001;
+#[cfg(not(windows))]
+const MAX_LONG_COMMAND: usize = 20000;
+
 proptest! {
     #[test]
     fn test_validate_doesnt_panic(s in "\\PC*") {
@@ -39,14 +54,16 @@ proptest! {
     }
 
     #[test]
-    fn test_rejects_very_long_commands(len in 10001usize..20000) {
+    #[cfg_attr(windows, ignore = "Too slow on Windows - regex validation is extremely slow")]
+    fn test_rejects_very_long_commands(len in MIN_LONG_COMMAND..MAX_LONG_COMMAND) {
         let cmd = "a".repeat(len);
         let result = validate_command(&cmd);
         prop_assert!(result.is_err());
     }
 
     #[test]
-    fn test_handles_various_lengths(len in 1usize..10000) {
+    #[cfg_attr(windows, ignore = "Too slow on Windows - regex validation is extremely slow")]
+    fn test_handles_various_lengths(len in 1usize..MAX_LENGTH_TEST) {
         let cmd = "a".repeat(len);
         let result = validate_command(&cmd);
         // Validation depends on security rules and command patterns

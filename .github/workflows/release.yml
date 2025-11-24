@@ -14,7 +14,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -24,6 +24,9 @@ jobs:
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ github.workspace }}
+          cache-all-crates: true
 
       - name: Check compilation
         run: cargo check
@@ -35,7 +38,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings -A deprecated
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Check documentation
         run: cargo doc --no-deps
@@ -48,27 +51,40 @@ jobs:
     strategy:
       matrix:
         include:
+          # macOS x86_64
           - os: macos-latest
             target: x86_64-apple-darwin
             name: macos-x64
             artifact: mosaicterm
+          # macOS ARM64 (Apple Silicon)
           - os: macos-latest
             target: aarch64-apple-darwin
             name: macos-arm64
             artifact: mosaicterm
+          # Linux x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             name: linux-x64
             artifact: mosaicterm
-          # Uncomment to enable Windows builds
-          # - os: windows-latest
-          #   target: x86_64-pc-windows-msvc
-          #   name: windows-x64
-          #   artifact: mosaicterm.exe
+          # Linux ARM64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            name: linux-arm64
+            artifact: mosaicterm
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-x64
+            artifact: mosaicterm.exe
+          # Windows ARM64
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            name: windows-arm64
+            artifact: mosaicterm.exe
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -91,11 +107,22 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-
       - name: Install target
         run: rustup target add ${{ matrix.target }}
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ github.workspace }}
+          cache-all-crates: true
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" \
+            >> $GITHUB_ENV
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
@@ -125,12 +152,14 @@ jobs:
         shell: pwsh
         run: |
           cd target/${{ matrix.target }}/release
-          Compress-Archive -Path ${{ matrix.artifact }} -DestinationPath mosaicterm-${{ matrix.name }}.zip
+          Compress-Archive \
+            -Path ${{ matrix.artifact }} \
+            -DestinationPath mosaicterm-${{ matrix.name }}.zip
           Move-Item mosaicterm-${{ matrix.name }}.zip ../../..
 
       - name: Upload macOS App Bundle
         if: matrix.os == 'macos-latest'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: MosaicTerm-${{ matrix.name }}.app.tar.gz
         env:
@@ -138,7 +167,7 @@ jobs:
 
       - name: Upload CLI binary for Linux/macOS
         if: matrix.os != 'windows-latest'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: mosaicterm-${{ matrix.name }}.tar.gz
         env:
@@ -146,7 +175,7 @@ jobs:
 
       - name: Upload Windows release
         if: matrix.os == 'windows-latest'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: mosaicterm-${{ matrix.name }}.zip
         env:
