@@ -16,7 +16,7 @@ homepage = "https://github.com/djdanielsson/mosaicterm"
 eframe = { version = "0.24", features = ["persistence"] }
 
 # PTY and Terminal
-portable-pty = "0.8"
+portable-pty = "0.9"
 vte = "0.13"
 
 # Serialization and Configuration
