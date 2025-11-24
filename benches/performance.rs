@@ -3,11 +3,12 @@
 //! This file contains comprehensive performance benchmarks to ensure MosaicTerm
 //! meets its performance targets for rendering, parsing, and command execution.
 
-use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use mosaicterm::models::{CommandBlock, OutputLine};
 use mosaicterm::terminal::ansi_parser::AnsiParser;
 use mosaicterm::terminal::output::{OutputChunk, OutputProcessor};
 use mosaicterm::terminal::StreamType;
+use std::hint::black_box;
 use std::path::PathBuf;
 
 // ============================================================================
