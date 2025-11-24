@@ -138,6 +138,8 @@ pub struct MosaicTermApp {
     history_search_active: bool,
     /// Current history search query
     history_search_query: String,
+    /// Flag to request focus on history search input (set when popup opens)
+    history_search_needs_focus: bool,
     /// Prompt formatter for custom prompts
     prompt_formatter: PromptFormatter,
     /// Context detector for environment tracking (venv, nvm, conda, etc.)
@@ -259,6 +261,7 @@ impl MosaicTermApp {
             }),
             history_search_active: false,
             history_search_query: String::new(),
+            history_search_needs_focus: false,
             prompt_formatter,
             context_detector: ContextDetector::new(),
             env_query_in_progress: false,
@@ -1790,8 +1793,14 @@ impl MosaicTermApp {
             self.history_search_active = !self.history_search_active;
             if self.history_search_active {
                 self.history_search_query.clear();
+                self.history_search_needs_focus = true; // Request focus on next frame
+                                                        // Request repaint to ensure popup shows immediately
+                ctx.request_repaint();
             }
-            ctx.input_mut(|i| i.events.clear());
+            // Only clear events if we're closing the popup, not opening it
+            if !self.history_search_active {
+                ctx.input_mut(|i| i.events.clear());
+            }
         }
 
         // Only handle other shortcuts when no text input is focused
@@ -2070,8 +2079,11 @@ impl MosaicTermApp {
                 // Store input rect for positioning completion popup
                 let input_rect = input_response.rect;
 
-                // Always ensure the input keeps focus
-                input_response.request_focus();
+                // Only ensure the input keeps focus if history search is not active
+                // When history search is active, the search field should have focus instead
+                if !self.history_search_active {
+                    input_response.request_focus();
+                }
 
                 // Check if input changed (for filtering)
                 let input_changed = old_input != current_input;
@@ -2281,6 +2293,13 @@ impl MosaicTermApp {
 
     /// Render the history search popup (Ctrl+R)
     fn render_history_search_popup(&mut self, ctx: &egui::Context, input_rect: egui::Rect) {
+        // Request focus on search field if needed (before showing popup)
+        if self.history_search_needs_focus {
+            let search_id = egui::Id::new("history_search_input");
+            ctx.memory_mut(|mem| mem.request_focus(search_id));
+            self.history_search_needs_focus = false;
+        }
+
         // Position popup above the input
         let popup_width = input_rect.width().max(600.0);
         let popup_height = 400.0;
@@ -2326,7 +2345,7 @@ impl MosaicTermApp {
                             ui.separator();
                             ui.add_space(8.0);
 
-                            // Search input - always request focus
+                            // Search input - ensure it gets focus
                             let search_id = egui::Id::new("history_search_input");
                             let search_response = ui.add(
                                 egui::TextEdit::singleline(&mut self.history_search_query)
@@ -2336,9 +2355,30 @@ impl MosaicTermApp {
                                     .id(search_id),
                             );
 
-                            // Force focus on the search input
-                            ui.memory_mut(|mem| mem.request_focus(search_id));
-                            search_response.request_focus();
+                            // Force focus on search field - try multiple methods
+                            let search_has_focus = search_response.has_focus()
+                                || ui.memory(|mem| mem.focus() == Some(search_id));
+                            if self.history_search_needs_focus || !search_has_focus {
+                                ctx.memory_mut(|mem| mem.request_focus(search_id));
+                                search_response.request_focus();
+                                self.history_search_needs_focus = false;
+                            }
+
+                            // If search field still doesn't have focus, intercept text input here as fallback
+                            // This prevents duplication since we check focus status here
+                            if !search_has_focus {
+                                let mut text_to_add = String::new();
+                                ctx.input(|i| {
+                                    for event in &i.events {
+                                        if let egui::Event::Text(text) = event {
+                                            text_to_add.push_str(text);
+                                        }
+                                    }
+                                });
+                                if !text_to_add.is_empty() {
+                                    self.history_search_query.push_str(&text_to_add);
+                                }
+                            }
 
                             ui.add_space(8.0);
                             ui.separator();
