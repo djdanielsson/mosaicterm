@@ -76,7 +76,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-nextest
-          key: cargo-nextest-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: cargo-nextest-${{ runner.os }}-v1
           restore-keys: |
             cargo-nextest-${{ runner.os }}-
 
@@ -187,7 +187,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/cargo-tarpaulin
-          key: cargo-tarpaulin-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: cargo-tarpaulin-${{ runner.os }}-v1
           restore-keys: |
             cargo-tarpaulin-${{ runner.os }}-
 
