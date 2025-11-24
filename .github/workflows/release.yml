@@ -152,9 +152,7 @@ jobs:
         shell: pwsh
         run: |
           cd target/${{ matrix.target }}/release
-          Compress-Archive \
-            -Path ${{ matrix.artifact }} \
-            -DestinationPath mosaicterm-${{ matrix.name }}.zip
+          Compress-Archive -Path ${{ matrix.artifact }} -DestinationPath mosaicterm-${{ matrix.name }}.zip
           Move-Item mosaicterm-${{ matrix.name }}.zip ../../..
 
       - name: Upload macOS App Bundle
