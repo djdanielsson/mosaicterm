@@ -167,6 +167,8 @@ pub struct MosaicTermApp {
     ssh_session_command: Option<String>,
     /// The remote prompt captured from SSH output
     ssh_remote_prompt: Option<String>,
+    /// UI color theme (cached egui colors from config)
+    ui_colors: mosaicterm::ui::UiColors,
 }
 
 impl Default for MosaicTermApp {
@@ -253,6 +255,9 @@ impl MosaicTermApp {
         let mut state_manager = StateManager::new();
         Self::add_demo_commands(&mut state_manager);
 
+        // Create UI colors from theme before moving runtime_config
+        let ui_colors = mosaicterm::ui::UiColors::from_theme(&runtime_config.config().ui.theme);
+
         Self {
             state_manager,
             terminal: None,
@@ -285,6 +290,7 @@ impl MosaicTermApp {
             ssh_session_active: false,
             ssh_session_command: None,
             ssh_remote_prompt: None,
+            ui_colors,
         }
     }
 
@@ -2049,10 +2055,14 @@ impl MosaicTermApp {
     fn setup_visual_style(&self, ctx: &egui::Context) {
         let mut style = (*ctx.style()).clone();
 
-        // Set up a terminal-inspired theme
+        // Set up theme from configuration
         style.visuals.dark_mode = true;
-        style.visuals.window_fill = egui::Color32::from_rgb(15, 15, 25);
-        style.visuals.panel_fill = egui::Color32::from_rgb(20, 20, 35);
+        style.visuals.window_fill = self.ui_colors.background;
+        style.visuals.panel_fill = self.ui_colors.background;
+
+        // Set selection color from theme
+        style.visuals.selection.bg_fill = self.ui_colors.selection;
+        style.visuals.selection.stroke = egui::Stroke::new(1.0, self.ui_colors.accent);
 
         // Customize widget spacing for better terminal-like appearance
         style.spacing.item_spacing = egui::vec2(8.0, 4.0);
@@ -2343,13 +2353,10 @@ impl MosaicTermApp {
 
     /// Render the fixed input area at the bottom
     fn render_fixed_input_area(&mut self, ui: &mut egui::Ui) {
-        // Create a fixed input block with clear visual boundaries
+        // Create a fixed input block with clear visual boundaries using theme colors
         let input_frame = egui::Frame::none()
-            .fill(egui::Color32::from_rgb(25, 25, 35))
-            .stroke(egui::Stroke::new(
-                2.0,
-                egui::Color32::from_rgb(100, 100, 150),
-            ))
+            .fill(self.ui_colors.input.background)
+            .stroke(egui::Stroke::new(2.0, self.ui_colors.input.focused_border))
             .inner_margin(egui::Margin::symmetric(15.0, 10.0))
             .outer_margin(egui::Margin::symmetric(5.0, 5.0));
 
@@ -2359,7 +2366,7 @@ impl MosaicTermApp {
                 ui.label(
                     egui::RichText::new(self.input_prompt.prompt_text())
                         .font(egui::FontId::monospace(16.0))
-                        .color(egui::Color32::from_rgb(100, 200, 100))
+                        .color(self.ui_colors.input.prompt)
                         .strong(),
                 );
 

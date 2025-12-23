@@ -4,6 +4,7 @@
 //! including command block rendering, input handling, and layout management.
 
 pub mod blocks;
+pub mod colors;
 pub mod completion_popup;
 pub mod input;
 pub mod metrics;
@@ -15,6 +16,7 @@ pub mod viewport;
 
 // Re-exports for convenience
 pub use blocks::{BlockConfig, CommandBlocks, RenderedBlock, StatusIcon};
+pub use colors::{ToEguiColor, UiColors};
 pub use completion_popup::CompletionPopup;
 pub use input::{InputConfig, InputPrompt};
 pub use metrics::MetricsPanel;

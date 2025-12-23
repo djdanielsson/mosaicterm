@@ -52,8 +52,12 @@ pub struct UiConfig {
     /// Maximum number of lines to keep in history
     pub scrollback_lines: usize,
 
-    /// UI theme name
+    /// UI theme name (for preset selection)
     pub theme_name: String,
+
+    /// Custom theme colors (overrides theme_name if specified)
+    #[serde(default)]
+    pub theme: crate::models::config::Theme,
 
     /// Enable smooth scrolling
     pub smooth_scrolling: bool,
@@ -75,6 +79,7 @@ impl Default for UiConfig {
             font_size: 12,
             scrollback_lines: 100000, // Increased for unlimited output
             theme_name: "default-dark".to_string(),
+            theme: crate::models::config::Theme::default(),
             smooth_scrolling: true,
             animation_duration_ms: 200,
             show_line_numbers: false,
@@ -544,6 +549,8 @@ pub mod utils {
             } else {
                 overlay.theme_name
             },
+            // Use overlay theme, falling back to base theme
+            theme: overlay.theme,
             smooth_scrolling: overlay.smooth_scrolling,
             animation_duration_ms: if overlay.animation_duration_ms == 0 {
                 base.animation_duration_ms

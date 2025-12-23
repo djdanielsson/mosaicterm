@@ -291,6 +291,22 @@ pub struct Theme {
 
     /// Selection color
     pub selection: Color,
+
+    /// Terminal ANSI colors
+    #[serde(default)]
+    pub ansi: AnsiColors,
+
+    /// Command block colors
+    #[serde(default)]
+    pub blocks: BlockColors,
+
+    /// Input field colors
+    #[serde(default)]
+    pub input: InputColors,
+
+    /// Status bar colors
+    #[serde(default)]
+    pub status_bar: StatusBarColors,
 }
 
 impl Default for Theme {
@@ -303,6 +319,193 @@ impl Default for Theme {
             error: Color::new(0.8, 0.3, 0.3, 1.0),      // Red
             warning: Color::new(0.8, 0.6, 0.2, 1.0),    // Yellow
             selection: Color::new(0.2, 0.4, 0.6, 0.5),  // Semi-transparent blue
+            ansi: AnsiColors::default(),
+            blocks: BlockColors::default(),
+            input: InputColors::default(),
+            status_bar: StatusBarColors::default(),
+        }
+    }
+}
+
+/// ANSI terminal colors (16 standard colors)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnsiColors {
+    /// Black (ANSI 0)
+    pub black: Color,
+    /// Red (ANSI 1)
+    pub red: Color,
+    /// Green (ANSI 2)
+    pub green: Color,
+    /// Yellow (ANSI 3)
+    pub yellow: Color,
+    /// Blue (ANSI 4)
+    pub blue: Color,
+    /// Magenta (ANSI 5)
+    pub magenta: Color,
+    /// Cyan (ANSI 6)
+    pub cyan: Color,
+    /// White (ANSI 7)
+    pub white: Color,
+    /// Bright Black (ANSI 8)
+    pub bright_black: Color,
+    /// Bright Red (ANSI 9)
+    pub bright_red: Color,
+    /// Bright Green (ANSI 10)
+    pub bright_green: Color,
+    /// Bright Yellow (ANSI 11)
+    pub bright_yellow: Color,
+    /// Bright Blue (ANSI 12)
+    pub bright_blue: Color,
+    /// Bright Magenta (ANSI 13)
+    pub bright_magenta: Color,
+    /// Bright Cyan (ANSI 14)
+    pub bright_cyan: Color,
+    /// Bright White (ANSI 15)
+    pub bright_white: Color,
+}
+
+impl Default for AnsiColors {
+    fn default() -> Self {
+        Self {
+            black: Color::from_rgb8(0, 0, 0),
+            red: Color::from_rgb8(205, 49, 49),
+            green: Color::from_rgb8(13, 188, 121),
+            yellow: Color::from_rgb8(229, 229, 16),
+            blue: Color::from_rgb8(36, 114, 200),
+            magenta: Color::from_rgb8(188, 63, 188),
+            cyan: Color::from_rgb8(17, 168, 205),
+            white: Color::from_rgb8(229, 229, 229),
+            bright_black: Color::from_rgb8(102, 102, 102),
+            bright_red: Color::from_rgb8(241, 76, 76),
+            bright_green: Color::from_rgb8(35, 209, 139),
+            bright_yellow: Color::from_rgb8(245, 245, 67),
+            bright_blue: Color::from_rgb8(59, 142, 234),
+            bright_magenta: Color::from_rgb8(214, 112, 214),
+            bright_cyan: Color::from_rgb8(41, 184, 219),
+            bright_white: Color::from_rgb8(229, 229, 229),
+        }
+    }
+}
+
+/// Command block colors
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockColors {
+    /// Block background color
+    pub background: Color,
+    /// Block border color
+    pub border: Color,
+    /// Block header background
+    pub header_background: Color,
+    /// Command text color
+    pub command_text: Color,
+    /// Output text color
+    pub output_text: Color,
+    /// Timestamp text color
+    pub timestamp: Color,
+    /// Prompt text color
+    pub prompt: Color,
+    /// Running status color
+    pub status_running: Color,
+    /// Completed status color
+    pub status_completed: Color,
+    /// Failed status color
+    pub status_failed: Color,
+    /// Cancelled status color
+    pub status_cancelled: Color,
+    /// Pending status color
+    pub status_pending: Color,
+    /// TUI mode status color
+    pub status_tui: Color,
+    /// Hovered block border color
+    pub hover_border: Color,
+    /// Selected block border color
+    pub selected_border: Color,
+}
+
+impl Default for BlockColors {
+    fn default() -> Self {
+        Self {
+            background: Color::from_rgba8(25, 25, 35, 180),
+            border: Color::from_rgb8(45, 45, 65),
+            header_background: Color::from_rgba8(15, 15, 25, 200),
+            command_text: Color::from_rgb8(200, 200, 255),
+            output_text: Color::from_rgb8(180, 180, 200),
+            timestamp: Color::from_rgb8(120, 120, 140),
+            prompt: Color::from_rgb8(150, 150, 170),
+            status_running: Color::from_rgb8(255, 200, 0),
+            status_completed: Color::from_rgb8(0, 255, 100),
+            status_failed: Color::from_rgb8(255, 100, 100),
+            status_cancelled: Color::from_rgb8(255, 165, 0),
+            status_pending: Color::from_rgb8(150, 150, 150),
+            status_tui: Color::from_rgb8(150, 100, 255),
+            hover_border: Color::from_rgb8(60, 60, 80),
+            selected_border: Color::from_rgb8(100, 150, 255),
+        }
+    }
+}
+
+/// Input field colors
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InputColors {
+    /// Input field background
+    pub background: Color,
+    /// Input text color
+    pub text: Color,
+    /// Placeholder text color
+    pub placeholder: Color,
+    /// Cursor color
+    pub cursor: Color,
+    /// Border color
+    pub border: Color,
+    /// Focused border color
+    pub focused_border: Color,
+    /// Prompt text color
+    pub prompt: Color,
+}
+
+impl Default for InputColors {
+    fn default() -> Self {
+        Self {
+            background: Color::from_rgb8(25, 25, 35),
+            text: Color::from_rgb8(255, 255, 255),
+            placeholder: Color::from_rgb8(120, 120, 140),
+            cursor: Color::from_rgb8(100, 150, 255),
+            border: Color::from_rgb8(60, 60, 80),
+            focused_border: Color::from_rgb8(100, 150, 255),
+            prompt: Color::from_rgb8(100, 200, 100),
+        }
+    }
+}
+
+/// Status bar colors
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusBarColors {
+    /// Status bar background
+    pub background: Color,
+    /// Status bar text
+    pub text: Color,
+    /// Directory path color
+    pub path: Color,
+    /// Branch name color
+    pub branch: Color,
+    /// Environment indicator color (venv, nvm, etc.)
+    pub environment: Color,
+    /// SSH session indicator color
+    pub ssh_indicator: Color,
+    /// Border color
+    pub border: Color,
+}
+
+impl Default for StatusBarColors {
+    fn default() -> Self {
+        Self {
+            background: Color::from_rgb8(35, 35, 45),
+            text: Color::from_rgb8(200, 200, 200),
+            path: Color::from_rgb8(150, 200, 255),
+            branch: Color::from_rgb8(200, 200, 255),
+            environment: Color::from_rgb8(255, 200, 100),
+            ssh_indicator: Color::from_rgb8(150, 255, 150),
+            border: Color::from_rgb8(80, 80, 100),
         }
     }
 }
@@ -356,6 +559,26 @@ impl Color {
         Self { r, g, b, a }
     }
 
+    /// Create color from RGB u8 values (0-255)
+    pub fn from_rgb8(r: u8, g: u8, b: u8) -> Self {
+        Self {
+            r: r as f32 / 255.0,
+            g: g as f32 / 255.0,
+            b: b as f32 / 255.0,
+            a: 1.0,
+        }
+    }
+
+    /// Create color from RGBA u8 values (0-255)
+    pub fn from_rgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self {
+            r: r as f32 / 255.0,
+            g: g as f32 / 255.0,
+            b: b as f32 / 255.0,
+            a: a as f32 / 255.0,
+        }
+    }
+
     /// Create color from hex string (e.g., "#FF0000" or "#FF0000FF")
     pub fn from_hex(hex: &str) -> Result<Self, ConfigError> {
         let hex = hex.trim_start_matches('#');
@@ -398,6 +621,25 @@ impl Color {
         } else {
             format!("#{:02X}{:02X}{:02X}{:02X}", r, g, b, a)
         }
+    }
+
+    /// Convert to RGB u8 tuple
+    pub fn to_rgb8(&self) -> (u8, u8, u8) {
+        (
+            (self.r * 255.0).round() as u8,
+            (self.g * 255.0).round() as u8,
+            (self.b * 255.0).round() as u8,
+        )
+    }
+
+    /// Convert to RGBA u8 tuple
+    pub fn to_rgba8(&self) -> (u8, u8, u8, u8) {
+        (
+            (self.r * 255.0).round() as u8,
+            (self.g * 255.0).round() as u8,
+            (self.b * 255.0).round() as u8,
+            (self.a * 255.0).round() as u8,
+        )
     }
 }
 
