@@ -346,6 +346,12 @@ impl Terminal {
         self.output_processor.take_ready_lines()
     }
 
+    /// Clear all pending output without returning it
+    /// Used when switching modes (e.g., ending SSH session) to avoid mixing output
+    pub fn clear_pending_output(&mut self) {
+        self.output_processor.clear();
+    }
+
     /// Resize terminal
     pub fn resize(&mut self, rows: usize, cols: usize) {
         self.state.set_dimensions(rows, cols);
