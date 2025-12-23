@@ -157,6 +157,16 @@ pub struct MosaicTermApp {
     async_rx: mpsc::UnboundedReceiver<AsyncResult>,
     /// Fullscreen TUI overlay for interactive apps
     tui_overlay: mosaicterm::ui::TuiOverlay,
+    /// SSH prompt overlay for interactive authentication
+    ssh_prompt_overlay: mosaicterm::ui::SshPromptOverlay,
+    /// Buffer for accumulating output to detect SSH prompts
+    ssh_prompt_buffer: String,
+    /// Whether we're currently in an SSH session
+    ssh_session_active: bool,
+    /// The SSH command that started the session (e.g., "ssh user@host")
+    ssh_session_command: Option<String>,
+    /// The remote prompt captured from SSH output
+    ssh_remote_prompt: Option<String>,
 }
 
 impl Default for MosaicTermApp {
@@ -270,6 +280,11 @@ impl MosaicTermApp {
             async_tx: request_tx,
             async_rx: result_rx,
             tui_overlay: mosaicterm::ui::TuiOverlay::new(),
+            ssh_prompt_overlay: mosaicterm::ui::SshPromptOverlay::new(),
+            ssh_prompt_buffer: String::new(),
+            ssh_session_active: false,
+            ssh_session_command: None,
+            ssh_remote_prompt: None,
         }
     }
 
@@ -476,8 +491,22 @@ impl MosaicTermApp {
             return self.handle_tui_command(command).await;
         }
 
+        // Check if this is an SSH command - track it for session management
+        if self.is_ssh_command(&command) {
+            info!("SSH command detected, will track session: {}", command);
+            self.ssh_session_command = Some(command.clone());
+            // Session will be activated after successful authentication
+        }
+
+        // Check if this is an exit command while in SSH session
+        if self.ssh_session_active && self.is_exit_command(&command) {
+            info!("Exit command detected in SSH session, will end session");
+            // Session will be deactivated when we detect the connection closed
+        }
+
         // Check if this is an interactive command and warn the user
-        if self.is_interactive_command(&command) {
+        // Skip warning for SSH since we handle it specially
+        if self.is_interactive_command(&command) && !self.is_ssh_command(&command) {
             warn!("Interactive command detected: {}", command);
             self.set_status_message(Some(format!(
                 "⚠️  '{}' is an interactive program and may not work correctly in block mode",
@@ -509,7 +538,8 @@ impl MosaicTermApp {
         let _is_cd_command = self.is_cd_command(&command);
 
         // Check if we should use direct execution (faster, cleaner)
-        if DirectExecutor::should_use_direct_execution(&command) {
+        // IMPORTANT: Skip direct execution when in SSH session - all commands must go through PTY
+        if !self.ssh_session_active && DirectExecutor::should_use_direct_execution(&command) {
             info!("Using direct execution for command: {}", command);
 
             // Create command block and mark as running
@@ -586,24 +616,29 @@ impl MosaicTermApp {
                     warn!("Failed to send input to PTY: {}", e);
                 }
 
-                // Send a command to echo the exit code after the command completes
-                // Use a unique marker so we can detect it
-                let exit_code_cmd = "echo \"MOSAICTERM_EXITCODE:$?\"\n";
-                if let Err(e) = pty_manager
-                    .send_input(handle, exit_code_cmd.as_bytes())
-                    .await
-                {
-                    warn!("Failed to send exit code check to PTY: {}", e);
-                }
+                // Only send exit code and pwd markers when NOT in SSH session
+                // In SSH session, we rely on prompt detection for completion
+                // and the markers would just add noise to remote output
+                if !self.ssh_session_active {
+                    // Send a command to echo the exit code after the command completes
+                    // Use a unique marker so we can detect it
+                    let exit_code_cmd = "echo \"MOSAICTERM_EXITCODE:$?\"\n";
+                    if let Err(e) = pty_manager
+                        .send_input(handle, exit_code_cmd.as_bytes())
+                        .await
+                    {
+                        warn!("Failed to send exit code check to PTY: {}", e);
+                    }
 
-                // If this is a cd command, also query the working directory after it completes
-                if _is_cd_command {
-                    info!("Sending pwd query for cd command: {}", command);
-                    let pwd_cmd = "echo \"MOSAICTERM_PWD:$(pwd)\"\n";
-                    if let Err(e) = pty_manager.send_input(handle, pwd_cmd.as_bytes()).await {
-                        warn!("Failed to send pwd query to PTY: {}", e);
-                    } else {
-                        debug!("Successfully sent pwd query command");
+                    // If this is a cd command, also query the working directory after it completes
+                    if _is_cd_command {
+                        info!("Sending pwd query for cd command: {}", command);
+                        let pwd_cmd = "echo \"MOSAICTERM_PWD:$(pwd)\"\n";
+                        if let Err(e) = pty_manager.send_input(handle, pwd_cmd.as_bytes()).await {
+                            warn!("Failed to send pwd query to PTY: {}", e);
+                        } else {
+                            debug!("Successfully sent pwd query command");
+                        }
                     }
                 }
             }
@@ -631,6 +666,23 @@ impl MosaicTermApp {
 
     /// Update the prompt display based on current working directory
     fn update_prompt(&mut self) {
+        // If in SSH session and we have a remote prompt, use that instead
+        if self.ssh_session_active {
+            if let Some(remote_prompt) = &self.ssh_remote_prompt {
+                debug!("Using remote SSH prompt: '{}'", remote_prompt);
+                self.input_prompt.set_prompt(remote_prompt);
+                return;
+            } else if let Some(cmd) = &self.ssh_session_command {
+                // No remote prompt captured yet, show a placeholder with host info
+                let host = self.extract_ssh_host(cmd);
+                let placeholder = format!("[{}] $ ", host);
+                debug!("Using SSH placeholder prompt: '{}'", placeholder);
+                self.input_prompt.set_prompt(&placeholder);
+                return;
+            }
+        }
+
+        // Local mode: use the normal prompt formatter
         if let Some(terminal) = &self.terminal {
             let working_dir = terminal.get_working_directory();
             let base_prompt = self.prompt_formatter.render(working_dir);
@@ -827,15 +879,212 @@ impl MosaicTermApp {
 
         // List of known interactive TUI programs (not handled by TUI overlay)
         let interactive_programs = [
-            "python", "python3", "node", "irb", "ruby", "ssh", // REPLs and remote shells
+            "python", "python3", "node", "irb", "ruby", // REPLs (SSH handled separately)
         ];
 
         interactive_programs.iter().any(|&prog| cmd_name == prog)
     }
 
+    /// Check if a command is an SSH command
+    fn is_ssh_command(&self, command: &str) -> bool {
+        let cmd_name = self.get_command_name(command);
+        cmd_name == "ssh"
+    }
+
+    /// Check if a command is an exit/logout command
+    fn is_exit_command(&self, command: &str) -> bool {
+        let trimmed = command.trim();
+        trimmed == "exit" || trimmed == "logout" || trimmed == "quit"
+    }
+
     /// Extract the command name from a command line
     fn get_command_name(&self, command: &str) -> String {
         command.split_whitespace().next().unwrap_or("").to_string()
+    }
+
+    /// Extract the host from an SSH command (e.g., "ssh user@host" -> "user@host")
+    fn extract_ssh_host(&self, command: &str) -> String {
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        // Find the first argument that looks like a host (contains @ or doesn't start with -)
+        for part in parts.iter().skip(1) {
+            if !part.starts_with('-') {
+                return part.to_string();
+            }
+        }
+        "remote".to_string()
+    }
+
+    /// End the SSH session and restore local mode
+    fn end_ssh_session(&mut self) {
+        if self.ssh_session_active {
+            info!("Ending SSH session - performing full cleanup");
+            self.ssh_session_active = false;
+            self.ssh_session_command = None;
+            self.ssh_remote_prompt = None;
+            self.ssh_prompt_buffer.clear();
+
+            // Clear any pending output from the terminal to avoid mixing with local commands
+            if let Some(terminal) = &mut self.terminal {
+                terminal.clear_pending_output();
+            }
+
+            // Clear any pending output from state manager's active session as well
+            if let Some(session) = self.state_manager.active_session_mut() {
+                session.clear_pending_output();
+
+                // Mark any running command as completed (the exit command itself)
+                if let Some(last_block) = session.current_command_block_mut() {
+                    if last_block.status == mosaicterm::models::ExecutionStatus::Running {
+                        last_block.mark_completed(std::time::Duration::from_secs(0));
+                        info!("Marked SSH exit command as completed");
+                    }
+                }
+            }
+
+            // Clear the last command time to avoid timing issues
+            self.state_manager.clear_last_command_time();
+
+            // Restore local prompt
+            self.update_prompt();
+            self.set_status_message(Some("Disconnected from remote host".to_string()));
+        }
+    }
+
+    /// Detect if SSH session has ended based on output (static version for borrow-safe use)
+    fn detect_ssh_session_end_static(output: &str) -> bool {
+        let output_lower = output.to_lowercase();
+
+        // Common SSH connection closed messages - be specific to avoid false positives
+        // Messages like "Connection to host closed." from SSH itself
+        if (output_lower.contains("connection to") && output_lower.contains("closed"))
+            || output_lower.contains("connection closed by")
+            || output_lower.contains("connection reset by peer")
+            || output_lower.contains("connection timed out")
+            || output_lower.contains("broken pipe")
+            // "Connection to X closed." is the standard SSH exit message
+            || (output_lower.contains("closed.") && output_lower.contains("connection"))
+        {
+            return true;
+        }
+
+        // Check if any line is exactly "logout" (the remote shell logout message)
+        for line in output_lower.lines() {
+            if line.trim() == "logout" {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if prompt looks like local prompt (not SSH remote prompt)
+    /// Used to detect when SSH session has ended and we're back to local shell
+    /// Static version for borrow-safe use
+    fn is_local_prompt_static(remote_prompt: Option<&String>, prompt: &str) -> bool {
+        if let Some(remote_prompt) = remote_prompt {
+            // If we have a remote prompt captured, check if this prompt is different
+            let remote_cleaned = remote_prompt.trim();
+            let prompt_cleaned = prompt.trim();
+
+            // Extract user@host portion from both prompts
+            let extract_user_host = |p: &str| -> Option<String> {
+                if let Some(at_pos) = p.find('@') {
+                    // Find where user@host ends (usually at : or space or $)
+                    let start = p[..at_pos]
+                        .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+                        .map(|i| i + 1)
+                        .unwrap_or(0);
+                    let end = p[at_pos..]
+                        .find([':', ' ', '$', '%', '>'])
+                        .map(|i| at_pos + i)
+                        .unwrap_or(p.len());
+                    Some(p[start..end].to_string())
+                } else {
+                    None
+                }
+            };
+
+            let remote_user_host = extract_user_host(remote_cleaned);
+            let current_user_host = extract_user_host(prompt_cleaned);
+
+            // If both have user@host and they're different, we're probably back to local
+            if let (Some(remote), Some(current)) = (remote_user_host, current_user_host) {
+                if remote != current {
+                    info!(
+                        "Prompt changed from '{}' to '{}' - session likely ended",
+                        remote, current
+                    );
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Try to detect a shell prompt from SSH output (static version for borrow-safe use)
+    /// Returns the prompt string if found
+    fn detect_remote_prompt_static(output: &str) -> Option<String> {
+        // Strip ANSI codes first
+        let cleaned = Self::strip_ansi_codes_static(output);
+
+        // Look for common prompt patterns at the end of lines
+        // Prompts typically end with $ (bash), % (zsh), > (other), or #  (root)
+        for line in cleaned.lines().rev() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            // Check if this looks like a prompt
+            // Common patterns: user@host:path$ or [user@host path]$ or host:path$
+            let is_prompt = (trimmed.ends_with("$ ")
+                || trimmed.ends_with("$")
+                || trimmed.ends_with("% ")
+                || trimmed.ends_with("%")
+                || trimmed.ends_with("> ")
+                || trimmed.ends_with(">")
+                || trimmed.ends_with("# ")
+                || trimmed.ends_with("#"))
+                && (trimmed.contains("@") || trimmed.contains(":") || trimmed.len() < 50);
+
+            if is_prompt {
+                // Extract the prompt (add space if not present)
+                let prompt = if trimmed.ends_with(' ') {
+                    trimmed.to_string()
+                } else {
+                    format!("{} ", trimmed)
+                };
+                return Some(prompt);
+            }
+        }
+
+        None
+    }
+
+    /// Simple ANSI code stripping (static version for borrow-safe use)
+    fn strip_ansi_codes_static(text: &str) -> String {
+        let mut result = String::with_capacity(text.len());
+        let mut chars = text.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '\x1b' {
+                // Skip ANSI sequence
+                if chars.peek() == Some(&'[') {
+                    chars.next();
+                    // Skip until letter
+                    while let Some(&c) = chars.peek() {
+                        chars.next();
+                        if c.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+
+        result
     }
 
     /// Handle TUI app exit - mark command block as completed without output
@@ -1639,6 +1888,64 @@ impl eframe::App for MosaicTermApp {
             }
         }
 
+        // Render SSH prompt overlay if active
+        if self.ssh_prompt_overlay.is_active() {
+            let should_close = self.ssh_prompt_overlay.render(ctx);
+
+            if should_close {
+                // Check if user submitted input or cancelled
+                if self.ssh_prompt_overlay.was_cancelled() {
+                    // User cancelled - send Ctrl+C to abort SSH
+                    if let Some(terminal) = &self.terminal {
+                        if let Some(pty_handle) = terminal.pty_handle() {
+                            let pty_manager = &*self.pty_manager;
+                            executor::block_on(async {
+                                let _ = pty_manager.send_input(pty_handle, &[3]).await;
+                                // Ctrl+C
+                            });
+                            info!("SSH prompt cancelled, sent Ctrl+C");
+                        }
+                    }
+                    self.ssh_prompt_overlay.hide();
+                } else if let Some(input) = self.ssh_prompt_overlay.take_input() {
+                    // Send user input to PTY with newline
+                    if let Some(terminal) = &self.terminal {
+                        if let Some(pty_handle) = terminal.pty_handle() {
+                            let pty_manager = &*self.pty_manager;
+                            let input_with_newline = format!("{}\n", input);
+                            if let Err(e) = executor::block_on(async {
+                                pty_manager
+                                    .send_input(pty_handle, input_with_newline.as_bytes())
+                                    .await
+                            }) {
+                                warn!("Failed to send SSH response to PTY: {}", e);
+                            } else {
+                                info!("Sent SSH response to PTY");
+
+                                // After successful authentication response, activate SSH session
+                                // The session will capture the remote prompt from output
+                                if self.ssh_session_command.is_some() && !self.ssh_session_active {
+                                    info!("Activating SSH session after authentication");
+                                    self.ssh_session_active = true;
+                                    self.ssh_prompt_buffer.clear();
+
+                                    // Update status to show we're connected
+                                    if let Some(cmd) = &self.ssh_session_command {
+                                        let host = self.extract_ssh_host(cmd);
+                                        self.set_status_message(Some(format!(
+                                            "🔗 Connected to {}",
+                                            host
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.ssh_prompt_overlay.hide();
+                }
+            }
+        }
+
         // Handle async operations
         self.handle_async_operations(ctx);
 
@@ -1646,7 +1953,7 @@ impl eframe::App for MosaicTermApp {
         self.poll_async_results();
 
         // Only repaint when needed to save CPU
-        // Repaint if: command is running, has pending output, user input changed, or TUI overlay active
+        // Repaint if: command is running, has pending output, user input changed, or overlays active
         let needs_repaint = self.state_manager.last_command_time().is_some()
             || (self
                 .terminal
@@ -1654,14 +1961,15 @@ impl eframe::App for MosaicTermApp {
                 .map(|t| t.has_pending_output())
                 .unwrap_or(false))
             || self.completion_popup.is_visible()
-            || self.tui_overlay.is_active();
+            || self.tui_overlay.is_active()
+            || self.ssh_prompt_overlay.is_active();
 
         if needs_repaint {
             // Repaint immediately for active operations
             ctx.request_repaint();
 
-            // For TUI overlay, request very fast repaints (16ms = ~60fps) for smooth updates
-            if self.tui_overlay.is_active() {
+            // For TUI overlay or SSH prompt, request very fast repaints (16ms = ~60fps) for smooth updates
+            if self.tui_overlay.is_active() || self.ssh_prompt_overlay.is_active() {
                 ctx.request_repaint_after(std::time::Duration::from_millis(16));
             }
         } else {
@@ -2079,9 +2387,9 @@ impl MosaicTermApp {
                 // Store input rect for positioning completion popup
                 let input_rect = input_response.rect;
 
-                // Only ensure the input keeps focus if history search is not active
-                // When history search is active, the search field should have focus instead
-                if !self.history_search_active {
+                // Only ensure the input keeps focus if history search and SSH prompt are not active
+                // When these overlays are active, their input fields should have focus instead
+                if !self.history_search_active && !self.ssh_prompt_overlay.is_active() {
                     input_response.request_focus();
                 }
 
@@ -2853,6 +3161,9 @@ impl MosaicTermApp {
         let mut env_query_output = None; // Track environment query output
         let mut timeout_kill_status_message: Option<String> = None; // Track timeout kill status
         let mut should_update_working_dir: Option<(std::path::PathBuf, std::path::PathBuf)> = None; // Track working dir sync
+        let mut ssh_session_ended = false; // Track if SSH session ended
+        let mut ssh_session_should_activate = false; // Track if SSH session should be activated
+        let mut new_remote_prompt: Option<String> = None; // Track new remote prompt
 
         if let Some(_terminal) = &mut self.terminal {
             if let Some(handle) = _terminal.pty_handle() {
@@ -2884,6 +3195,66 @@ impl MosaicTermApp {
                             }
 
                             return; // Don't process output for command blocks
+                        }
+
+                        // Check for SSH prompts that need user interaction
+                        let data_str = String::from_utf8_lossy(&data);
+
+                        // Accumulate output in buffer for SSH prompt detection
+                        // Keep only last 2KB to avoid memory issues
+                        self.ssh_prompt_buffer.push_str(&data_str);
+                        if self.ssh_prompt_buffer.len() > 2048 {
+                            let start = self.ssh_prompt_buffer.len() - 2048;
+                            self.ssh_prompt_buffer = self.ssh_prompt_buffer[start..].to_string();
+                        }
+
+                        // Check for SSH prompts if overlay is not already active
+                        if !self.ssh_prompt_overlay.is_active() {
+                            if let Some((prompt_type, message)) =
+                                mosaicterm::ui::SshPromptOverlay::detect_ssh_prompt(
+                                    &self.ssh_prompt_buffer,
+                                )
+                            {
+                                info!("Detected SSH prompt: {:?}", prompt_type);
+                                self.ssh_prompt_overlay.show(prompt_type, message);
+                                self.ssh_prompt_buffer.clear();
+                                return; // Wait for user input before processing more
+                            }
+                        }
+
+                        // SSH session management
+                        if self.ssh_session_active {
+                            // Check for SSH connection closed
+                            if Self::detect_ssh_session_end_static(&data_str) {
+                                info!("SSH session ended (detected end message)");
+                                ssh_session_ended = true;
+                            } else if let Some(prompt) =
+                                Self::detect_remote_prompt_static(&data_str)
+                            {
+                                // Check if this prompt looks like the local prompt (different from remote)
+                                // This helps detect when SSH exited and we're back to local shell
+                                if Self::is_local_prompt_static(
+                                    self.ssh_remote_prompt.as_ref(),
+                                    &prompt,
+                                ) {
+                                    info!("SSH session ended (detected local prompt)");
+                                    ssh_session_ended = true;
+                                } else if self.ssh_remote_prompt.as_ref() != Some(&prompt) {
+                                    // Same SSH session, just update the prompt (path might have changed)
+                                    info!("Updated remote prompt: '{}'", prompt);
+                                    new_remote_prompt = Some(prompt);
+                                }
+                            }
+                        } else if self.ssh_session_command.is_some()
+                            && !self.ssh_prompt_overlay.is_active()
+                        {
+                            // SSH command started but session not active yet (passwordless auth)
+                            // Activate session if we detect a remote prompt
+                            if let Some(prompt) = Self::detect_remote_prompt_static(&data_str) {
+                                info!("Detected remote prompt for passwordless SSH, activating session");
+                                ssh_session_should_activate = true;
+                                new_remote_prompt = Some(prompt);
+                            }
                         }
 
                         // Check for ANSI clear screen sequences (\x1b[H\x1b[2J or \x1b[2J)
@@ -3084,17 +3455,65 @@ impl MosaicTermApp {
                                             continue;
                                         }
 
+                                        // Check if line looks like a shell prompt
+                                        // In SSH mode, be more lenient - remote shells may have different prompt formats
+                                        let ends_with_prompt_char = line_text.ends_with("$ ")
+                                            || line_text.ends_with("$")
+                                            || line_text.ends_with("% ")
+                                            || line_text.ends_with("%")
+                                            || line_text.ends_with("> ")
+                                            || line_text.ends_with(">")
+                                            || line_text.ends_with("# ")
+                                            || line_text.ends_with("#");
+
+                                        let looks_like_prompt = ends_with_prompt_char
+                                            && (line_text.contains("@") 
+                                                || line_text.contains(":") 
+                                                || line_text.len() < 50
+                                                // In SSH mode, also accept short lines that look like prompts
+                                                || (self.ssh_session_active && line_text.len() < 100));
+
+                                        // Check if line is command echo with prompt (SSH style: "user@host:~$ command")
+                                        let is_prompt_with_command = looks_like_prompt
+                                            || (self.ssh_session_active
+                                                && line_text.contains(&command_text));
+
                                         // Skip if:
                                         // 1. Exact match of command
                                         // 2. First few lines and is a prefix of command (partial echo)
                                         // 3. Contains "^C" (Ctrl+C echo from shell) or is empty
+                                        // 4. Looks like a shell prompt (for SSH sessions)
+                                        // 5. Is prompt + command (SSH echo: "user@host:~$ ls")
+                                        let is_ssh_prompt_skip =
+                                            self.ssh_session_active && looks_like_prompt;
                                         let should_skip = line_text == command_text
                                                 || (is_first_few_lines
                                                     && !line_text.is_empty()
                                                     && command_text.starts_with(line_text)
                                                     && line_text.len() <= 3) // Only skip very short prefixes
                                                 || line_text.contains("^C") // Skip any line with Ctrl+C echo
-                                                || line_text.is_empty(); // Skip empty lines
+                                                || line_text.is_empty() // Skip empty lines
+                                                || is_ssh_prompt_skip // Skip prompts in SSH mode
+                                                || (self.ssh_session_active && is_prompt_with_command); // Skip prompt+command echo in SSH mode
+
+                                        // In SSH mode, mark command as complete when we see a prompt
+                                        // Works even for commands with no output (like cd)
+                                        if is_ssh_prompt_skip
+                                            && last_block.status
+                                                == mosaicterm::models::ExecutionStatus::Running
+                                        {
+                                            let elapsed = if let Some(start) = last_command_time {
+                                                start.elapsed()
+                                            } else {
+                                                std::time::Duration::from_secs(0)
+                                            };
+                                            last_block.mark_completed(elapsed);
+                                            should_clear_command_time = true;
+                                            debug!(
+                                                "✅ SSH command completed (prompt in line batch): {}",
+                                                last_block.command
+                                            );
+                                        }
 
                                         if !should_skip {
                                             // Truncate line if too long
@@ -3148,48 +3567,73 @@ impl MosaicTermApp {
                                             && (trimmed_text.ends_with("$ ")
                                                 || trimmed_text.ends_with("% ")
                                                 || trimmed_text.ends_with("> ")
+                                                || trimmed_text.ends_with("# ")  // root prompt
                                                 || trimmed_text.ends_with("$")
                                                 || trimmed_text.ends_with("%")
                                                 || trimmed_text.ends_with(">")
+                                                || trimmed_text.ends_with("#")   // root prompt
                                                 || (trimmed_text.contains("@")
                                                     && (trimmed_text.contains("$")
-                                                        || trimmed_text.contains("%"))));
+                                                        || trimmed_text.contains("%")
+                                                        || trimmed_text.contains("#"))));
 
                                         // If this looks like a prompt, check if it's AFTER command output (indicating completion)
-                                        if looks_like_prompt && !last_block.output.is_empty() {
-                                            debug!(
-                                                "🎯 Detected shell prompt after output: '{}'",
-                                                trimmed_text
-                                            );
+                                        if looks_like_prompt {
+                                            debug!("🎯 Detected shell prompt: '{}'", trimmed_text);
 
-                                            // Parse ANSI codes and add as output line for completion detection
-                                            let mut ansi_parser =
-                                                mosaicterm::terminal::ansi_parser::AnsiParser::new(
+                                            // In SSH mode, don't add prompt to output - mark command as complete directly
+                                            if self.ssh_session_active {
+                                                // Mark command as complete when we see a prompt (even with no output)
+                                                if last_block.status
+                                                    == mosaicterm::models::ExecutionStatus::Running
+                                                {
+                                                    let elapsed =
+                                                        if let Some(start) = last_command_time {
+                                                            start.elapsed()
+                                                        } else {
+                                                            std::time::Duration::from_secs(0)
+                                                        };
+                                                    last_block.mark_completed(elapsed);
+                                                    should_clear_command_time = true;
+                                                    debug!(
+                                                        "✅ SSH command completed (prompt detected): {}",
+                                                        last_block.command
+                                                    );
+                                                }
+                                            } else {
+                                                // In local mode, add prompt for completion detection purposes
+                                                // Parse ANSI codes and add as output line for completion detection
+                                                let mut ansi_parser =
+                                                    mosaicterm::terminal::ansi_parser::AnsiParser::new(
+                                                    );
+                                                let parsed_result =
+                                                    ansi_parser.parse(trimmed_text).unwrap_or_else(|_| {
+                                                        mosaicterm::terminal::ansi_parser::ParsedText::new(
+                                                            trimmed_text.to_string(),
+                                                        )
+                                                    });
+
+                                                let clean_text = parsed_result.clean_text.clone();
+
+                                                // Add the prompt as an output line
+                                                let prompt_line = mosaicterm::models::OutputLine {
+                                                    text: parsed_result.clean_text,
+                                                    ansi_codes: parsed_result.ansi_codes,
+                                                    line_number: 0,
+                                                    timestamp: chrono::Utc::now(),
+                                                };
+                                                last_block.add_output_line(prompt_line);
+                                                debug!(
+                                                    "Added prompt line for completion detection: '{}'",
+                                                    clean_text
                                                 );
-                                            let parsed_result =
-                                                ansi_parser.parse(trimmed_text).unwrap_or_else(|_| {
-                                                    mosaicterm::terminal::ansi_parser::ParsedText::new(
-                                                        trimmed_text.to_string(),
-                                                    )
-                                                });
-
-                                            let clean_text = parsed_result.clean_text.clone();
-
-                                            // Add the prompt as an output line
-                                            let prompt_line = mosaicterm::models::OutputLine {
-                                                text: parsed_result.clean_text,
-                                                ansi_codes: parsed_result.ansi_codes,
-                                                line_number: 0,
-                                                timestamp: chrono::Utc::now(),
-                                            };
-                                            last_block.add_output_line(prompt_line);
-                                            debug!(
-                                                "Added prompt line for completion detection: '{}'",
-                                                clean_text
-                                            );
-                                        } else if !trimmed_text.is_empty()
-                                            && trimmed_text != last_block.command.trim()
-                                            && !looks_like_prompt
+                                            }
+                                        // Regular output (not command echo, not prompt)
+                                        // In SSH mode, also skip lines that contain the command (prompt+command echo)
+                                        } else if !(trimmed_text.is_empty()
+                                            || trimmed_text == last_block.command.trim()
+                                            || looks_like_prompt
+                                            || (self.ssh_session_active && trimmed_text.contains(last_block.command.trim())))
                                         {
                                             // Regular output (not command echo, not prompt)
                                             // Parse ANSI codes from the text before adding to output
@@ -3447,6 +3891,27 @@ impl MosaicTermApp {
         // Set timeout kill status message after all borrows are released
         if let Some(msg) = timeout_kill_status_message {
             self.set_status_message(Some(msg));
+        }
+
+        // Apply SSH session state changes after borrows are released
+        if ssh_session_ended {
+            self.end_ssh_session();
+        } else {
+            // Activate SSH session if detected (passwordless auth path)
+            if ssh_session_should_activate {
+                self.ssh_session_active = true;
+                self.ssh_prompt_buffer.clear();
+                if let Some(cmd) = &self.ssh_session_command {
+                    let host = self.extract_ssh_host(cmd);
+                    self.set_status_message(Some(format!("🔗 Connected to {}", host)));
+                }
+            }
+
+            // Update remote prompt if captured
+            if let Some(prompt) = new_remote_prompt {
+                self.ssh_remote_prompt = Some(prompt);
+                self.update_prompt();
+            }
         }
 
         // Update contexts after pty_manager borrow is released
