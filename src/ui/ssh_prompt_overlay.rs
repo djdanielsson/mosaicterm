@@ -434,4 +434,143 @@ mod tests {
         let result = strip_ansi_codes(input);
         assert_eq!(result, "Green text normal");
     }
+
+    #[test]
+    fn test_strip_ansi_codes_complex() {
+        let input = "\x1b[1;31mBold red\x1b[0m \x1b[4mUnderline\x1b[0m";
+        let result = strip_ansi_codes(input);
+        assert_eq!(result, "Bold red Underline");
+    }
+
+    #[test]
+    fn test_strip_ansi_codes_osc_sequence() {
+        // OSC sequence with BEL terminator
+        let input = "\x1b]0;window title\x07normal text";
+        let result = strip_ansi_codes(input);
+        assert_eq!(result, "normal text");
+    }
+
+    #[test]
+    fn test_ssh_prompt_type_title() {
+        assert_eq!(SshPromptType::HostKeyVerification.title(), "SSH Host Verification");
+        assert_eq!(SshPromptType::Passphrase.title(), "SSH Key Passphrase");
+        assert_eq!(SshPromptType::Password.title(), "SSH Password");
+        assert_eq!(SshPromptType::Generic.title(), "SSH Authentication");
+    }
+
+    #[test]
+    fn test_ssh_prompt_overlay_take_input() {
+        let mut overlay = SshPromptOverlay::new();
+        overlay.show(SshPromptType::Password, "Enter password:".to_string());
+        
+        // No input submitted yet
+        assert!(overlay.take_input().is_none());
+        
+        // Simulate input
+        overlay.input_buffer = "secret123".to_string();
+        overlay.should_submit = true;
+        
+        let input = overlay.take_input();
+        assert!(input.is_some());
+        assert_eq!(input.unwrap(), "secret123");
+        
+        // After taking, should be cleared
+        assert!(overlay.take_input().is_none());
+    }
+
+    #[test]
+    fn test_ssh_prompt_overlay_cancelled() {
+        let mut overlay = SshPromptOverlay::new();
+        assert!(!overlay.was_cancelled());
+        
+        overlay.was_cancelled = true;
+        assert!(overlay.was_cancelled());
+    }
+
+    #[test]
+    fn test_detect_password_variations() {
+        // Various password prompt formats
+        let prompts = [
+            "Password:",
+            "password:",
+            "user@host's password:",
+            "Enter password for user:",
+        ];
+        
+        for prompt in &prompts {
+            let result = SshPromptOverlay::detect_ssh_prompt(prompt);
+            assert!(
+                result.is_some(),
+                "Should detect password prompt: {}",
+                prompt
+            );
+            let (prompt_type, _) = result.unwrap();
+            assert_eq!(prompt_type, SshPromptType::Password);
+        }
+    }
+
+    #[test]
+    fn test_detect_passphrase_variations() {
+        let prompts = [
+            "Enter passphrase for key '/home/user/.ssh/id_ed25519':",
+            "Enter passphrase for /root/.ssh/id_rsa:",
+            "Passphrase for key:",
+        ];
+        
+        for prompt in &prompts {
+            let result = SshPromptOverlay::detect_ssh_prompt(prompt);
+            assert!(
+                result.is_some(),
+                "Should detect passphrase prompt: {}",
+                prompt
+            );
+            let (prompt_type, _) = result.unwrap();
+            assert_eq!(prompt_type, SshPromptType::Passphrase);
+        }
+    }
+
+    #[test]
+    fn test_detect_host_key_verification_variations() {
+        let prompts = [
+            "The authenticity of host 'example.com (1.2.3.4)' can't be established.\nECDSA key fingerprint is SHA256:xxx.\nAre you sure you want to continue connecting (yes/no)?",
+            "Are you sure you want to continue connecting (yes/no/[fingerprint])?",
+        ];
+        
+        for prompt in &prompts {
+            let result = SshPromptOverlay::detect_ssh_prompt(prompt);
+            assert!(
+                result.is_some(),
+                "Should detect host key prompt: {}",
+                prompt
+            );
+            let (prompt_type, _) = result.unwrap();
+            assert_eq!(prompt_type, SshPromptType::HostKeyVerification);
+        }
+    }
+
+    #[test]
+    fn test_no_false_positive_password_in_output() {
+        // Should NOT detect password prompts in regular output
+        let non_prompts = [
+            "Your password has been changed.",
+            "Password authentication is disabled.",
+            "bad password attempt",
+            "Passwords must be at least 8 characters",
+        ];
+        
+        for text in &non_prompts {
+            let result = SshPromptOverlay::detect_ssh_prompt(text);
+            assert!(
+                result.is_none(),
+                "Should NOT detect as prompt: {}",
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_trait() {
+        let overlay = SshPromptOverlay::default();
+        assert!(!overlay.is_active());
+    }
 }

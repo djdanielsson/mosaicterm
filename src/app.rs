@@ -4001,4 +4001,129 @@ mod tests {
         app.set_status_message(None);
         assert!(app.state_manager.app_state().status_message.is_none());
     }
+
+    // SSH session detection tests
+    #[test]
+    fn test_detect_ssh_session_end_connection_closed() {
+        assert!(MosaicTermApp::detect_ssh_session_end_static(
+            "Connection to example.com closed."
+        ));
+        assert!(MosaicTermApp::detect_ssh_session_end_static(
+            "Connection to 192.168.1.1 closed by remote host."
+        ));
+    }
+
+    #[test]
+    fn test_detect_ssh_session_end_logout() {
+        assert!(MosaicTermApp::detect_ssh_session_end_static("logout"));
+        assert!(MosaicTermApp::detect_ssh_session_end_static("logout\n"));
+        assert!(MosaicTermApp::detect_ssh_session_end_static(
+            "some output\nlogout\nmore output"
+        ));
+    }
+
+    #[test]
+    fn test_detect_ssh_session_end_connection_reset() {
+        assert!(MosaicTermApp::detect_ssh_session_end_static(
+            "Connection reset by peer"
+        ));
+        assert!(MosaicTermApp::detect_ssh_session_end_static("connection timed out"));
+        assert!(MosaicTermApp::detect_ssh_session_end_static("broken pipe"));
+    }
+
+    #[test]
+    fn test_detect_ssh_session_end_false_positives() {
+        // Should NOT detect as session end
+        assert!(!MosaicTermApp::detect_ssh_session_end_static("ls -la"));
+        assert!(!MosaicTermApp::detect_ssh_session_end_static(
+            "exit status 0"
+        ));
+        assert!(!MosaicTermApp::detect_ssh_session_end_static(
+            "user logged out yesterday"
+        ));
+        assert!(!MosaicTermApp::detect_ssh_session_end_static("normal output"));
+    }
+
+    #[test]
+    fn test_detect_remote_prompt_bash() {
+        let output = "user@host:~$ ";
+        let result = MosaicTermApp::detect_remote_prompt_static(output);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("user@host"));
+    }
+
+    #[test]
+    fn test_detect_remote_prompt_zsh() {
+        let output = "user@host ~ % ";
+        let result = MosaicTermApp::detect_remote_prompt_static(output);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_detect_remote_prompt_root() {
+        let output = "root@server:/var/log# ";
+        let result = MosaicTermApp::detect_remote_prompt_static(output);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_detect_remote_prompt_with_output() {
+        let output = "total 4\ndrwxr-xr-x 2 user user 4096 Dec 23 10:00 .\nuser@host:~$ ";
+        let result = MosaicTermApp::detect_remote_prompt_static(output);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("user@host"));
+    }
+
+    #[test]
+    fn test_detect_remote_prompt_no_match() {
+        let output = "Just some regular output without a prompt";
+        let result = MosaicTermApp::detect_remote_prompt_static(output);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_is_local_prompt_different_hosts() {
+        let remote = "user@remote-server:~$ ".to_string();
+        let local = "user@local-machine:~$ ";
+        assert!(MosaicTermApp::is_local_prompt_static(Some(&remote), local));
+    }
+
+    #[test]
+    fn test_is_local_prompt_same_host() {
+        let remote = "user@server:~$ ".to_string();
+        let current = "user@server:/var/log$ ";
+        // Same user@host, just different path - should NOT be considered local
+        assert!(!MosaicTermApp::is_local_prompt_static(
+            Some(&remote),
+            current
+        ));
+    }
+
+    #[test]
+    fn test_is_local_prompt_no_remote() {
+        // If no remote prompt captured, can't determine if local
+        let local = "user@machine:~$ ";
+        assert!(!MosaicTermApp::is_local_prompt_static(None, local));
+    }
+
+    #[test]
+    fn test_strip_ansi_codes_static() {
+        let input = "\x1b[32mgreen\x1b[0m normal \x1b[1;31mred\x1b[0m";
+        let result = MosaicTermApp::strip_ansi_codes_static(input);
+        assert_eq!(result, "green normal red");
+    }
+
+    #[test]
+    fn test_strip_ansi_codes_static_cursor_movement() {
+        let input = "\x1b[Hstart\x1b[2Jend";
+        let result = MosaicTermApp::strip_ansi_codes_static(input);
+        assert_eq!(result, "startend");
+    }
+
+    #[test]
+    fn test_strip_ansi_codes_static_no_codes() {
+        let input = "plain text without any codes";
+        let result = MosaicTermApp::strip_ansi_codes_static(input);
+        assert_eq!(result, input);
+    }
 }
