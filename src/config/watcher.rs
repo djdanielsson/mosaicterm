@@ -11,7 +11,6 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-use super::loader::ConfigLoader;
 use super::Config; // Use the Config from this module
 use crate::error::{Error, Result};
 
@@ -150,12 +149,15 @@ impl ConfigWatcher {
         // (some editors save in multiple steps)
         std::thread::sleep(Duration::from_millis(100));
 
-        // Load the new configuration with validation
-        let new_config = ConfigLoader::load_with_options(super::loader::LoadOptions {
-            create_default: false,
-            merge_defaults: true,
-            validate: true,
-        })?;
+        // Load the new configuration from the specific file we're watching
+        let content = std::fs::read_to_string(&self.config_path)
+            .map_err(crate::Error::Io)?;
+
+        let new_config: Config = toml::from_str(&content)
+            .map_err(|e| crate::Error::ConfigParseFailed {
+                format: "TOML".to_string(),
+                reason: e.to_string(),
+            })?;
 
         // Update the current configuration
         *self.current_config.lock().unwrap() = new_config.clone();

@@ -42,6 +42,7 @@ pub struct Config {
 
 /// UI-related configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct UiConfig {
     /// Font family for terminal text
     pub font_family: String,
@@ -90,6 +91,7 @@ impl Default for UiConfig {
 
 /// Terminal-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TerminalConfig {
     /// Shell type
     pub shell_type: crate::models::ShellType,
@@ -144,6 +146,7 @@ impl Default for TerminalConfig {
 
 /// Command timeout configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TimeoutConfig {
     /// Timeout in seconds for regular commands (0 = disabled)
     /// Default: 30 seconds
@@ -176,21 +179,38 @@ impl Default for TimeoutConfig {
 
 /// PTY-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PtyConfig {
     /// Environment variables to set
     pub environment: std::collections::HashMap<String, String>,
 
     /// Whether to inherit parent environment
+    #[serde(default = "default_true")]
     pub inherit_env: bool,
 
     /// PTY buffer size
+    #[serde(default = "default_buffer_size")]
     pub buffer_size: usize,
 
     /// Enable raw mode
+    #[serde(default = "default_true")]
     pub raw_mode: bool,
 
     /// Timeout for PTY operations in milliseconds
+    #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_buffer_size() -> usize {
+    256 * 1024
+}
+
+fn default_timeout_ms() -> u64 {
+    10
 }
 
 impl Default for PtyConfig {
@@ -207,6 +227,7 @@ impl Default for PtyConfig {
 
 /// Key binding configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct KeyBindings {
     /// Key bindings for actions
     pub bindings: std::collections::HashMap<String, KeyBinding>,
@@ -232,7 +253,8 @@ impl Default for KeyBindings {
 }
 
 /// Individual key binding
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct KeyBinding {
     /// Key combination string (e.g., "Ctrl+C", "Alt+F4")
     pub key: String,
@@ -250,11 +272,12 @@ impl KeyBinding {
 }
 
 /// Bell style for terminal bell
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub enum BellStyle {
     /// No bell
     None,
     /// Sound bell
+    #[default]
     Sound,
     /// Visual bell (screen flash)
     Visual,
@@ -262,6 +285,7 @@ pub enum BellStyle {
 
 /// Configuration for interactive TUI applications
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TuiAppConfig {
     /// List of commands that should open in fullscreen mode
     pub fullscreen_commands: Vec<String>,

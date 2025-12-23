@@ -214,7 +214,13 @@ impl ConfigLoader {
             ConfigFormat::Yaml => "yaml",
         };
 
-        base_path.with_extension(extension)
+        // If base_path is a directory, look for config.{ext} inside it
+        // Otherwise, replace the extension
+        if base_path.is_dir() {
+            base_path.join(format!("config.{}", extension))
+        } else {
+            base_path.with_extension(extension)
+        }
     }
 
     /// Get default search paths for configuration files
@@ -237,6 +243,13 @@ impl ConfigLoader {
 
         // Home directory fallbacks
         if let Some(home) = dirs::home_dir() {
+            // Look for config in these locations:
+            // ~/.mosaicterm/config.toml
+            // ~/.config/mosaicterm/config.toml  
+            // ~/.mosaicterm.toml
+            // ~/.config/mosaicterm.toml
+            paths.push(home.join(".mosaicterm").join("config"));
+            paths.push(home.join(".config").join("mosaicterm").join("config"));
             paths.push(home.join(".mosaicterm"));
             paths.push(home.join(".config").join("mosaicterm"));
         }
@@ -470,12 +483,16 @@ mod tests {
 
     #[test]
     fn test_load_nonexistent_config() {
-        let result = ConfigLoader::load_with_options(LoadOptions {
-            create_default: false,
-            merge_defaults: false,
-            validate: false,
-        });
+        // Use a temp directory with no config files
+        let temp_dir = TempDir::new().unwrap();
+        let nonexistent_path = temp_dir.path().join("nonexistent.toml");
+        let mut loader = ConfigLoader::new();
+        loader.set_search_path(temp_dir.path().to_path_buf());
 
+        // Try to load from a file that doesn't exist
+        let result = loader.load_config_file(&nonexistent_path, ConfigFormat::Toml);
+
+        // Should fail since the file doesn't exist
         assert!(result.is_err());
     }
 

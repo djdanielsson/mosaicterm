@@ -26,6 +26,7 @@ pub struct Config {
 
 /// UI-related configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct UiConfig {
     /// Font family for terminal text
     pub font_family: String,
@@ -82,6 +83,7 @@ impl UiConfig {
 
 /// Terminal-specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TerminalConfig {
     /// Path to shell executable
     pub shell_path: PathBuf,
@@ -193,6 +195,7 @@ impl Default for TerminalConfig {
 
 /// Command timeout configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TimeoutConfig {
     /// Timeout in seconds for regular commands (0 = disabled)
     /// Default: 30 seconds
@@ -270,6 +273,7 @@ impl TerminalConfig {
 
 /// UI theme configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Theme {
     /// Background color
     pub background: Color,
@@ -329,6 +333,7 @@ impl Default for Theme {
 
 /// ANSI terminal colors (16 standard colors)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AnsiColors {
     /// Black (ANSI 0)
     pub black: Color,
@@ -389,6 +394,7 @@ impl Default for AnsiColors {
 
 /// Command block colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BlockColors {
     /// Block background color
     pub background: Color,
@@ -446,6 +452,7 @@ impl Default for BlockColors {
 
 /// Input field colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct InputColors {
     /// Input field background
     pub background: Color,
@@ -479,6 +486,7 @@ impl Default for InputColors {
 
 /// Status bar colors
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StatusBarColors {
     /// Status bar background
     pub background: Color,
@@ -512,6 +520,7 @@ impl Default for StatusBarColors {
 
 /// Key bindings configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct KeyBindingsConfig {
     /// Copy key binding
     pub copy: String,
@@ -546,12 +555,83 @@ impl Default for KeyBindingsConfig {
 }
 
 /// RGBA color representation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Can be deserialized from either a hex string ("#RRGGBB" or "#RRGGBBAA") or a struct with r, g, b, a fields
+#[derive(Debug, Clone, Serialize)]
 pub struct Color {
     pub r: f32,
     pub g: f32,
     pub b: f32,
     pub a: f32,
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Self {
+            r: 0.5,
+            g: 0.5,
+            b: 0.5,
+            a: 1.0,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Color {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{self, MapAccess, Visitor};
+        use std::fmt;
+
+        struct ColorVisitor;
+
+        impl<'de> Visitor<'de> for ColorVisitor {
+            type Value = Color;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a hex color string like \"#RRGGBB\" or a struct with r, g, b, a fields")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Color, E>
+            where
+                E: de::Error,
+            {
+                Color::from_hex(value).map_err(|e| de::Error::custom(e.to_string()))
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Color, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                let mut r: Option<f32> = None;
+                let mut g: Option<f32> = None;
+                let mut b: Option<f32> = None;
+                let mut a: Option<f32> = None;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "r" => r = Some(map.next_value()?),
+                        "g" => g = Some(map.next_value()?),
+                        "b" => b = Some(map.next_value()?),
+                        "a" => a = Some(map.next_value()?),
+                        _ => {
+                            // Ignore unknown fields
+                            let _ = map.next_value::<serde::de::IgnoredAny>()?;
+                        }
+                    }
+                }
+
+                Ok(Color {
+                    r: r.unwrap_or(0.5),
+                    g: g.unwrap_or(0.5),
+                    b: b.unwrap_or(0.5),
+                    a: a.unwrap_or(1.0),
+                })
+            }
+        }
+
+        deserializer.deserialize_any(ColorVisitor)
+    }
 }
 
 impl Color {

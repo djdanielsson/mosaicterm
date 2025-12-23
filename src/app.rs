@@ -256,7 +256,16 @@ impl MosaicTermApp {
         Self::add_demo_commands(&mut state_manager);
 
         // Create UI colors from theme before moving runtime_config
-        let ui_colors = mosaicterm::ui::UiColors::from_theme(&runtime_config.config().ui.theme);
+        let theme = &runtime_config.config().ui.theme;
+        info!(
+            "🎨 Theme colors loaded - background: {:?}, foreground: {:?}",
+            theme.background, theme.foreground
+        );
+        info!(
+            "🎨 Block colors - status_running: {:?}, status_completed: {:?}",
+            theme.blocks.status_running, theme.blocks.status_completed
+        );
+        let ui_colors = mosaicterm::ui::UiColors::from_theme(theme);
 
         Self {
             state_manager,
