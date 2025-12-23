@@ -452,7 +452,10 @@ mod tests {
 
     #[test]
     fn test_ssh_prompt_type_title() {
-        assert_eq!(SshPromptType::HostKeyVerification.title(), "SSH Host Verification");
+        assert_eq!(
+            SshPromptType::HostKeyVerification.title(),
+            "SSH Host Verification"
+        );
         assert_eq!(SshPromptType::Passphrase.title(), "SSH Key Passphrase");
         assert_eq!(SshPromptType::Password.title(), "SSH Password");
         assert_eq!(SshPromptType::Generic.title(), "SSH Authentication");
@@ -462,18 +465,18 @@ mod tests {
     fn test_ssh_prompt_overlay_take_input() {
         let mut overlay = SshPromptOverlay::new();
         overlay.show(SshPromptType::Password, "Enter password:".to_string());
-        
+
         // No input submitted yet
         assert!(overlay.take_input().is_none());
-        
+
         // Simulate input
         overlay.input_buffer = "secret123".to_string();
         overlay.should_submit = true;
-        
+
         let input = overlay.take_input();
         assert!(input.is_some());
         assert_eq!(input.unwrap(), "secret123");
-        
+
         // After taking, should be cleared
         assert!(overlay.take_input().is_none());
     }
@@ -482,7 +485,7 @@ mod tests {
     fn test_ssh_prompt_overlay_cancelled() {
         let mut overlay = SshPromptOverlay::new();
         assert!(!overlay.was_cancelled());
-        
+
         overlay.was_cancelled = true;
         assert!(overlay.was_cancelled());
     }
@@ -496,7 +499,7 @@ mod tests {
             "user@host's password:",
             "Enter password for user:",
         ];
-        
+
         for prompt in &prompts {
             let result = SshPromptOverlay::detect_ssh_prompt(prompt);
             assert!(
@@ -516,7 +519,7 @@ mod tests {
             "Enter passphrase for /root/.ssh/id_rsa:",
             "Passphrase for key:",
         ];
-        
+
         for prompt in &prompts {
             let result = SshPromptOverlay::detect_ssh_prompt(prompt);
             assert!(
@@ -535,7 +538,7 @@ mod tests {
             "The authenticity of host 'example.com (1.2.3.4)' can't be established.\nECDSA key fingerprint is SHA256:xxx.\nAre you sure you want to continue connecting (yes/no)?",
             "Are you sure you want to continue connecting (yes/no/[fingerprint])?",
         ];
-        
+
         for prompt in &prompts {
             let result = SshPromptOverlay::detect_ssh_prompt(prompt);
             assert!(
@@ -557,14 +560,10 @@ mod tests {
             "bad password attempt",
             "Passwords must be at least 8 characters",
         ];
-        
+
         for text in &non_prompts {
             let result = SshPromptOverlay::detect_ssh_prompt(text);
-            assert!(
-                result.is_none(),
-                "Should NOT detect as prompt: {}",
-                text
-            );
+            assert!(result.is_none(), "Should NOT detect as prompt: {}", text);
         }
     }
 

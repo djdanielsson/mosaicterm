@@ -3,9 +3,7 @@
 //! This module provides utilities for converting config colors to egui colors
 //! and managing the application color theme.
 
-use crate::models::config::{
-    AnsiColors, BlockColors, Color, InputColors, StatusBarColors, Theme,
-};
+use crate::models::config::{AnsiColors, BlockColors, Color, InputColors, StatusBarColors, Theme};
 use eframe::egui;
 
 /// Extension trait to convert config Color to egui::Color32
@@ -251,8 +249,14 @@ mod tests {
         let colors = UiColors::from_theme(&theme);
 
         // Check that colors are properly converted
-        assert_eq!(colors.blocks.status_running, egui::Color32::from_rgb(255, 200, 0));
-        assert_eq!(colors.blocks.status_completed, egui::Color32::from_rgb(0, 255, 100));
+        assert_eq!(
+            colors.blocks.status_running,
+            egui::Color32::from_rgb(255, 200, 0)
+        );
+        assert_eq!(
+            colors.blocks.status_completed,
+            egui::Color32::from_rgb(0, 255, 100)
+        );
     }
 
     #[test]
@@ -271,4 +275,3 @@ mod tests {
         assert_ne!(colors.background, egui::Color32::TRANSPARENT);
     }
 }
-

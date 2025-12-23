@@ -2627,11 +2627,8 @@ impl MosaicTermApp {
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
-                    .fill(egui::Color32::from_rgb(30, 30, 40))
-                    .stroke(egui::Stroke::new(
-                        2.0,
-                        egui::Color32::from_rgb(100, 150, 255),
-                    ))
+                    .fill(self.ui_colors.blocks.background)
+                    .stroke(egui::Stroke::new(2.0, self.ui_colors.accent))
                     .show(ui, |ui| {
                         ui.set_width(popup_width);
                         ui.set_height(popup_height);
@@ -2641,7 +2638,7 @@ impl MosaicTermApp {
                             ui.horizontal(|ui| {
                                 ui.heading(
                                     egui::RichText::new("🔍 Search Command History (Ctrl+R)")
-                                        .color(egui::Color32::from_rgb(150, 200, 255)),
+                                        .color(self.ui_colors.status_bar.path),
                                 );
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
@@ -2801,11 +2798,14 @@ impl MosaicTermApp {
 
     /// Render the command history area above the input
     fn render_command_history_area(&mut self, ui: &mut egui::Ui) {
+        // Clone colors for use in closures
+        let colors = self.ui_colors.clone();
+        
         ui.vertical(|ui| {
             // Status bar at the top
             let status_frame = egui::Frame::none()
-                .fill(egui::Color32::from_rgb(35, 35, 45))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 80, 100)))
+                .fill(colors.status_bar.background)
+                .stroke(egui::Stroke::new(1.0, colors.status_bar.border))
                 .inner_margin(egui::Margin::symmetric(10.0, 5.0));
 
             status_frame.show(ui, |ui| {
@@ -2813,14 +2813,14 @@ impl MosaicTermApp {
                     ui.label(
                         egui::RichText::new("MosaicTerm")
                             .font(egui::FontId::proportional(16.0))
-                            .color(egui::Color32::from_rgb(200, 200, 255))
+                            .color(colors.blocks.command_text)
                             .strong(),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             egui::RichText::new("Ready")
                                 .font(egui::FontId::proportional(12.0))
-                                .color(egui::Color32::from_rgb(150, 255, 150)),
+                                .color(colors.status_bar.ssh_indicator),
                         );
                         ui.separator();
                         ui.label(
@@ -2829,7 +2829,7 @@ impl MosaicTermApp {
                                 self.state_manager.get_command_history().len()
                             ))
                             .font(egui::FontId::monospace(12.0))
-                            .color(egui::Color32::from_rgb(200, 200, 200)),
+                            .color(colors.status_bar.text),
                         );
                     });
                 });
@@ -2845,7 +2845,7 @@ impl MosaicTermApp {
                         let command_history = self.state_manager.get_command_history();
                         for (i, block) in command_history.iter().enumerate() {
                             if let Some((block_id, pos)) =
-                                Self::render_single_command_block_static(ui, block, i)
+                                Self::render_single_command_block_static(ui, block, i, &colors)
                             {
                                 // Right-click detected, show context menu
                                 self.command_blocks
@@ -2863,14 +2863,14 @@ impl MosaicTermApp {
                                 ui.label(
                                     egui::RichText::new("🎉 Welcome to MosaicTerm!")
                                         .font(egui::FontId::proportional(24.0))
-                                        .color(egui::Color32::from_rgb(255, 200, 100))
+                                        .color(colors.warning)
                                         .strong(),
                                 );
                                 ui.add_space(10.0);
                                 ui.label(
                                     egui::RichText::new("Type a command in the input area below")
                                         .font(egui::FontId::proportional(16.0))
-                                        .color(egui::Color32::from_rgb(200, 200, 255)),
+                                        .color(colors.blocks.command_text),
                                 );
                             });
                         }
@@ -2884,10 +2884,11 @@ impl MosaicTermApp {
         ui: &mut egui::Ui,
         block: &CommandBlock,
         _index: usize,
+        colors: &mosaicterm::ui::UiColors,
     ) -> Option<(String, egui::Pos2)> {
         let block_frame = egui::Frame::none()
-            .fill(egui::Color32::from_rgb(45, 45, 55))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 80, 100)))
+            .fill(colors.status_bar.background)
+            .stroke(egui::Stroke::new(1.0, colors.status_bar.border))
             .inner_margin(egui::Margin::symmetric(12.0, 8.0))
             .outer_margin(egui::Margin::symmetric(0.0, 4.0));
 
@@ -2898,30 +2899,22 @@ impl MosaicTermApp {
                     ui.label(
                         egui::RichText::new(&block.command)
                             .font(egui::FontId::monospace(14.0))
-                            .color(egui::Color32::from_rgb(200, 200, 255)),
+                            .color(colors.blocks.command_text),
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Status indicator
+                        // Status indicator - use theme colors
                         let (status_text, status_color) = match block.status {
-                            ExecutionStatus::Running => {
-                                ("Running", egui::Color32::from_rgb(255, 200, 0))
-                            }
+                            ExecutionStatus::Running => ("Running", colors.blocks.status_running),
                             ExecutionStatus::Completed => {
-                                ("Completed", egui::Color32::from_rgb(0, 255, 100))
+                                ("Completed", colors.blocks.status_completed)
                             }
-                            ExecutionStatus::Failed => {
-                                ("Failed", egui::Color32::from_rgb(255, 100, 100))
-                            }
+                            ExecutionStatus::Failed => ("Failed", colors.blocks.status_failed),
                             ExecutionStatus::Cancelled => {
-                                ("Cancelled", egui::Color32::from_rgb(255, 165, 0))
+                                ("Cancelled", colors.blocks.status_cancelled)
                             }
-                            ExecutionStatus::Pending => {
-                                ("Pending", egui::Color32::from_rgb(150, 150, 150))
-                            }
-                            ExecutionStatus::TuiMode => {
-                                ("TUI Mode", egui::Color32::from_rgb(150, 100, 255))
-                            }
+                            ExecutionStatus::Pending => ("Pending", colors.blocks.status_pending),
+                            ExecutionStatus::TuiMode => ("TUI Mode", colors.blocks.status_tui),
                         };
 
                         ui.label(
@@ -2936,8 +2929,8 @@ impl MosaicTermApp {
                 if !block.output.is_empty() {
                     ui.add_space(6.0);
                     let output_frame = egui::Frame::none()
-                        .fill(egui::Color32::from_rgb(25, 25, 35))
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 80)))
+                        .fill(colors.blocks.header_background)
+                        .stroke(egui::Stroke::new(1.0, colors.blocks.hover_border))
                         .inner_margin(egui::Margin::symmetric(8.0, 6.0));
 
                     output_frame.show(ui, |ui| {
@@ -2958,7 +2951,7 @@ impl MosaicTermApp {
                                     ui.label(
                                         egui::RichText::new(&line.text)
                                             .font(egui::FontId::monospace(12.0))
-                                            .color(egui::Color32::from_rgb(180, 180, 200)),
+                                            .color(colors.blocks.output_text),
                                     );
                                 }
                             } else {
@@ -2966,7 +2959,7 @@ impl MosaicTermApp {
                                 ui.label(
                                     egui::RichText::new(&line.text)
                                         .font(egui::FontId::monospace(12.0))
-                                        .color(egui::Color32::from_rgb(180, 180, 200)),
+                                        .color(colors.blocks.output_text),
                                 );
                             }
                         }
@@ -2978,7 +2971,7 @@ impl MosaicTermApp {
                     ui.label(
                         egui::RichText::new(format!("{}", block.timestamp.format("%H:%M:%S")))
                             .font(egui::FontId::monospace(10.0))
-                            .color(egui::Color32::from_rgb(120, 120, 140)),
+                            .color(colors.blocks.timestamp),
                     );
                 });
             });
@@ -4034,7 +4027,9 @@ mod tests {
         assert!(MosaicTermApp::detect_ssh_session_end_static(
             "Connection reset by peer"
         ));
-        assert!(MosaicTermApp::detect_ssh_session_end_static("connection timed out"));
+        assert!(MosaicTermApp::detect_ssh_session_end_static(
+            "connection timed out"
+        ));
         assert!(MosaicTermApp::detect_ssh_session_end_static("broken pipe"));
     }
 
@@ -4048,7 +4043,9 @@ mod tests {
         assert!(!MosaicTermApp::detect_ssh_session_end_static(
             "user logged out yesterday"
         ));
-        assert!(!MosaicTermApp::detect_ssh_session_end_static("normal output"));
+        assert!(!MosaicTermApp::detect_ssh_session_end_static(
+            "normal output"
+        ));
     }
 
     #[test]
