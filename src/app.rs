@@ -3633,7 +3633,9 @@ impl MosaicTermApp {
                                         } else if !(trimmed_text.is_empty()
                                             || trimmed_text == last_block.command.trim()
                                             || looks_like_prompt
-                                            || (self.ssh_session_active && trimmed_text.contains(last_block.command.trim())))
+                                            || (self.ssh_session_active
+                                                && trimmed_text
+                                                    .contains(last_block.command.trim())))
                                         {
                                             // Regular output (not command echo, not prompt)
                                             // Parse ANSI codes from the text before adding to output
