@@ -12,6 +12,8 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 
 - **Block-Based History**: Commands and their outputs are grouped into discrete, scrollable blocks
 - **Pinned Input Prompt**: Always-visible input field at the bottom for seamless command entry
+- **SSH Session Support**: Seamless SSH connections with interactive prompt overlays for passwords and passphrases
+- **Comprehensive Theming**: Full color customization via config file with hex color support (Solarized, etc.)
 - **Environment Support**: Full support for Python venv, nvm, conda, rbenv, rvm, direnv and other environment tools
 - **Custom Prompts**: Fully customizable prompt format with variable substitution ($USER, $HOSTNAME, $PWD, etc.)
 - **Tab Completion**: Intelligent command and path completion with popup UI (double-tab to activate)
@@ -226,27 +228,26 @@ For full-screen interactive programs, use a traditional terminal emulator. Suppo
 
 ## 🗺️ Roadmap
 
-### Phase 4: Application Launch & UI Polish (Current)
+### Phase 4: Application Launch & UI Polish (Complete)
 - [x] Basic application window and layout
 - [x] PTY process spawning and I/O
 - [x] Command execution and block rendering
 - [x] ANSI color support
-- [ ] Block-based history UI refinement
-- [ ] Smooth scrolling and navigation
-- [ ] Theme system and customization
-- [ ] Performance optimizations
+- [x] Block-based history UI refinement
+- [x] Theme system and customization
+- [x] Performance optimizations
 
-### Phase 5: Advanced Features
+### Phase 5: Advanced Features (Current)
+- [x] SSH session support with interactive prompts
+- [x] Cross-platform builds (Linux support complete)
+- [x] Configuration hot-reload
 - [ ] Command history persistence
 - [ ] Block re-run functionality
 - [ ] Inline search and filtering
-- [ ] Configuration hot-reload
 - [ ] Export blocks to markdown
-- [x] Cross-platform builds (Linux support complete)
 
 ### Future Goals
 - [ ] Plugin system architecture
-- [ ] Remote shell support (SSH)
 - [ ] Multi-tab interface
 - [ ] Customizable block actions
 
