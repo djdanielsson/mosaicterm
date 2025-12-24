@@ -938,6 +938,24 @@ impl MosaicTermApp {
             self.ssh_remote_prompt = None;
             self.ssh_prompt_buffer.clear();
 
+            // CRITICAL: Drain the PTY output channel to discard any stale SSH output
+            // This prevents old SSH output from being associated with new local commands
+            if let Some(terminal) = &self.terminal {
+                if let Some(handle) = terminal.pty_handle() {
+                    let pty_manager = &*self.pty_manager;
+                    if let Ok(drained_count) =
+                        executor::block_on(async { pty_manager.drain_output(handle).await })
+                    {
+                        if drained_count > 0 {
+                            info!(
+                                "Drained {} pending output chunks from PTY channel",
+                                drained_count
+                            );
+                        }
+                    }
+                }
+            }
+
             // Clear any pending output from the terminal to avoid mixing with local commands
             if let Some(terminal) = &mut self.terminal {
                 terminal.clear_pending_output();
@@ -2809,7 +2827,7 @@ impl MosaicTermApp {
     fn render_command_history_area(&mut self, ui: &mut egui::Ui) {
         // Clone colors for use in closures
         let colors = self.ui_colors.clone();
-        
+
         ui.vertical(|ui| {
             // Status bar at the top
             let status_frame = egui::Frame::none()

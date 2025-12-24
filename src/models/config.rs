@@ -589,7 +589,9 @@ impl<'de> Deserialize<'de> for Color {
             type Value = Color;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a hex color string like \"#RRGGBB\" or a struct with r, g, b, a fields")
+                formatter.write_str(
+                    "a hex color string like \"#RRGGBB\" or a struct with r, g, b, a fields",
+                )
             }
 
             fn visit_str<E>(self, value: &str) -> Result<Color, E>

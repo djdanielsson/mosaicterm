@@ -63,6 +63,19 @@ impl PtyStreams {
             Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => Ok(Vec::new()),
         }
     }
+
+    /// Drain all pending output from the channel (discard it)
+    /// Used when switching contexts (e.g., ending SSH session) to avoid stale output
+    pub fn drain_output(&mut self) -> usize {
+        let mut count = 0;
+        loop {
+            match self.output_rx.try_recv() {
+                Ok(_) => count += 1,
+                Err(_) => break,
+            }
+        }
+        count
+    }
     pub async fn data_available(&mut self) -> Result<bool> {
         // Non-blocking check first
         if let Ok(bytes) = self.output_rx.try_recv() {

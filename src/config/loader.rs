@@ -245,7 +245,7 @@ impl ConfigLoader {
         if let Some(home) = dirs::home_dir() {
             // Look for config in these locations:
             // ~/.mosaicterm/config.toml
-            // ~/.config/mosaicterm/config.toml  
+            // ~/.config/mosaicterm/config.toml
             // ~/.mosaicterm.toml
             // ~/.config/mosaicterm.toml
             paths.push(home.join(".mosaicterm").join("config"));

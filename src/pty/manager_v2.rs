@@ -172,6 +172,20 @@ impl PtyManagerV2 {
         }
     }
 
+    /// Drain all pending output from the PTY channel (discard it)
+    /// Used when switching contexts (e.g., ending SSH session) to avoid stale output
+    pub async fn drain_output(&self, handle: &PtyHandle) -> Result<usize> {
+        let terminals = self.terminals.read().await;
+        if let Some(entry_lock) = terminals.get(&handle.id) {
+            let mut entry = entry_lock.write().await;
+            Ok(entry.streams.drain_output())
+        } else {
+            Err(Error::PtyStreamsNotFound {
+                handle_id: handle.id.to_string(),
+            })
+        }
+    }
+
     /// Get the number of active PTY processes
     pub async fn active_count(&self) -> usize {
         let terminals = self.terminals.read().await;

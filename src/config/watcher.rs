@@ -150,11 +150,10 @@ impl ConfigWatcher {
         std::thread::sleep(Duration::from_millis(100));
 
         // Load the new configuration from the specific file we're watching
-        let content = std::fs::read_to_string(&self.config_path)
-            .map_err(crate::Error::Io)?;
+        let content = std::fs::read_to_string(&self.config_path).map_err(crate::Error::Io)?;
 
-        let new_config: Config = toml::from_str(&content)
-            .map_err(|e| crate::Error::ConfigParseFailed {
+        let new_config: Config =
+            toml::from_str(&content).map_err(|e| crate::Error::ConfigParseFailed {
                 format: "TOML".to_string(),
                 reason: e.to_string(),
             })?;
