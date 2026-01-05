@@ -14,11 +14,22 @@
 //! The app runs in a single-threaded event loop managed by `egui`, with background threads
 //! for PTY I/O. Communication happens via async channels.
 //!
+//! ## Module Organization
+//!
+//! - `mod.rs` - Core application struct, eframe::App impl, UI rendering, PTY polling
+//! - `async_ops.rs` - Background async task loop for terminal init, direct execution
+//! - `commands.rs` - Command detection and classification (TUI, cd, interactive, exit)
+//! - `context.rs` - Environment context detection (venv, conda, nvm) and git info
+//! - `input.rs` - Keyboard shortcuts and input handling
+//! - `prompt.rs` - Prompt building with contexts and SSH support
+//! - `ssh.rs` - SSH session detection, remote prompt parsing, session lifecycle
+//!
 //! ### Main Components
 //!
-//! - `MosaicTermApp`: Core application state
+//! - `MosaicTermApp`: Core application state and lifecycle
 //! - `handle_async_operations()`: Processes PTY output in the update loop
-//! - `render_ui()`: Renders the three-panel UI layout
+//! - `poll_async_results()`: Receives results from background async tasks
+//! - `render_*()`: UI rendering methods for input, history, popups
 //!
 //! ### UI Layout
 //!
@@ -41,8 +52,16 @@
 //!
 //! - **Conditional Repaints:** Only repaints when needed (running command, pending output)
 //! - **Output Batching:** Processes multiple lines at once to reduce UI updates
-//! - **Size Limits:** Enforces max lines per command (50K) and chars per line (10K)
-//! - **Lock Retry:** Retries PTY lock acquisition to prevent dropped output
+//! - **Size Limits:** Enforces max lines per command (10K) and chars per line (10K)
+//! - **Async I/O:** Background task handles terminal init and direct command execution
+
+// Submodules
+mod async_ops;
+mod commands;
+mod context;
+mod input;
+mod prompt;
+mod ssh;
 
 use arboard::Clipboard;
 use eframe::egui;
@@ -54,7 +73,7 @@ use mosaicterm::error::Result;
 use mosaicterm::execution::DirectExecutor;
 use mosaicterm::models::{CommandBlock, ExecutionStatus};
 use mosaicterm::models::{ShellType as ModelShellType, TerminalSession};
-use mosaicterm::pty::PtyManagerV2;
+use mosaicterm::pty::PtyManager;
 use mosaicterm::state_manager::StateManager;
 use mosaicterm::terminal::{Terminal, TerminalFactory};
 use mosaicterm::ui::{
@@ -70,7 +89,7 @@ const MAX_LINE_LENGTH: usize = 10_000;
 
 /// Async operation request sent from UI to background task
 #[derive(Debug, Clone)]
-enum AsyncRequest {
+pub(crate) enum AsyncRequest {
     /// Execute a command
     ExecuteCommand(String, std::path::PathBuf), // command and working directory
     /// Initialize terminal
@@ -83,7 +102,7 @@ enum AsyncRequest {
 
 /// Async operation result sent from background task to UI
 #[derive(Debug, Clone)]
-enum AsyncResult {
+pub(crate) enum AsyncResult {
     /// Command execution started (initial block added to history)
     #[allow(dead_code)]
     CommandStarted(CommandBlock),
@@ -118,8 +137,8 @@ pub struct MosaicTermApp {
     state_manager: StateManager,
     /// Terminal emulator instance
     terminal: Option<Terminal>,
-    /// PTY manager for process management (V2 with per-terminal locking)
-    pty_manager: Arc<PtyManagerV2>,
+    /// PTY manager for process management (with per-terminal locking)
+    pty_manager: Arc<PtyManager>,
     /// Terminal factory for creating terminals
     terminal_factory: TerminalFactory,
     /// UI components
@@ -182,8 +201,8 @@ impl MosaicTermApp {
     pub fn new() -> Self {
         info!("Initializing MosaicTerm application");
 
-        // Create PTY manager V2 (with per-terminal locking for better concurrency)
-        let pty_manager = Arc::new(PtyManagerV2::new());
+        // Create PTY manager (with per-terminal locking for better concurrency)
+        let pty_manager = Arc::new(PtyManager::new());
 
         // Create terminal factory
         let terminal_factory = TerminalFactory::new(pty_manager.clone());
@@ -242,7 +261,7 @@ impl MosaicTermApp {
 
         // Spawn background task to handle async operations
         runtime.spawn(async move {
-            Self::async_operation_loop(
+            async_ops::async_operation_loop(
                 &mut request_rx,
                 result_tx,
                 pty_manager_clone,
@@ -326,20 +345,14 @@ impl MosaicTermApp {
 
             // Simulate some output for demo
             if cmd == "pwd" {
-                block.add_output_line(mosaicterm::models::OutputLine {
-                    text: working_dir.to_string_lossy().to_string(),
-                    ansi_codes: vec![],
-                    line_number: 0,
-                    timestamp: chrono::Utc::now(),
-                });
+                block.add_output_line(mosaicterm::models::OutputLine::new(
+                    working_dir.to_string_lossy(),
+                ));
                 block.mark_completed(std::time::Duration::from_millis(50));
             } else if cmd == "echo 'Hello from MosaicTerm!'" {
-                block.add_output_line(mosaicterm::models::OutputLine {
-                    text: "Hello from MosaicTerm!".to_string(),
-                    ansi_codes: vec![],
-                    line_number: 0,
-                    timestamp: chrono::Utc::now(),
-                });
+                block.add_output_line(mosaicterm::models::OutputLine::new(
+                    "Hello from MosaicTerm!",
+                ));
                 block.mark_completed(std::time::Duration::from_millis(25));
             } else {
                 block.mark_running();
@@ -440,7 +453,7 @@ impl MosaicTermApp {
         // This is necessary because we now load RC files which may set PS1
         if let Some(terminal) = &self.terminal {
             if let Some(handle) = terminal.pty_handle() {
-                // PtyManagerV2 is already async and thread-safe, no lock needed
+                // PtyManager is already async and thread-safe, no lock needed
                 let pty_manager = &*self.pty_manager;
 
                 // Override PS1 set by rc files with a more robust approach
@@ -538,7 +551,7 @@ impl MosaicTermApp {
             // Still send the command to the shell so it clears its own state
             if let Some(_terminal) = &mut self.terminal {
                 if let Some(handle) = _terminal.pty_handle() {
-                    // PtyManagerV2 is already async and thread-safe, no lock needed
+                    // PtyManager is already async and thread-safe, no lock needed
                     let pty_manager = &*self.pty_manager;
                     let cmd = format!("{}\n", command);
                     if let Err(e) = pty_manager.send_input(handle, cmd.as_bytes()).await {
@@ -554,7 +567,7 @@ impl MosaicTermApp {
 
         // Check if we should use direct execution (faster, cleaner)
         // IMPORTANT: Skip direct execution when in SSH session - all commands must go through PTY
-        if !self.ssh_session_active && DirectExecutor::should_use_direct_execution(&command) {
+        if !self.ssh_session_active && DirectExecutor::check_direct_execution(&command) {
             info!("Using direct execution for command: {}", command);
 
             // Create command block and mark as running
@@ -624,7 +637,7 @@ impl MosaicTermApp {
             // Send command directly to PTY with newline so the shell executes it
             // Then send a command to echo the exit code with a special marker
             if let Some(handle) = _terminal.pty_handle() {
-                // PtyManagerV2 is already async and thread-safe, no lock needed
+                // PtyManager is already async and thread-safe, no lock needed
                 let pty_manager = &*self.pty_manager;
                 let cmd = format!("{}\n", command);
                 if let Err(e) = pty_manager.send_input(handle, cmd.as_bytes()).await {
@@ -675,58 +688,20 @@ impl MosaicTermApp {
 
     /// Check if command is a cd command
     fn is_cd_command(&self, command: &str) -> bool {
-        let trimmed = command.trim();
-        trimmed.starts_with("cd") || trimmed.starts_with("pushd") || trimmed.starts_with("popd")
+        commands::is_cd_command(command)
     }
 
     /// Update the prompt display based on current working directory
     fn update_prompt(&mut self) {
-        // If in SSH session and we have a remote prompt, use that instead
-        if self.ssh_session_active {
-            if let Some(remote_prompt) = &self.ssh_remote_prompt {
-                debug!("Using remote SSH prompt: '{}'", remote_prompt);
-                self.input_prompt.set_prompt(remote_prompt);
-                return;
-            } else if let Some(cmd) = &self.ssh_session_command {
-                // No remote prompt captured yet, show a placeholder with host info
-                let host = self.extract_ssh_host(cmd);
-                let placeholder = format!("[{}] $ ", host);
-                debug!("Using SSH placeholder prompt: '{}'", placeholder);
-                self.input_prompt.set_prompt(&placeholder);
-                return;
-            }
-        }
-
-        // Local mode: use the normal prompt formatter
-        if let Some(terminal) = &self.terminal {
-            let working_dir = terminal.get_working_directory();
-            let base_prompt = self.prompt_formatter.render(working_dir);
-
-            let mut left_context = String::new();
-            let mut right_context = String::new();
-
-            // Add environment contexts (venv, conda, nvm) on the LEFT
-            if let Some(session) = self.state_manager.active_session() {
-                if !session.active_contexts.is_empty() {
-                    let context_str = session.active_contexts.join(" ");
-                    left_context = format!("({}) ", context_str);
-                }
-
-                // Add git context on the RIGHT (if present)
-                if let Some(git) = &session.git_context {
-                    right_context = format!(" [{}]", git);
-                }
-            }
-
-            // Format: (venv:name) ~/path$ [git:branch]
-            let rendered_prompt = format!("{}{}{}", left_context, base_prompt, right_context);
-
-            debug!(
-                "Updated prompt to: '{}' (working_dir: {:?})",
-                rendered_prompt, working_dir
-            );
-            self.input_prompt.set_prompt(&rendered_prompt);
-        }
+        let prompt_str = prompt::build_prompt(
+            self.terminal.as_ref(),
+            &self.state_manager,
+            &self.prompt_formatter,
+            self.ssh_session_active,
+            self.ssh_remote_prompt.as_deref(),
+            self.ssh_session_command.as_deref(),
+        );
+        self.input_prompt.set_prompt(&prompt_str);
     }
 
     /// Update active environment contexts based on current shell environment
@@ -740,94 +715,21 @@ impl MosaicTermApp {
 
     /// Update just the git context (synchronous filesystem check)
     fn update_git_context(&mut self) {
-        let git_context = if let Some(terminal) = &self.terminal {
-            let working_dir = terminal.get_working_directory();
-
-            if let Ok(repo) = git2::Repository::discover(working_dir) {
-                if let Ok(head) = repo.head() {
-                    if let Some(branch_name) = head.shorthand() {
-                        let has_changes = if let Ok(statuses) = repo.statuses(None) {
-                            !statuses.is_empty()
-                        } else {
-                            false
-                        };
-
-                        if has_changes {
-                            Some(format!("{} *", branch_name))
-                        } else {
-                            Some(branch_name.to_string())
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        // Update git context
-        if let Some(session) = self.state_manager.active_session_mut() {
-            session.git_context = git_context;
-        }
+        let git_context = context::detect_git_context(self.terminal.as_ref());
+        context::update_state_git_context(&mut self.state_manager, git_context);
     }
 
     /// Parse environment output and update contexts
     fn parse_env_output(&mut self, output: &str) {
-        info!("Parsing environment output: {}", output);
-        let mut env = std::collections::HashMap::new();
-
-        // Parse output lines like "VIRTUAL_ENV=/path/to/venv"
-        for line in output.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Some((key, value)) = line.split_once('=') {
-                // Only add non-empty values
-                if !value.is_empty() {
-                    info!("Found env var: {}={}", key, value);
-                    env.insert(key.to_string(), value.to_string());
-                } else {
-                    info!("Skipping empty env var: {}", key);
-                }
-            }
-        }
-
-        // Detect contexts from environment
-        let contexts = self.context_detector.detect_contexts(&env);
-        info!("Detected {} contexts: {:?}", contexts.len(), contexts);
-
-        // Format contexts for display (venv/conda/nvm only - git handled separately)
-        let env_context_strings: Vec<String> = contexts.iter().map(|c| c.format_short()).collect();
-
-        info!("Formatted context strings: {:?}", env_context_strings);
-
-        // Get git context separately (already updated by update_git_context)
-        // No need to recompute it here
-
-        // Update state manager with env contexts
-        if let Some(session) = self.state_manager.active_session_mut() {
-            session.active_contexts = env_context_strings.clone();
-            info!("Updated session contexts to: {:?}", session.active_contexts);
-        }
-
+        let env_context_strings =
+            context::parse_env_and_detect_contexts(output, &self.context_detector);
+        context::update_state_env_contexts(&mut self.state_manager, env_context_strings);
         info!("Updated contexts from shell environment");
     }
 
     /// Check if a command is a TUI app that should open in fullscreen overlay
     fn is_tui_command(&self, command: &str) -> bool {
-        let cmd_name = self.get_command_name(command);
-        self.runtime_config
-            .config()
-            .tui_apps
-            .fullscreen_commands
-            .iter()
-            .any(|prog| prog == &cmd_name)
+        commands::is_tui_command(command, self.runtime_config.config())
     }
 
     /// Handle a TUI command by opening the fullscreen overlay
@@ -858,7 +760,7 @@ impl MosaicTermApp {
 
                 // Send command to PTY
                 {
-                    // PtyManagerV2 is already async and thread-safe, no lock needed
+                    // PtyManager is already async and thread-safe, no lock needed
                     let pty_manager = &*self.pty_manager;
 
                     // Set TERM to xterm-256color for proper TUI support
@@ -890,234 +792,17 @@ impl MosaicTermApp {
 
     /// Check if a command is interactive (TUI-based) and may not work well in block mode
     fn is_interactive_command(&self, command: &str) -> bool {
-        let cmd_name = self.get_command_name(command);
-
-        // List of known interactive TUI programs (not handled by TUI overlay)
-        let interactive_programs = [
-            "python", "python3", "node", "irb", "ruby", // REPLs (SSH handled separately)
-        ];
-
-        interactive_programs.iter().any(|&prog| cmd_name == prog)
-    }
-
-    /// Check if a command is an SSH command
-    fn is_ssh_command(&self, command: &str) -> bool {
-        let cmd_name = self.get_command_name(command);
-        cmd_name == "ssh"
+        commands::is_interactive_command(command)
     }
 
     /// Check if a command is an exit/logout command
     fn is_exit_command(&self, command: &str) -> bool {
-        let trimmed = command.trim();
-        trimmed == "exit" || trimmed == "logout" || trimmed == "quit"
+        commands::is_exit_command(command)
     }
 
     /// Extract the command name from a command line
     fn get_command_name(&self, command: &str) -> String {
-        command.split_whitespace().next().unwrap_or("").to_string()
-    }
-
-    /// Extract the host from an SSH command (e.g., "ssh user@host" -> "user@host")
-    fn extract_ssh_host(&self, command: &str) -> String {
-        let parts: Vec<&str> = command.split_whitespace().collect();
-        // Find the first argument that looks like a host (contains @ or doesn't start with -)
-        for part in parts.iter().skip(1) {
-            if !part.starts_with('-') {
-                return part.to_string();
-            }
-        }
-        "remote".to_string()
-    }
-
-    /// End the SSH session and restore local mode
-    fn end_ssh_session(&mut self) {
-        if self.ssh_session_active {
-            info!("Ending SSH session - performing full cleanup");
-            self.ssh_session_active = false;
-            self.ssh_session_command = None;
-            self.ssh_remote_prompt = None;
-            self.ssh_prompt_buffer.clear();
-
-            // CRITICAL: Drain the PTY output channel to discard any stale SSH output
-            // This prevents old SSH output from being associated with new local commands
-            if let Some(terminal) = &self.terminal {
-                if let Some(handle) = terminal.pty_handle() {
-                    let pty_manager = &*self.pty_manager;
-                    if let Ok(drained_count) =
-                        executor::block_on(async { pty_manager.drain_output(handle).await })
-                    {
-                        if drained_count > 0 {
-                            info!(
-                                "Drained {} pending output chunks from PTY channel",
-                                drained_count
-                            );
-                        }
-                    }
-                }
-            }
-
-            // Clear any pending output from the terminal to avoid mixing with local commands
-            if let Some(terminal) = &mut self.terminal {
-                terminal.clear_pending_output();
-            }
-
-            // Clear any pending output from state manager's active session as well
-            if let Some(session) = self.state_manager.active_session_mut() {
-                session.clear_pending_output();
-
-                // Mark any running command as completed (the exit command itself)
-                if let Some(last_block) = session.current_command_block_mut() {
-                    if last_block.status == mosaicterm::models::ExecutionStatus::Running {
-                        last_block.mark_completed(std::time::Duration::from_secs(0));
-                        info!("Marked SSH exit command as completed");
-                    }
-                }
-            }
-
-            // Clear the last command time to avoid timing issues
-            self.state_manager.clear_last_command_time();
-
-            // Restore local prompt
-            self.update_prompt();
-            self.set_status_message(Some("Disconnected from remote host".to_string()));
-        }
-    }
-
-    /// Detect if SSH session has ended based on output (static version for borrow-safe use)
-    fn detect_ssh_session_end_static(output: &str) -> bool {
-        let output_lower = output.to_lowercase();
-
-        // Common SSH connection closed messages - be specific to avoid false positives
-        // Messages like "Connection to host closed." from SSH itself
-        if (output_lower.contains("connection to") && output_lower.contains("closed"))
-            || output_lower.contains("connection closed by")
-            || output_lower.contains("connection reset by peer")
-            || output_lower.contains("connection timed out")
-            || output_lower.contains("broken pipe")
-            // "Connection to X closed." is the standard SSH exit message
-            || (output_lower.contains("closed.") && output_lower.contains("connection"))
-        {
-            return true;
-        }
-
-        // Check if any line is exactly "logout" (the remote shell logout message)
-        for line in output_lower.lines() {
-            if line.trim() == "logout" {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Check if prompt looks like local prompt (not SSH remote prompt)
-    /// Used to detect when SSH session has ended and we're back to local shell
-    /// Static version for borrow-safe use
-    fn is_local_prompt_static(remote_prompt: Option<&String>, prompt: &str) -> bool {
-        if let Some(remote_prompt) = remote_prompt {
-            // If we have a remote prompt captured, check if this prompt is different
-            let remote_cleaned = remote_prompt.trim();
-            let prompt_cleaned = prompt.trim();
-
-            // Extract user@host portion from both prompts
-            let extract_user_host = |p: &str| -> Option<String> {
-                if let Some(at_pos) = p.find('@') {
-                    // Find where user@host ends (usually at : or space or $)
-                    let start = p[..at_pos]
-                        .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
-                        .map(|i| i + 1)
-                        .unwrap_or(0);
-                    let end = p[at_pos..]
-                        .find([':', ' ', '$', '%', '>'])
-                        .map(|i| at_pos + i)
-                        .unwrap_or(p.len());
-                    Some(p[start..end].to_string())
-                } else {
-                    None
-                }
-            };
-
-            let remote_user_host = extract_user_host(remote_cleaned);
-            let current_user_host = extract_user_host(prompt_cleaned);
-
-            // If both have user@host and they're different, we're probably back to local
-            if let (Some(remote), Some(current)) = (remote_user_host, current_user_host) {
-                if remote != current {
-                    info!(
-                        "Prompt changed from '{}' to '{}' - session likely ended",
-                        remote, current
-                    );
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// Try to detect a shell prompt from SSH output (static version for borrow-safe use)
-    /// Returns the prompt string if found
-    fn detect_remote_prompt_static(output: &str) -> Option<String> {
-        // Strip ANSI codes first
-        let cleaned = Self::strip_ansi_codes_static(output);
-
-        // Look for common prompt patterns at the end of lines
-        // Prompts typically end with $ (bash), % (zsh), > (other), or #  (root)
-        for line in cleaned.lines().rev() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            // Check if this looks like a prompt
-            // Common patterns: user@host:path$ or [user@host path]$ or host:path$
-            let is_prompt = (trimmed.ends_with("$ ")
-                || trimmed.ends_with("$")
-                || trimmed.ends_with("% ")
-                || trimmed.ends_with("%")
-                || trimmed.ends_with("> ")
-                || trimmed.ends_with(">")
-                || trimmed.ends_with("# ")
-                || trimmed.ends_with("#"))
-                && (trimmed.contains("@") || trimmed.contains(":") || trimmed.len() < 50);
-
-            if is_prompt {
-                // Extract the prompt (add space if not present)
-                let prompt = if trimmed.ends_with(' ') {
-                    trimmed.to_string()
-                } else {
-                    format!("{} ", trimmed)
-                };
-                return Some(prompt);
-            }
-        }
-
-        None
-    }
-
-    /// Simple ANSI code stripping (static version for borrow-safe use)
-    fn strip_ansi_codes_static(text: &str) -> String {
-        let mut result = String::with_capacity(text.len());
-        let mut chars = text.chars().peekable();
-
-        while let Some(ch) = chars.next() {
-            if ch == '\x1b' {
-                // Skip ANSI sequence
-                if chars.peek() == Some(&'[') {
-                    chars.next();
-                    // Skip until letter
-                    while let Some(&c) = chars.peek() {
-                        chars.next();
-                        if c.is_ascii_alphabetic() {
-                            break;
-                        }
-                    }
-                }
-            } else {
-                result.push(ch);
-            }
-        }
-
-        result
+        commands::get_command_name(command)
     }
 
     /// Handle TUI app exit - mark command block as completed without output
@@ -1401,203 +1086,6 @@ impl MosaicTermApp {
             }
         }
     }
-
-    /// Background task loop to handle async operations
-    async fn async_operation_loop(
-        request_rx: &mut mpsc::UnboundedReceiver<AsyncRequest>,
-        result_tx: mpsc::UnboundedSender<AsyncResult>,
-        pty_manager: Arc<PtyManagerV2>,
-        terminal_factory: TerminalFactory,
-    ) {
-        info!("Starting async operation loop");
-
-        while let Some(request) = request_rx.recv().await {
-            match request {
-                AsyncRequest::InitTerminal => {
-                    info!("Processing async InitTerminal request");
-                    let result = Self::async_initialize_terminal(&terminal_factory).await;
-                    match result {
-                        Ok(()) => {
-                            let _ = result_tx.send(AsyncResult::TerminalInitialized);
-                        }
-                        Err(e) => {
-                            let _ = result_tx.send(AsyncResult::TerminalInitFailed(e.to_string()));
-                        }
-                    }
-                }
-                AsyncRequest::ExecuteCommand(command, working_dir) => {
-                    info!(
-                        "Processing async ExecuteCommand: {} in {:?}",
-                        command, working_dir
-                    );
-
-                    // Check if this command should use direct execution
-                    if DirectExecutor::should_use_direct_execution(&command) {
-                        info!(
-                            "Executing command directly (non-PTY): {} in {:?}",
-                            command, working_dir
-                        );
-
-                        let mut executor = DirectExecutor::new();
-                        executor.set_working_dir(working_dir);
-
-                        // Execute command directly
-                        match executor.execute_command(&command).await {
-                            Ok(command_block) => {
-                                info!("Direct execution completed for: {}", command);
-                                // Send completed command block back to UI
-                                let _ = result_tx
-                                    .send(AsyncResult::DirectCommandCompleted(command_block));
-                            }
-                            Err(e) => {
-                                error!("Direct execution failed for {}: {}", command, e);
-                                // Send error result
-                                let _ = result_tx.send(AsyncResult::DirectCommandFailed {
-                                    command,
-                                    error: e.to_string(),
-                                });
-                            }
-                        }
-                    } else {
-                        // For PTY commands, execution happens in main thread
-                        // This async handler is just for direct execution
-                        debug!(
-                            "Command {} requires PTY execution, skipping async handler",
-                            command
-                        );
-                    }
-                }
-                AsyncRequest::RestartPty => {
-                    info!("Processing async RestartPty request");
-                    let result = Self::async_restart_pty(&pty_manager, &terminal_factory).await;
-                    match result {
-                        Ok(()) => {
-                            let _ = result_tx.send(AsyncResult::PtyRestarted);
-                        }
-                        Err(e) => {
-                            let _ = result_tx.send(AsyncResult::PtyRestartFailed(e.to_string()));
-                        }
-                    }
-                }
-                AsyncRequest::SendInterrupt(handle_id) => {
-                    info!("Processing async SendInterrupt for handle: {}", handle_id);
-                    let result = Self::async_send_interrupt(&pty_manager, &handle_id).await;
-                    match result {
-                        Ok(()) => {
-                            let _ = result_tx.send(AsyncResult::InterruptSent);
-                        }
-                        Err(e) => {
-                            let _ = result_tx.send(AsyncResult::InterruptFailed(e.to_string()));
-                        }
-                    }
-                }
-            }
-        }
-
-        info!("Async operation loop ended");
-    }
-
-    /// Helper: Initialize terminal in background
-    async fn async_initialize_terminal(terminal_factory: &TerminalFactory) -> Result<()> {
-        info!("Async terminal initialization started");
-
-        // Get runtime config from environment or use defaults
-        let runtime_config = RuntimeConfig::new().unwrap_or_else(|e| {
-            error!("Failed to create runtime config: {}", e);
-            RuntimeConfig::new_minimal()
-        });
-
-        let shell_type = match runtime_config.config().terminal.shell_type {
-            ModelShellType::Bash => ModelShellType::Bash,
-            ModelShellType::Zsh => ModelShellType::Zsh,
-            ModelShellType::Fish => ModelShellType::Fish,
-            _ => ModelShellType::Bash,
-        };
-
-        let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
-        let mut environment: std::collections::HashMap<String, String> = std::env::vars().collect();
-
-        // Suppress prompts
-        environment.insert("PS1".to_string(), "".to_string());
-        environment.insert("PS2".to_string(), "".to_string());
-        environment.insert("TERM".to_string(), "dumb".to_string());
-
-        let session = TerminalSession::with_environment(shell_type, working_dir, environment);
-        let _terminal = terminal_factory.create_and_initialize(session).await?;
-
-        info!("Async terminal initialization completed");
-        Ok(())
-    }
-
-    /// Helper: Restart PTY in background
-    async fn async_restart_pty(
-        _pty_manager: &Arc<PtyManagerV2>,
-        _terminal_factory: &TerminalFactory,
-    ) -> Result<()> {
-        info!("Async PTY restart started");
-
-        // For now, just log - full implementation would recreate terminal
-        // This is complex because we need to update app state
-
-        info!("Async PTY restart completed");
-        Ok(())
-    }
-
-    /// Helper: Send interrupt signal in background
-    async fn async_send_interrupt(pty_manager: &Arc<PtyManagerV2>, handle_id: &str) -> Result<()> {
-        info!("Async interrupt signal for handle: {}", handle_id);
-
-        // PtyManagerV2 is already async and thread-safe, no lock needed
-
-        // Create PTY handle with the given ID
-        let pty_handle = mosaicterm::pty::PtyHandle {
-            id: handle_id.to_string(),
-            pid: None,
-        };
-
-        // First, send Ctrl+C (ASCII 3) directly to the PTY input
-        // This is the polite way - gives the process a chance to clean up
-        info!("Sending Ctrl+C to PTY");
-        let _ = pty_manager.send_input(&pty_handle, &[3]).await;
-
-        // Get the shell PID
-        if let Ok(pty_info) = pty_manager.get_info(&pty_handle).await {
-            if let Some(shell_pid) = pty_info.pid {
-                info!("Killing process tree for shell PID: {}", shell_pid);
-
-                // Kill the entire process tree (shell + all children)
-                // This ensures long-running commands like sleep, find, etc. are all killed
-                // Uses platform abstraction for cross-platform support
-                if let Err(e) = mosaicterm::pty::process_tree::kill_process_tree(shell_pid) {
-                    warn!("Failed to kill process tree: {}", e);
-                }
-
-                // Wait a moment for processes to terminate gracefully
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-                // If still running, check and log
-                if let Ok(children) =
-                    mosaicterm::pty::process_tree::get_all_descendant_pids(shell_pid)
-                {
-                    if !children.is_empty() {
-                        info!("Some processes still running, attempting force kill");
-                        // Try again - platform implementation should handle force kill
-                        let _ = mosaicterm::pty::process_tree::kill_process_tree(shell_pid);
-                    }
-                }
-            } else {
-                return Err(mosaicterm::error::Error::NoPidAvailable {
-                    handle_id: handle_id.to_string(),
-                });
-            }
-        } else {
-            return Err(mosaicterm::error::Error::PtyHandleNotFound {
-                handle_id: handle_id.to_string(),
-            });
-        }
-
-        Ok(())
-    }
 }
 
 impl eframe::App for MosaicTermApp {
@@ -1644,7 +1132,7 @@ impl eframe::App for MosaicTermApp {
                 };
 
                 if should_cleanup {
-                    // PtyManagerV2 is already async and thread-safe, no lock needed
+                    // PtyManager is already async and thread-safe, no lock needed
                     {
                         let pty_manager = &*self.pty_manager;
                         let cleaned =
@@ -1864,7 +1352,7 @@ impl eframe::App for MosaicTermApp {
                 );
                 // Send input to PTY
                 if let Some(_handle_id) = self.tui_overlay.pty_handle() {
-                    // PtyManagerV2 is already async and thread-safe, no lock needed
+                    // PtyManager is already async and thread-safe, no lock needed
                     let pty_manager = &*self.pty_manager;
                     // Get the actual PTY handle from the terminal
                     if let Some(terminal) = &self.terminal {
@@ -1887,27 +1375,32 @@ impl eframe::App for MosaicTermApp {
                 // Send Ctrl+C to kill the TUI process and reset terminal
                 if let Some(terminal) = &self.terminal {
                     if let Some(pty_handle) = terminal.pty_handle() {
-                        // PtyManagerV2 is already async and thread-safe, no lock needed
+                        // PtyManager is already async and thread-safe, no lock needed
                         {
                             let pty_manager = &*self.pty_manager;
+
+                            // Send Ctrl+C (ASCII 3) to terminate the process
                             executor::block_on(async {
-                                // Send Ctrl+C (ASCII 3) to terminate the process
                                 let _ = pty_manager.send_input(pty_handle, &[3]).await;
-
-                                // Wait a moment for process to die
-                                std::thread::sleep(std::time::Duration::from_millis(50));
-
-                                // Reset terminal to dumb mode for regular commands
-                                let reset_cmd = "export TERM=dumb\n";
-                                let _ = pty_manager
-                                    .send_input(pty_handle, reset_cmd.as_bytes())
-                                    .await;
-
-                                // Send a reset sequence to clear any weird state
-                                let _ = pty_manager.send_input(pty_handle, b"\x1bc").await;
-                                // ESC c (reset)
                             });
-                            info!("Sent Ctrl+C and reset terminal");
+
+                            // Wait a moment for process to die (use std::thread::sleep in sync context)
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+
+                            // Send Enter to clear any partial input and get a fresh prompt
+                            executor::block_on(async {
+                                let _ = pty_manager.send_input(pty_handle, b"\n").await;
+                            });
+
+                            // Wait for shell to process and give us a prompt
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+
+                            // Drain any pending output to clear echoed characters
+                            executor::block_on(async {
+                                let _ = pty_manager.drain_output(pty_handle).await;
+                            });
+
+                            info!("Sent Ctrl+C and cleared PTY buffer after TUI exit");
                         }
                     }
                 }
@@ -2105,277 +1598,6 @@ impl MosaicTermApp {
 
         // Apply the style
         ctx.set_style(style);
-    }
-
-    /// Handle keyboard shortcuts and navigation
-    fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Ctrl+C works ALWAYS, even when input is focused - kills running command
-        if ctx.input(|i| i.key_pressed(egui::Key::C) && i.modifiers.ctrl && !i.modifiers.shift) {
-            // Check if there's a running command
-            let has_running_command = self
-                .state_manager
-                .get_command_history()
-                .iter()
-                .any(|block| block.is_running());
-
-            if has_running_command {
-                // Ctrl+C to interrupt current command
-                self.handle_interrupt_command();
-                // Consume the event so it doesn't get processed elsewhere
-                ctx.input_mut(|i| i.events.clear());
-            }
-            // If no running command, let the input field handle it normally
-        }
-
-        // Ctrl+L works ALWAYS, even when input is focused - clears screen
-        if ctx.input(|i| i.key_pressed(egui::Key::L) && i.modifiers.ctrl) {
-            self.handle_clear_screen();
-            ctx.input_mut(|i| i.events.clear());
-        }
-
-        // Ctrl+R works ALWAYS, even when input is focused - opens history search
-        if ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl) {
-            self.history_search_active = !self.history_search_active;
-            if self.history_search_active {
-                self.history_search_query.clear();
-                self.history_search_needs_focus = true; // Request focus on next frame
-                                                        // Request repaint to ensure popup shows immediately
-                ctx.request_repaint();
-            }
-            // Only clear events if we're closing the popup, not opening it
-            if !self.history_search_active {
-                ctx.input_mut(|i| i.events.clear());
-            }
-        }
-
-        // Only handle other shortcuts when no text input is focused
-        if ctx.memory(|mem| mem.focus().is_none()) {
-            // Application shortcuts
-            if ctx.input(|i| i.key_pressed(egui::Key::Q) && i.modifiers.ctrl) {
-                std::process::exit(0); // Ctrl+Q to quit
-            }
-
-            if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl) {
-                // Ctrl+D to exit (EOF)
-                self.handle_exit();
-            }
-        }
-
-        // Navigation shortcuts (work even when input is focused)
-        if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
-            // Page Up to scroll up
-            self.handle_scroll_up();
-        }
-
-        if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
-            // Page Down to scroll down
-            self.handle_scroll_down();
-        }
-
-        if ctx.input(|i| i.key_pressed(egui::Key::Home) && i.modifiers.ctrl) {
-            // Ctrl+Home to scroll to top
-            self.handle_scroll_to_top();
-        }
-
-        if ctx.input(|i| i.key_pressed(egui::Key::End) && i.modifiers.ctrl) {
-            // Ctrl+End to scroll to bottom
-            self.handle_scroll_to_bottom();
-        }
-
-        // Tab navigation
-        if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl) {
-            // Ctrl+Tab to switch focus
-            self.handle_focus_next();
-        }
-
-        if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && i.modifiers.shift) {
-            // Ctrl+Shift+Tab to switch focus backward
-            self.handle_focus_previous();
-        }
-    }
-
-    /// Handle command interruption (Ctrl+C)
-    fn handle_interrupt_command(&mut self) {
-        if let Some(terminal) = &mut self.terminal {
-            // Get the current PTY handle from the terminal
-            if let Some(pty_handle) = terminal.pty_handle() {
-                let handle_id = pty_handle.id.clone();
-
-                // Send interrupt signal to the PTY process (non-blocking)
-                info!("Sending interrupt signal for handle: {}", handle_id);
-                if let Err(e) = self
-                    .async_tx
-                    .send(AsyncRequest::SendInterrupt(handle_id.clone()))
-                {
-                    error!("Failed to send interrupt request: {}", e);
-                    self.set_status_message(Some("Failed to interrupt command".to_string()));
-                } else {
-                    self.set_status_message(Some("Interrupting command...".to_string()));
-                }
-
-                // Mark current command as cancelled (result will come from async)
-                // Check if the command is interactive first (before mutable borrow)
-                let command_history = self.state_manager.get_command_history();
-                let is_interactive = command_history
-                    .last()
-                    .map(|block| self.is_interactive_command(&block.command))
-                    .unwrap_or(false);
-
-                // Mark the last command as cancelled in state manager
-                let history = self.state_manager.get_command_history();
-                if let Some(last_block) = history.last() {
-                    let block_id = last_block.id.clone();
-                    self.state_manager.update_command_block_status(
-                        &block_id,
-                        mosaicterm::models::ExecutionStatus::Cancelled,
-                    );
-                }
-
-                // Clear the command time so new commands can be submitted
-                self.state_manager.set_last_command_time(chrono::Utc::now());
-
-                // For interactive programs, we need to restart the PTY session
-                // because the shell can get into a corrupted state
-                if is_interactive {
-                    info!("Restarting PTY session after interactive program cancel");
-                    self.start_loading("Restarting shell session...");
-
-                    // Restart the PTY in a background task (non-blocking)
-                    if let Err(e) = self.async_tx.send(AsyncRequest::RestartPty) {
-                        error!("Failed to send RestartPty request: {}", e);
-                        self.stop_loading();
-                        self.set_status_message(Some("Failed to restart session".to_string()));
-                    }
-
-                    // Result will be handled in poll_async_results
-                }
-            } else {
-                warn!("No active PTY process to interrupt");
-                self.set_status_message(Some("No running command to interrupt".to_string()));
-            }
-        } else {
-            warn!("Terminal not available for interrupt");
-            self.set_status_message(Some("Terminal not ready".to_string()));
-        }
-    }
-
-    /// Handle interruption of a specific command block (right-click kill)
-    fn handle_interrupt_specific_command(&mut self, block_id: String) {
-        if let Some(terminal) = &mut self.terminal {
-            // Get the current PTY handle from the terminal
-            if let Some(pty_handle) = terminal.pty_handle() {
-                let handle_id = pty_handle.id.clone();
-
-                // Send interrupt signal to the PTY process (non-blocking)
-                info!("Sending interrupt signal for block {}", block_id);
-                if let Err(e) = self
-                    .async_tx
-                    .send(AsyncRequest::SendInterrupt(handle_id.clone()))
-                {
-                    error!("Failed to send interrupt request: {}", e);
-                    self.set_status_message(Some("Failed to interrupt command".to_string()));
-                } else {
-                    self.set_status_message(Some("Interrupting command...".to_string()));
-                }
-
-                // Mark the specific command block as cancelled
-                self.state_manager.update_command_block_status(
-                    &block_id,
-                    mosaicterm::models::ExecutionStatus::Cancelled,
-                );
-
-                // Clear the command time so new commands can be submitted
-                self.state_manager.set_last_command_time(chrono::Utc::now());
-
-                // Check if the command being killed is interactive
-                let command_history = self.state_manager.get_command_history();
-                let is_interactive = command_history
-                    .iter()
-                    .find(|block| block.id == block_id)
-                    .map(|block| self.is_interactive_command(&block.command))
-                    .unwrap_or(false);
-
-                // For interactive programs, restart the PTY session
-                if is_interactive {
-                    info!("Restarting PTY session after interactive program cancel");
-                    self.start_loading("Restarting shell session...");
-
-                    if let Err(e) = self.async_tx.send(AsyncRequest::RestartPty) {
-                        error!("Failed to send RestartPty request: {}", e);
-                        self.stop_loading();
-                        self.set_status_message(Some("Failed to restart session".to_string()));
-                    }
-                }
-            } else {
-                warn!("No active PTY process to interrupt");
-                self.set_status_message(Some("No running command to interrupt".to_string()));
-            }
-        } else {
-            warn!("Terminal not available for interrupt");
-            self.set_status_message(Some("Terminal not ready".to_string()));
-        }
-    }
-
-    /// Handle screen clearing (Ctrl+L)
-    fn handle_clear_screen(&mut self) {
-        // Clear command history (visual blocks) but preserve input history for arrow keys
-        self.state_manager.clear_command_history();
-
-        info!("Clear screen requested (Ctrl+L)");
-        self.set_status_message(Some("Screen cleared".to_string()));
-    }
-
-    /// Handle exit (Ctrl+D)
-    fn handle_exit(&mut self) {
-        // Send EOF to shell (Ctrl+D)
-        if let Some(_terminal) = &mut self.terminal {
-            std::mem::drop(_terminal.process_input("\x04")); // EOF character
-        }
-        info!("Exit requested (Ctrl+D)");
-        self.set_status_message(Some("EOF sent".to_string()));
-    }
-
-    /// Handle scroll up (Page Up)
-    fn handle_scroll_up(&mut self) {
-        // Scroll history up by one page
-        self.scrollable_history.scroll_by(-20.0); // Scroll up by 20 units
-        info!("Scroll up requested (Page Up)");
-    }
-
-    /// Handle scroll down (Page Down)
-    fn handle_scroll_down(&mut self) {
-        // Scroll history down by one page
-        self.scrollable_history.scroll_by(20.0); // Scroll down by 20 units
-        info!("Scroll down requested (Page Down)");
-    }
-
-    /// Handle scroll to top (Ctrl+Home)
-    fn handle_scroll_to_top(&mut self) {
-        // Scroll to top of history
-        self.scrollable_history.scroll_to_top();
-        info!("Scroll to top requested (Ctrl+Home)");
-    }
-
-    /// Handle scroll to bottom (Ctrl+End)
-    fn handle_scroll_to_bottom(&mut self) {
-        // Scroll to bottom of history
-        self.scrollable_history.scroll_to_bottom();
-        info!("Scroll to bottom requested (Ctrl+End)");
-    }
-
-    /// Handle focus next (Ctrl+Tab)
-    fn handle_focus_next(&mut self) {
-        // Cycle focus to next UI element
-        // This would cycle between input field, command history, etc.
-        info!("Focus next requested (Ctrl+Tab)");
-        self.set_status_message(Some("Focus cycled to next element".to_string()));
-    }
-
-    /// Handle focus previous (Ctrl+Shift+Tab)
-    fn handle_focus_previous(&mut self) {
-        // Cycle focus to previous UI element
-        info!("Focus previous requested (Ctrl+Shift+Tab)");
-        self.set_status_message(Some("Focus cycled to previous element".to_string()));
     }
 
     /// Render the fixed input area at the bottom
@@ -3134,12 +2356,7 @@ impl MosaicTermApp {
                             .update_command_block_status(&block_id, ExecutionStatus::Failed);
                         self.state_manager.add_output_line(
                             &block_id,
-                            mosaicterm::models::OutputLine {
-                                text: format!("Error: {}", error),
-                                ansi_codes: vec![],
-                                line_number: 0,
-                                timestamp: chrono::Utc::now(),
-                            },
+                            mosaicterm::models::OutputLine::new(format!("Error: {}", error)),
                         );
                         // Set exit code to 1
                         if let Some(session) = self.state_manager.active_session_mut() {
@@ -3194,7 +2411,7 @@ impl MosaicTermApp {
 
         if let Some(_terminal) = &mut self.terminal {
             if let Some(handle) = _terminal.pty_handle() {
-                // PtyManagerV2 is async and thread-safe, use async read
+                // PtyManager is async and thread-safe, use async read
                 // Use blocking executor since we're in a sync context
                 let pty_manager = &*self.pty_manager;
                 if let Ok(data) =
@@ -3566,15 +2783,11 @@ impl MosaicTermApp {
                                             + 1000;
                                         last_block.output.drain(0..to_remove);
                                         // Add truncation notice at the beginning
-                                        let truncation_notice = mosaicterm::models::OutputLine {
-                                            text: format!(
+                                        let truncation_notice =
+                                            mosaicterm::models::OutputLine::new(format!(
                                                 "... [truncated {} lines due to size limit] ...",
                                                 to_remove
-                                            ),
-                                            ansi_codes: vec![],
-                                            line_number: 0,
-                                            timestamp: chrono::Utc::now(),
-                                        };
+                                            ));
                                         last_block.output.insert(0, truncation_notice);
                                         warn!(
                                             "Truncated {} lines from command output (limit: {})",
@@ -3643,12 +2856,12 @@ impl MosaicTermApp {
                                                 let clean_text = parsed_result.clean_text.clone();
 
                                                 // Add the prompt as an output line
-                                                let prompt_line = mosaicterm::models::OutputLine {
-                                                    text: parsed_result.clean_text,
-                                                    ansi_codes: parsed_result.ansi_codes,
-                                                    line_number: 0,
-                                                    timestamp: chrono::Utc::now(),
-                                                };
+                                                let prompt_line =
+                                                    mosaicterm::models::OutputLine::with_ansi_codes(
+                                                        parsed_result.clean_text,
+                                                        parsed_result.ansi_codes,
+                                                        0,
+                                                    );
                                                 last_block.add_output_line(prompt_line);
                                                 debug!(
                                                     "Added prompt line for completion detection: '{}'",
@@ -3679,18 +2892,24 @@ impl MosaicTermApp {
                                             let clean_text = parsed_result.clean_text.clone();
 
                                             // Create output line with clean text and parsed ANSI codes
-                                            let mut partial_line = mosaicterm::models::OutputLine {
-                                                text: parsed_result.clean_text,
-                                                ansi_codes: parsed_result.ansi_codes,
-                                                line_number: 0,
-                                                timestamp: chrono::Utc::now(),
-                                            };
-
                                             // Truncate if too long
-                                            if partial_line.text.len() > MAX_LINE_LENGTH {
-                                                partial_line.text.truncate(MAX_LINE_LENGTH);
-                                                partial_line.text.push_str("... [truncated]");
-                                            }
+                                            let line_text = if parsed_result.clean_text.len()
+                                                > MAX_LINE_LENGTH
+                                            {
+                                                let mut truncated = parsed_result.clean_text
+                                                    [..MAX_LINE_LENGTH]
+                                                    .to_string();
+                                                truncated.push_str("... [truncated]");
+                                                truncated
+                                            } else {
+                                                parsed_result.clean_text
+                                            };
+                                            let partial_line =
+                                                mosaicterm::models::OutputLine::with_ansi_codes(
+                                                    line_text,
+                                                    parsed_result.ansi_codes,
+                                                    0,
+                                                );
 
                                             last_block.add_output_line(partial_line);
                                             debug!(
@@ -3706,12 +2925,9 @@ impl MosaicTermApp {
                                                     - MAX_OUTPUT_LINES_PER_COMMAND
                                                     + 1000;
                                                 last_block.output.drain(0..to_remove);
-                                                let truncation_notice = mosaicterm::models::OutputLine {
-                                                    text: format!("... [truncated {} lines due to size limit] ...", to_remove),
-                                                    ansi_codes: vec![],
-                                                    line_number: 0,
-                                                    timestamp: chrono::Utc::now(),
-                                                };
+                                                let truncation_notice = mosaicterm::models::OutputLine::new(
+                                                    format!("... [truncated {} lines due to size limit] ...", to_remove)
+                                                );
                                                 last_block.output.insert(0, truncation_notice);
                                             }
                                         }
@@ -3812,15 +3028,11 @@ impl MosaicTermApp {
                                             );
 
                                             // Add timeout notice to output
-                                            let timeout_notice = mosaicterm::models::OutputLine {
-                                                text: format!(
+                                            let timeout_notice =
+                                                mosaicterm::models::OutputLine::new(format!(
                                                     "\n[Timeout: Command exceeded {}s limit]",
                                                     timeout_secs
-                                                ),
-                                                ansi_codes: vec![],
-                                                line_number: 0,
-                                                timestamp: chrono::Utc::now(),
-                                            };
+                                                ));
                                             last_block.output.push(timeout_notice);
 
                                             // Mark as completed (with timeout flag)
@@ -3959,7 +3171,7 @@ impl MosaicTermApp {
 
                     info!("Sending environment query command");
                     // Try to send query (non-blocking)
-                    // PtyManagerV2 is already async and thread-safe, no lock needed
+                    // PtyManager is already async and thread-safe, no lock needed
                     let pty_manager = &*self.pty_manager;
                     match futures::executor::block_on(async {
                         pty_manager.send_input(handle, query_cmd.as_bytes()).await
@@ -4027,134 +3239,5 @@ mod tests {
 
         app.set_status_message(None);
         assert!(app.state_manager.app_state().status_message.is_none());
-    }
-
-    // SSH session detection tests
-    #[test]
-    fn test_detect_ssh_session_end_connection_closed() {
-        assert!(MosaicTermApp::detect_ssh_session_end_static(
-            "Connection to example.com closed."
-        ));
-        assert!(MosaicTermApp::detect_ssh_session_end_static(
-            "Connection to 192.168.1.1 closed by remote host."
-        ));
-    }
-
-    #[test]
-    fn test_detect_ssh_session_end_logout() {
-        assert!(MosaicTermApp::detect_ssh_session_end_static("logout"));
-        assert!(MosaicTermApp::detect_ssh_session_end_static("logout\n"));
-        assert!(MosaicTermApp::detect_ssh_session_end_static(
-            "some output\nlogout\nmore output"
-        ));
-    }
-
-    #[test]
-    fn test_detect_ssh_session_end_connection_reset() {
-        assert!(MosaicTermApp::detect_ssh_session_end_static(
-            "Connection reset by peer"
-        ));
-        assert!(MosaicTermApp::detect_ssh_session_end_static(
-            "connection timed out"
-        ));
-        assert!(MosaicTermApp::detect_ssh_session_end_static("broken pipe"));
-    }
-
-    #[test]
-    fn test_detect_ssh_session_end_false_positives() {
-        // Should NOT detect as session end
-        assert!(!MosaicTermApp::detect_ssh_session_end_static("ls -la"));
-        assert!(!MosaicTermApp::detect_ssh_session_end_static(
-            "exit status 0"
-        ));
-        assert!(!MosaicTermApp::detect_ssh_session_end_static(
-            "user logged out yesterday"
-        ));
-        assert!(!MosaicTermApp::detect_ssh_session_end_static(
-            "normal output"
-        ));
-    }
-
-    #[test]
-    fn test_detect_remote_prompt_bash() {
-        let output = "user@host:~$ ";
-        let result = MosaicTermApp::detect_remote_prompt_static(output);
-        assert!(result.is_some());
-        assert!(result.unwrap().contains("user@host"));
-    }
-
-    #[test]
-    fn test_detect_remote_prompt_zsh() {
-        let output = "user@host ~ % ";
-        let result = MosaicTermApp::detect_remote_prompt_static(output);
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn test_detect_remote_prompt_root() {
-        let output = "root@server:/var/log# ";
-        let result = MosaicTermApp::detect_remote_prompt_static(output);
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn test_detect_remote_prompt_with_output() {
-        let output = "total 4\ndrwxr-xr-x 2 user user 4096 Dec 23 10:00 .\nuser@host:~$ ";
-        let result = MosaicTermApp::detect_remote_prompt_static(output);
-        assert!(result.is_some());
-        assert!(result.unwrap().contains("user@host"));
-    }
-
-    #[test]
-    fn test_detect_remote_prompt_no_match() {
-        let output = "Just some regular output without a prompt";
-        let result = MosaicTermApp::detect_remote_prompt_static(output);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_is_local_prompt_different_hosts() {
-        let remote = "user@remote-server:~$ ".to_string();
-        let local = "user@local-machine:~$ ";
-        assert!(MosaicTermApp::is_local_prompt_static(Some(&remote), local));
-    }
-
-    #[test]
-    fn test_is_local_prompt_same_host() {
-        let remote = "user@server:~$ ".to_string();
-        let current = "user@server:/var/log$ ";
-        // Same user@host, just different path - should NOT be considered local
-        assert!(!MosaicTermApp::is_local_prompt_static(
-            Some(&remote),
-            current
-        ));
-    }
-
-    #[test]
-    fn test_is_local_prompt_no_remote() {
-        // If no remote prompt captured, can't determine if local
-        let local = "user@machine:~$ ";
-        assert!(!MosaicTermApp::is_local_prompt_static(None, local));
-    }
-
-    #[test]
-    fn test_strip_ansi_codes_static() {
-        let input = "\x1b[32mgreen\x1b[0m normal \x1b[1;31mred\x1b[0m";
-        let result = MosaicTermApp::strip_ansi_codes_static(input);
-        assert_eq!(result, "green normal red");
-    }
-
-    #[test]
-    fn test_strip_ansi_codes_static_cursor_movement() {
-        let input = "\x1b[Hstart\x1b[2Jend";
-        let result = MosaicTermApp::strip_ansi_codes_static(input);
-        assert_eq!(result, "startend");
-    }
-
-    #[test]
-    fn test_strip_ansi_codes_static_no_codes() {
-        let input = "plain text without any codes";
-        let result = MosaicTermApp::strip_ansi_codes_static(input);
-        assert_eq!(result, input);
     }
 }

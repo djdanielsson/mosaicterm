@@ -17,12 +17,7 @@ pub fn create_test_command_block(command: &str) -> CommandBlock {
 
 /// Create a test output line
 pub fn create_test_output_line(text: &str, line_number: usize) -> OutputLine {
-    OutputLine {
-        text: text.to_string(),
-        ansi_codes: vec![],
-        line_number,
-        timestamp: chrono::Utc::now(),
-    }
+    OutputLine::with_line_number(text, line_number)
 }
 
 /// Create a command block with output

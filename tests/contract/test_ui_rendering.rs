@@ -175,12 +175,7 @@ fn create_mock_command_block(command: &str, output: &str, success: bool) -> Comm
     // Add output
     if !output.is_empty() {
         for line in output.lines() {
-            block.add_output_line(mosaicterm::models::OutputLine {
-                text: line.to_string(),
-                ansi_codes: vec![],
-                line_number: 0,
-                timestamp: chrono::Utc::now(),
-            });
+            block.add_output_line(mosaicterm::models::OutputLine::new(line));
         }
     }
 

@@ -21,7 +21,7 @@ pub use state::{
 
 use crate::error::Result;
 use crate::models::{OutputLine, ShellType, TerminalSession};
-use crate::pty::{PtyHandle, PtyManagerV2};
+use crate::pty::{PtyHandle, PtyManager};
 use chrono::Utc;
 use std::sync::Arc;
 
@@ -37,15 +37,15 @@ pub struct Terminal {
     prompt_detector: PromptDetector,
     /// Completion detector
     completion_detector: CommandCompletionDetector,
-    /// PTY manager reference (V2 with per-terminal locking)
-    pty_manager: Arc<PtyManagerV2>,
+    /// PTY manager reference (with per-terminal locking)
+    pty_manager: Arc<PtyManager>,
     /// Current PTY handle
     pty_handle: Option<PtyHandle>,
 }
 
 impl Terminal {
     /// Create a new terminal emulator
-    pub fn new(session: TerminalSession, pty_manager: Arc<PtyManagerV2>) -> Self {
+    pub fn new(session: TerminalSession, pty_manager: Arc<PtyManager>) -> Self {
         Self {
             state: TerminalState::new(session),
             input_processor: CommandInputProcessor::new(),
@@ -72,11 +72,10 @@ impl Terminal {
     /// use mosaicterm::models::ShellType;
     /// use mosaicterm::pty::PtyManager;
     /// use std::sync::Arc;
-    /// use tokio::sync::Mutex;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// // Note: TerminalSession is an internal type, create terminal directly
-    /// let pty_manager = Arc::new(Mutex::new(PtyManager::new()));
+    /// let pty_manager = Arc::new(PtyManager::new());
     /// // Terminal is typically created internally by MosaicTermApp
     /// # Ok(())
     /// # }
@@ -84,7 +83,7 @@ impl Terminal {
     pub fn with_shell(
         session: TerminalSession,
         shell_type: ShellType,
-        pty_manager: Arc<PtyManagerV2>,
+        pty_manager: Arc<PtyManager>,
     ) -> Self {
         let mut terminal = Self::new(session, pty_manager);
         terminal.prompt_detector = PromptDetector::with_shell(shell_type);
@@ -107,18 +106,18 @@ impl Terminal {
     ///
     /// ```no_run
     /// use mosaicterm::terminal::Terminal;
-    /// use mosaicterm::pty::PtyManagerV2;
+    /// use mosaicterm::pty::PtyManager;
     /// use std::sync::Arc;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// // Note: Terminal initialization is handled internally by MosaicTermApp
-    /// let pty_manager = Arc::new(PtyManagerV2::new());
+    /// let pty_manager = Arc::new(PtyManager::new());
     /// // Terminal sessions are managed automatically
     /// # Ok(())
     /// # }
     /// ```
     pub async fn initialize_session(&mut self) -> Result<()> {
-        // PtyManagerV2 is already async and thread-safe, no lock needed
+        // PtyManager is already async and thread-safe, no lock needed
         let pty_manager = &*self.pty_manager;
 
         // Create PTY process for the terminal session
@@ -247,7 +246,7 @@ impl Terminal {
 
         // Send to PTY if available
         if let Some(handle) = &self.pty_handle {
-            // PtyManagerV2 is already async and thread-safe, no lock needed
+            // PtyManager is already async and thread-safe, no lock needed
             let manager = &*self.pty_manager;
             self.input_processor
                 .send_command(manager, handle, command)
@@ -380,7 +379,7 @@ impl Terminal {
     /// Read available output from the PTY
     pub async fn read_output(&mut self) -> Result<Vec<OutputLine>> {
         if let Some(pty_handle) = &self.pty_handle {
-            // PtyManagerV2 is already async and thread-safe, no lock needed
+            // PtyManager is already async and thread-safe, no lock needed
             let manager = &*self.pty_manager;
 
             // Read raw output from PTY
@@ -408,7 +407,7 @@ impl Terminal {
     /// Check if there's pending PTY output to read
     pub async fn has_pending_pty_output(&mut self) -> Result<bool> {
         if let Some(pty_handle) = &self.pty_handle {
-            // PtyManagerV2 is already async and thread-safe, no lock needed
+            // PtyManager is already async and thread-safe, no lock needed
             let manager = &*self.pty_manager;
             let output = manager.read_output(pty_handle, 10).await?;
             Ok(!output.is_empty())
@@ -431,12 +430,12 @@ impl Terminal {
 /// Terminal factory for creating terminals with different configurations
 #[derive(Clone)]
 pub struct TerminalFactory {
-    pty_manager: Arc<PtyManagerV2>,
+    pty_manager: Arc<PtyManager>,
 }
 
 impl TerminalFactory {
     /// Create a new terminal factory
-    pub fn new(pty_manager: Arc<PtyManagerV2>) -> Self {
+    pub fn new(pty_manager: Arc<PtyManager>) -> Self {
         Self { pty_manager }
     }
 
@@ -547,7 +546,7 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pty::PtyManagerV2;
+    use crate::pty::PtyManager;
 
     fn create_test_session() -> TerminalSession {
         TerminalSession::new(
@@ -556,8 +555,8 @@ mod tests {
         )
     }
 
-    fn create_test_pty_manager() -> Arc<PtyManagerV2> {
-        Arc::new(PtyManagerV2::new())
+    fn create_test_pty_manager() -> Arc<PtyManager> {
+        Arc::new(PtyManager::new())
     }
 
     #[test]

@@ -4,7 +4,7 @@
 
 use crate::error::Result;
 use crate::models::CommandBlock;
-use crate::pty::{PtyHandle, PtyManagerV2};
+use crate::pty::{PtyHandle, PtyManager};
 
 /// Command input processor
 #[derive(Debug)]
@@ -34,12 +34,6 @@ impl CommandInputProcessor {
             multi_line_buffer: Vec::new(),
             multi_line_mode: false,
         }
-    }
-
-    /// Create processor with custom prompt pattern (deprecated - pattern no longer used)
-    pub fn with_prompt_pattern(_pattern: &str) -> Result<Self> {
-        // Pattern is no longer used, just return default instance
-        Ok(Self::new())
     }
 
     /// Process a single character input
@@ -239,7 +233,7 @@ impl CommandInputProcessor {
     /// Send command to PTY
     pub async fn send_command(
         &self,
-        manager: &PtyManagerV2,
+        manager: &PtyManager,
         handle: &PtyHandle,
         command: &str,
     ) -> Result<()> {
@@ -288,7 +282,7 @@ impl CommandInputProcessor {
     /// Send command to PTY manager
     pub async fn send_command_to_pty(
         &mut self,
-        pty_manager: &PtyManagerV2,
+        pty_manager: &PtyManager,
         handle: &PtyHandle,
         command: String,
     ) -> Result<()> {
@@ -315,7 +309,7 @@ impl CommandInputProcessor {
     /// Send raw input to PTY manager (for individual keystrokes)
     pub async fn send_raw_input_to_pty(
         &mut self,
-        pty_manager: &PtyManagerV2,
+        pty_manager: &PtyManager,
         handle: &PtyHandle,
         input: &[u8],
     ) -> Result<()> {

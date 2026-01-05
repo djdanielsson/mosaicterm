@@ -29,7 +29,7 @@
 //! └─────────────────────────────────────┘
 //! ```
 
-use crate::models::{CommandBlock, OutputLine};
+use crate::models::{CommandBlock, OutputLine, SessionState, SessionStatistics};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -39,7 +39,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct StateManager {
     /// Active terminal sessions (keyed by session ID)
-    sessions: HashMap<String, SessionState>,
+    sessions: HashMap<String, ManagedSessionState>,
     /// Currently active session ID
     active_session_id: Option<String>,
     /// Global application state
@@ -48,9 +48,9 @@ pub struct StateManager {
     statistics: AppStatistics,
 }
 
-/// State for a single terminal session
+/// State for a single managed terminal session
 #[derive(Debug, Clone)]
-pub struct SessionState {
+pub struct ManagedSessionState {
     /// Session identifier
     pub id: String,
     /// Command history for this session
@@ -67,8 +67,8 @@ pub struct SessionState {
     pub start_time: DateTime<Utc>,
     /// Last activity time
     pub last_activity: DateTime<Utc>,
-    /// Session status
-    pub status: SessionStatus,
+    /// Session status (uses SessionState from models)
+    pub status: SessionState,
     /// Pending output lines (not yet added to a command block)
     pub pending_output: Vec<OutputLine>,
     /// Current command being typed
@@ -87,18 +87,7 @@ pub struct SessionState {
     pub git_context: Option<String>,
 }
 
-/// Session status
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SessionStatus {
-    /// Session is initializing
-    Initializing,
-    /// Session is active and ready
-    Active,
-    /// Session is terminating
-    Terminating,
-    /// Session has terminated
-    Terminated,
-}
+// Note: SessionState enum is imported from crate::models
 
 /// Global application state (UI-related)
 #[derive(Debug, Clone, Default)]
@@ -262,7 +251,7 @@ impl StateManager {
         shell_type: crate::models::ShellType,
     ) -> String {
         let session_id = Uuid::new_v4().to_string();
-        let session = SessionState {
+        let session = ManagedSessionState {
             id: session_id.clone(),
             command_history: Vec::new(),
             working_directory,
@@ -271,7 +260,7 @@ impl StateManager {
             shell_type,
             start_time: Utc::now(),
             last_activity: Utc::now(),
-            status: SessionStatus::Initializing,
+            status: SessionState::Initializing,
             pending_output: Vec::new(),
             current_input: String::new(),
             input_history: Vec::new(),
@@ -288,26 +277,26 @@ impl StateManager {
     }
 
     /// Get the active session (mutable)
-    pub fn active_session_mut(&mut self) -> Option<&mut SessionState> {
+    pub fn active_session_mut(&mut self) -> Option<&mut ManagedSessionState> {
         self.active_session_id
             .as_ref()
             .and_then(|id| self.sessions.get_mut(id))
     }
 
     /// Get the active session (immutable)
-    pub fn active_session(&self) -> Option<&SessionState> {
+    pub fn active_session(&self) -> Option<&ManagedSessionState> {
         self.active_session_id
             .as_ref()
             .and_then(|id| self.sessions.get(id))
     }
 
     /// Get a session by ID
-    pub fn get_session(&self, session_id: &str) -> Option<&SessionState> {
+    pub fn get_session(&self, session_id: &str) -> Option<&ManagedSessionState> {
         self.sessions.get(session_id)
     }
 
     /// Get a session by ID (mutable)
-    pub fn get_session_mut(&mut self, session_id: &str) -> Option<&mut SessionState> {
+    pub fn get_session_mut(&mut self, session_id: &str) -> Option<&mut ManagedSessionState> {
         self.sessions.get_mut(session_id)
     }
 
@@ -630,7 +619,7 @@ impl Default for StateManager {
     }
 }
 
-impl SessionState {
+impl ManagedSessionState {
     /// Add a command block to the history
     pub fn add_command_block(&mut self, block: CommandBlock) {
         self.command_history.push(block);
@@ -745,11 +734,31 @@ impl SessionState {
             .iter()
             .filter(|b| b.is_failed())
             .count();
+        let running = self
+            .command_history
+            .iter()
+            .filter(|b| b.is_running())
+            .count();
+
+        // Calculate average execution time
+        let completed_commands: Vec<_> = self
+            .command_history
+            .iter()
+            .filter_map(|b| b.execution_time)
+            .collect();
+        let avg_execution_time = if completed_commands.is_empty() {
+            std::time::Duration::default()
+        } else {
+            let total: std::time::Duration = completed_commands.iter().sum();
+            total / completed_commands.len() as u32
+        };
 
         SessionStatistics {
             total_commands,
             successful_commands: successful,
             failed_commands: failed,
+            running_commands: running,
+            avg_execution_time,
             session_duration: Utc::now()
                 .signed_duration_since(self.start_time)
                 .to_std()
@@ -758,14 +767,7 @@ impl SessionState {
     }
 }
 
-/// Session statistics
-#[derive(Debug, Clone)]
-pub struct SessionStatistics {
-    pub total_commands: usize,
-    pub successful_commands: usize,
-    pub failed_commands: usize,
-    pub session_duration: std::time::Duration,
-}
+// Note: SessionStatistics is imported from crate::models
 
 #[cfg(test)]
 mod tests {

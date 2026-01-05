@@ -966,15 +966,14 @@ mod tests {
     fn test_render_output_line() {
         use crate::models::output_line::{AnsiCode, OutputLine};
         let _renderer = AnsiTextRenderer::new();
-        let _line = OutputLine {
-            text: "test".to_string(),
-            ansi_codes: vec![AnsiCode {
+        let _line = OutputLine::with_ansi_codes(
+            "test".to_string(),
+            vec![AnsiCode {
                 code: "\x1b[31m".to_string(),
                 position: 0,
             }],
-            line_number: 0,
-            timestamp: chrono::Utc::now(),
-        };
+            0,
+        );
         // Can't easily test rendering without egui context, but we can test it doesn't panic
         // by checking the method exists and signature is correct
         let _result: Result<()> = Ok(());
@@ -985,18 +984,8 @@ mod tests {
         use crate::models::output_line::OutputLine;
         let _renderer = AnsiTextRenderer::new();
         let _lines = [
-            OutputLine {
-                text: "line1".to_string(),
-                ansi_codes: vec![],
-                line_number: 0,
-                timestamp: chrono::Utc::now(),
-            },
-            OutputLine {
-                text: "line2".to_string(),
-                ansi_codes: vec![],
-                line_number: 1,
-                timestamp: chrono::Utc::now(),
-            },
+            OutputLine::with_line_number("line1", 0),
+            OutputLine::with_line_number("line2", 1),
         ];
         // Can't easily test rendering without egui context, but we can test it doesn't panic
         // by checking the method exists and signature is correct

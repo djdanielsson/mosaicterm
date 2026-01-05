@@ -228,28 +228,30 @@ For full-screen interactive programs, use a traditional terminal emulator. Suppo
 
 ## 🗺️ Roadmap
 
-### Phase 4: Application Launch & UI Polish (Complete)
-- [x] Basic application window and layout
-- [x] PTY process spawning and I/O
-- [x] Command execution and block rendering
-- [x] ANSI color support
-- [x] Block-based history UI refinement
-- [x] Theme system and customization
-- [x] Performance optimizations
-
 ### Phase 5: Advanced Features (Current)
 - [x] SSH session support with interactive prompts
 - [x] Cross-platform builds (Linux support complete)
 - [x] Configuration hot-reload
-- [ ] Command history persistence
-- [ ] Block re-run functionality
-- [ ] Inline search and filtering
-- [ ] Export blocks to markdown
+- [x] Command history persistence
+- [x] Block re-run functionality
+- [x] Lazy ANSI parsing (OnceCell-based deferred parsing)
+- [x] PTY Manager migration (removed deprecated V1)
+- [x] Batch PTY output processing
+- [x] Event-driven architecture for PTY output (PtyEventBus)
+
+
+### Phase 6: Code Quality & Architecture ✅
+- [x] Split app.rs into modular files
+- [x] Consistent documentation across all modules
+- [x] Comprehensive tests for app.rs and UI components
 
 ### Future Goals
+- [ ] Inline search and filtering
+- [ ] Virtual scrolling for large output
 - [ ] Plugin system architecture
 - [ ] Multi-tab interface
 - [ ] Customizable block actions
+- [ ] Workspace/project support
 
 ## 🧪 Development
 

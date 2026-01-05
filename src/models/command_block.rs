@@ -210,19 +210,8 @@ mod tests {
     fn test_output_management() {
         let mut block = CommandBlock::new("test".to_string(), PathBuf::from("/tmp"));
 
-        let line1 = OutputLine {
-            text: "line 1".to_string(),
-            ansi_codes: vec![],
-            line_number: 0,
-            timestamp: Utc::now(),
-        };
-
-        let line2 = OutputLine {
-            text: "line 2".to_string(),
-            ansi_codes: vec![],
-            line_number: 1,
-            timestamp: Utc::now(),
-        };
+        let line1 = OutputLine::with_line_number("line 1", 0);
+        let line2 = OutputLine::with_line_number("line 2", 1);
 
         block.add_output_line(line1);
         block.add_output_lines(vec![line2]);

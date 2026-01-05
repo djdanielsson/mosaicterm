@@ -17,4 +17,4 @@ pub use config::Config;
 pub use output_line::OutputLine;
 pub use pty_process::PtyProcess;
 pub use shell_type::ShellType;
-pub use terminal_session::TerminalSession;
+pub use terminal_session::{SessionState, SessionStatistics, TerminalSession};

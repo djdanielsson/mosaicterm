@@ -6,7 +6,6 @@
 use crate::error::Result;
 use crate::models::output_line::AnsiCode;
 use crate::models::OutputLine;
-use crate::pty::{PtyHandle, PtyManager};
 use crate::terminal::ansi_parser::{AnsiParser, ParsedText};
 use chrono::{DateTime, Utc};
 use std::collections::VecDeque;
@@ -167,12 +166,13 @@ impl OutputProcessor {
             // Parse ANSI codes if present
             let parsed = self.ansi_parser.parse(&self.current_line)?;
 
-            let output_line = OutputLine {
-                text: parsed.clean_text,
-                ansi_codes: parsed.ansi_codes,
-                line_number: self.line_counter,
-                timestamp,
-            };
+            let mut output_line = OutputLine::with_ansi_codes(
+                parsed.clean_text,
+                parsed.ansi_codes,
+                self.line_counter,
+            );
+            // Override timestamp with the one passed in
+            output_line.timestamp = timestamp;
 
             self.processed_lines.push_back(output_line);
             self.line_counter += 1;
@@ -275,12 +275,11 @@ impl OutputProcessor {
                     }
                 });
 
-            let output_line = OutputLine {
-                text: parsed.clean_text,
-                ansi_codes: parsed.ansi_codes,
-                line_number: self.line_counter,
-                timestamp: Utc::now(),
-            };
+            let output_line = OutputLine::with_ansi_codes(
+                parsed.clean_text,
+                parsed.ansi_codes,
+                self.line_counter,
+            );
 
             result.push(output_line);
             self.line_counter += 1;
@@ -314,67 +313,6 @@ impl OutputProcessor {
         self.current_ansi_codes.clear();
         self.line_counter = 0;
         self.in_ansi_sequence = false;
-    }
-
-    /// Read output from PTY and process it
-    pub async fn read_and_process_output(
-        &mut self,
-        pty_manager: &mut PtyManager,
-        handle: &PtyHandle,
-        timeout_ms: u64,
-    ) -> Result<Vec<OutputLine>> {
-        // Read raw output from PTY
-        let raw_output = pty_manager.read_output(handle, timeout_ms).await?;
-
-        if raw_output.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Create output chunk
-        let chunk = OutputChunk {
-            data: raw_output,
-            timestamp: Utc::now(),
-            stream_type: StreamType::Stdout,
-            is_complete: false, // We'll determine this based on content
-        };
-
-        // Process the chunk
-        self.process_chunk(chunk)
-    }
-
-    /// Continuously read and process output until timeout
-    pub async fn read_output_until_timeout(
-        &mut self,
-        pty_manager: &mut PtyManager,
-        handle: &PtyHandle,
-        max_timeout_ms: u64,
-    ) -> Result<Vec<OutputLine>> {
-        let mut all_lines = Vec::new();
-        let mut total_time = 0u64;
-        let chunk_timeout = 10u64; // Small timeout for each chunk
-
-        // Keep reading until we get no more data or hit max timeout
-        while total_time < max_timeout_ms {
-            match self
-                .read_and_process_output(pty_manager, handle, chunk_timeout)
-                .await
-            {
-                Ok(lines) if lines.is_empty() => {
-                    // No more data available
-                    break;
-                }
-                Ok(lines) => {
-                    all_lines.extend(lines);
-                }
-                Err(e) => {
-                    return Err(e);
-                }
-            }
-
-            total_time += chunk_timeout;
-        }
-
-        Ok(all_lines)
     }
 
     /// Get buffer statistics
@@ -595,24 +533,9 @@ mod tests {
         use crate::models::OutputLine;
 
         let lines = vec![
-            OutputLine {
-                text: "$ ls".to_string(),
-                ansi_codes: Vec::new(),
-                line_number: 0,
-                timestamp: Utc::now(),
-            },
-            OutputLine {
-                text: "file1.txt".to_string(),
-                ansi_codes: Vec::new(),
-                line_number: 1,
-                timestamp: Utc::now(),
-            },
-            OutputLine {
-                text: "file2.txt".to_string(),
-                ansi_codes: Vec::new(),
-                line_number: 2,
-                timestamp: Utc::now(),
-            },
+            OutputLine::with_line_number("$ ls", 0),
+            OutputLine::with_line_number("file1.txt", 1),
+            OutputLine::with_line_number("file2.txt", 2),
         ];
 
         let segments = segmentation::segment_output(&lines);

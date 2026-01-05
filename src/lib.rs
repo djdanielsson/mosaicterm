@@ -92,7 +92,6 @@ pub mod config;
 pub mod context;
 pub mod error;
 pub mod history;
-pub mod state;
 pub mod state_manager;
 
 // Platform abstraction
@@ -115,7 +114,7 @@ pub mod models;
 // Re-exports for core functionality
 pub use config::{Config, RuntimeConfig};
 pub use error::{Error, Result};
-pub use state::{AppState, ApplicationState};
+pub use state_manager::{ApplicationState, StateManager};
 
 // Convenience re-exports for common types
 pub use config::loader::ConfigLoader;
@@ -241,7 +240,7 @@ fn initialize_core_components(config: &Config) -> Result<()> {
     info!("🏗️  Initializing core components...");
 
     // Initialize PTY manager V2 (with per-terminal locking)
-    let pty_mgr = std::sync::Arc::new(pty::PtyManagerV2::new());
+    let pty_mgr = std::sync::Arc::new(pty::PtyManager::new());
     let pty_manager = {
         info!("✅ PTY manager initialized");
         pty_mgr

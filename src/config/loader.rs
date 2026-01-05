@@ -276,10 +276,9 @@ impl ConfigLoader {
 
     /// Merge configuration with defaults
     fn merge_with_defaults(&self, config: Config) -> Config {
-        // For now, just return the loaded config
-        // In a full implementation, this would intelligently merge
-        // user config with defaults
-        config
+        // Use the utils::merge_configs function to properly merge
+        // user config with defaults (base=defaults, overlay=user config)
+        super::utils::merge_configs(Config::default(), config)
     }
 
     /// Validate configuration

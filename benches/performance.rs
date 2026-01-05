@@ -196,12 +196,10 @@ fn bench_block_with_output(c: &mut Criterion) {
             || CommandBlock::new("ls -la".to_string(), PathBuf::from("/tmp")),
             |mut block| {
                 for i in 0..10 {
-                    block.add_output_line(OutputLine {
-                        text: format!("output line {}", i),
-                        ansi_codes: vec![],
-                        line_number: i,
-                        timestamp: chrono::Utc::now(),
-                    });
+                    block.add_output_line(OutputLine::with_line_number(
+                        format!("output line {}", i),
+                        i,
+                    ));
                 }
                 black_box(block);
             },
@@ -216,12 +214,10 @@ fn bench_block_with_large_output(c: &mut Criterion) {
             || CommandBlock::new("cat large_file.txt".to_string(), PathBuf::from("/tmp")),
             |mut block| {
                 for i in 0..1000 {
-                    block.add_output_line(OutputLine {
-                        text: format!("output line {} with some content", i),
-                        ansi_codes: vec![],
-                        line_number: i,
-                        timestamp: chrono::Utc::now(),
-                    });
+                    block.add_output_line(OutputLine::with_line_number(
+                        format!("output line {} with some content", i),
+                        i,
+                    ));
                 }
                 black_box(block);
             },
@@ -236,12 +232,7 @@ fn bench_block_get_plain_output(c: &mut Criterion) {
             || {
                 let mut block = CommandBlock::new("test".to_string(), PathBuf::from("/tmp"));
                 for i in 0..100 {
-                    block.add_output_line(OutputLine {
-                        text: format!("Line {}", i),
-                        ansi_codes: vec![],
-                        line_number: i,
-                        timestamp: chrono::Utc::now(),
-                    });
+                    block.add_output_line(OutputLine::with_line_number(format!("Line {}", i), i));
                 }
                 block
             },

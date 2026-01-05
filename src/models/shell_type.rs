@@ -58,7 +58,7 @@ impl ShellType {
             "csh" => ShellType::Csh,
             "tcsh" => ShellType::Tcsh,
             "dash" => ShellType::Dash,
-            "powershell" => ShellType::PowerShell,
+            "powershell" | "pwsh" => ShellType::PowerShell,
             "cmd" => ShellType::Cmd,
             _ => ShellType::Other,
         }
@@ -121,6 +121,8 @@ mod tests {
         assert_eq!(ShellType::from_string("tcsh"), ShellType::Tcsh);
         assert_eq!(ShellType::from_string("dash"), ShellType::Dash);
         assert_eq!(ShellType::from_string("powershell"), ShellType::PowerShell);
+        assert_eq!(ShellType::from_string("pwsh"), ShellType::PowerShell);
+        assert_eq!(ShellType::from_string("PWSH"), ShellType::PowerShell);
         assert_eq!(ShellType::from_string("cmd"), ShellType::Cmd);
         assert_eq!(ShellType::from_string("unknown"), ShellType::Other);
         assert_eq!(ShellType::from_string(""), ShellType::Other);

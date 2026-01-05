@@ -68,11 +68,8 @@ impl PtyStreams {
     /// Used when switching contexts (e.g., ending SSH session) to avoid stale output
     pub fn drain_output(&mut self) -> usize {
         let mut count = 0;
-        loop {
-            match self.output_rx.try_recv() {
-                Ok(_) => count += 1,
-                Err(_) => break,
-            }
+        while self.output_rx.try_recv().is_ok() {
+            count += 1;
         }
         count
     }

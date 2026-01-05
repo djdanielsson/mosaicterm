@@ -135,12 +135,7 @@ mod tests {
     #[test]
     fn test_mock_terminal_output() {
         let mut terminal = MockTerminal::new();
-        let line = OutputLine {
-            text: "test output".to_string(),
-            ansi_codes: vec![],
-            line_number: 1,
-            timestamp: chrono::Utc::now(),
-        };
+        let line = OutputLine::with_line_number("test output", 1);
 
         terminal.add_output_line(line);
         assert_eq!(terminal.output_lines.len(), 1);

@@ -96,18 +96,16 @@ async fn test_invalid_command() {
 
 #[test]
 fn test_direct_execution_detection() {
-    // Test that appropriate commands are detected for direct execution
-    assert!(DirectExecutor::should_use_direct_execution("ls -la"));
-    assert!(DirectExecutor::should_use_direct_execution("pwd"));
-    assert!(DirectExecutor::should_use_direct_execution("echo hello"));
-    assert!(DirectExecutor::should_use_direct_execution("whoami"));
+    // Test that appropriate commands are detected for direct execution using static method
+    assert!(DirectExecutor::check_direct_execution("ls -la"));
+    assert!(DirectExecutor::check_direct_execution("pwd"));
+    assert!(DirectExecutor::check_direct_execution("echo hello"));
+    assert!(DirectExecutor::check_direct_execution("whoami"));
 
     // These should not use direct execution
-    assert!(!DirectExecutor::should_use_direct_execution("vim file.txt"));
-    assert!(!DirectExecutor::should_use_direct_execution(
-        "ssh user@host"
-    ));
-    assert!(!DirectExecutor::should_use_direct_execution("top"));
+    assert!(!DirectExecutor::check_direct_execution("vim file.txt"));
+    assert!(!DirectExecutor::check_direct_execution("ssh user@host"));
+    assert!(!DirectExecutor::check_direct_execution("top"));
 }
 
 #[test]

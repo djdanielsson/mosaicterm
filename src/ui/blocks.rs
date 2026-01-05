@@ -49,9 +49,6 @@ pub struct RenderedBlock {
     status_indicator: StatusIcon,
     /// Timestamp display
     timestamp_display: String,
-    /// Total block dimensions (currently unused but kept for future layout calculations)
-    #[allow(dead_code)]
-    dimensions: egui::Vec2,
     /// Whether block is expanded
     expanded: bool,
 }
@@ -60,8 +57,6 @@ pub struct RenderedBlock {
 pub struct RenderArea {
     /// Text content
     text: String,
-    /// Dimensions of the area
-    dimensions: egui::Vec2,
 }
 
 #[derive(Debug, Clone)]
@@ -349,7 +344,6 @@ impl CommandBlocks {
         // Create command area
         let command_area = RenderArea {
             text: command_parsed.clean_text,
-            dimensions: egui::Vec2::new(400.0, 20.0), // Placeholder dimensions
         };
 
         // Create output area (simplified)
@@ -370,7 +364,6 @@ impl CommandBlocks {
         let output_parsed = self.ansi_parser.parse(&output_text)?;
         let output_area = RenderArea {
             text: output_parsed.clean_text,
-            dimensions: egui::Vec2::new(400.0, 100.0), // Placeholder dimensions
         };
 
         // Determine status
@@ -389,19 +382,12 @@ impl CommandBlocks {
             String::new()
         };
 
-        // Calculate total dimensions
-        let dimensions = egui::Vec2::new(
-            command_area.dimensions.x.max(output_area.dimensions.x),
-            command_area.dimensions.y + output_area.dimensions.y + self.config.spacing,
-        );
-
         Ok(RenderedBlock {
             id: block.id.clone(),
             command_area,
             output_area,
             status_indicator,
             timestamp_display,
-            dimensions,
             expanded: true, // Default to expanded
         })
     }
@@ -743,7 +729,6 @@ mod tests {
     fn test_render_area() {
         let area = RenderArea {
             text: "test".to_string(),
-            dimensions: egui::Vec2::new(100.0, 20.0),
         };
 
         assert_eq!(area.text, "test");
@@ -755,15 +740,12 @@ mod tests {
             id: "test".to_string(),
             command_area: RenderArea {
                 text: "echo hello".to_string(),
-                dimensions: egui::Vec2::new(100.0, 20.0),
             },
             output_area: RenderArea {
                 text: "hello".to_string(),
-                dimensions: egui::Vec2::new(100.0, 20.0),
             },
             status_indicator: StatusIcon::Success,
             timestamp_display: "12:34:56".to_string(),
-            dimensions: egui::Vec2::new(100.0, 40.0),
             expanded: true,
         };
 
@@ -782,15 +764,12 @@ mod tests {
                 id: "test".to_string(),
                 command_area: RenderArea {
                     text: "test".to_string(),
-                    dimensions: egui::Vec2::new(50.0, 20.0),
                 },
                 output_area: RenderArea {
                     text: "output".to_string(),
-                    dimensions: egui::Vec2::new(50.0, 20.0),
                 },
                 status_indicator: StatusIcon::Success,
                 timestamp_display: String::new(),
-                dimensions: egui::Vec2::new(50.0, 40.0),
                 expanded: true,
             },
         );

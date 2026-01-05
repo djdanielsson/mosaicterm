@@ -55,27 +55,38 @@ impl PromptDetector {
     }
 
     /// Initialize default prompt patterns for common shells
+    ///
+    /// Uses patterns from [`ShellType::get_default_prompt_patterns`] as the base,
+    /// plus additional shell-specific patterns for better detection coverage.
+    ///
+    /// Note: Pattern order matters! More specific patterns should come before
+    /// generic ones to avoid false matches.
     fn initialize_patterns(&mut self) {
-        // Bash patterns
-        self.add_pattern(ShellType::Bash, r"^\$ $");
+        // Add canonical patterns from ShellType for Bash and Zsh
+        for shell_type in [ShellType::Bash, ShellType::Zsh] {
+            for pattern in shell_type.get_default_prompt_patterns() {
+                self.add_pattern(shell_type, &pattern);
+            }
+        }
+
+        // Additional Bash patterns not in ShellType
         self.add_pattern(ShellType::Bash, r"^bash-\d+\.\d+\$ $");
-        self.add_pattern(ShellType::Bash, r"^\[.*\]\$ $");
 
-        // Zsh patterns
-        self.add_pattern(ShellType::Zsh, r"^% $");
+        // Additional Zsh patterns not in ShellType
         self.add_pattern(ShellType::Zsh, r"^zsh-\d+\.\d+% $");
-        self.add_pattern(ShellType::Zsh, r"^\[.*\]% $");
 
-        // Fish patterns
-        self.add_pattern(ShellType::Fish, r"^> $");
-        self.add_pattern(ShellType::Fish, r"^\[.*\]> $");
-
-        // PowerShell patterns
+        // PowerShell patterns - must come before Fish's generic `> $` patterns
         self.add_pattern(ShellType::PowerShell, r"^PS .*> $");
         self.add_pattern(ShellType::PowerShell, r"^PS .*>$");
 
-        // Cmd patterns
+        // Cmd patterns - must come before Fish's generic `> $` patterns
         self.add_pattern(ShellType::Cmd, r"^[A-Z]:\\.*> $");
+
+        // Fish patterns - specific patterns first, then generic
+        self.add_pattern(ShellType::Fish, r"^> $"); // Simple arrow prompt
+        self.add_pattern(ShellType::Fish, r"^\[.*\]> $"); // Bracketed prompt
+                                                          // Note: We intentionally don't use ShellType::Fish.get_default_prompt_patterns()
+                                                          // because it includes `^.*> $` which is too generic and matches other shells
     }
 
     /// Add a prompt pattern
@@ -156,15 +167,11 @@ impl PromptDetector {
     }
 
     /// Get shell type from string
+    ///
+    /// Delegates to [`ShellType::from_string`] for consistent shell type parsing.
+    #[inline]
     pub fn shell_type_from_string(shell_name: &str) -> ShellType {
-        match shell_name.to_lowercase().as_str() {
-            "bash" => ShellType::Bash,
-            "zsh" => ShellType::Zsh,
-            "fish" => ShellType::Fish,
-            "powershell" | "pwsh" => ShellType::PowerShell,
-            "cmd" => ShellType::Cmd,
-            _ => ShellType::Other,
-        }
+        ShellType::from_string(shell_name)
     }
 }
 
@@ -362,15 +369,9 @@ pub mod utils {
 mod tests {
     use super::*;
     use crate::models::OutputLine;
-    use chrono::Utc;
 
     fn create_test_line(text: &str) -> OutputLine {
-        OutputLine {
-            text: text.to_string(),
-            ansi_codes: Vec::new(),
-            line_number: 0,
-            timestamp: Utc::now(),
-        }
+        OutputLine::new(text)
     }
 
     #[test]

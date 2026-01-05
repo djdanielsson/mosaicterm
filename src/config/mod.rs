@@ -655,12 +655,16 @@ pub mod utils {
 
     fn merge_tui_apps_configs(base: TuiAppConfig, overlay: TuiAppConfig) -> TuiAppConfig {
         TuiAppConfig {
-            // If overlay has commands, use overlay; otherwise use base
-            // This allows users to override the default list
-            fullscreen_commands: if overlay.fullscreen_commands.is_empty() {
-                base.fullscreen_commands
-            } else {
-                overlay.fullscreen_commands
+            // Merge overlay commands with base defaults
+            // This allows users to ADD to the default list, not replace it
+            fullscreen_commands: {
+                let mut merged = base.fullscreen_commands;
+                for cmd in overlay.fullscreen_commands {
+                    if !merged.contains(&cmd) {
+                        merged.push(cmd);
+                    }
+                }
+                merged
             },
         }
     }
@@ -755,14 +759,16 @@ mod tests {
     #[test]
     fn test_merge_tui_apps_configs() {
         let base = Config::default();
+        let base_len = base.tui_apps.fullscreen_commands.len();
         let mut overlay = Config::default();
-        // Set custom TUI apps in overlay
+        // Set custom TUI apps in overlay - these should be ADDED to defaults
         overlay.tui_apps.fullscreen_commands =
             vec!["custom_app".to_string(), "another_app".to_string()];
 
         let merged = utils::merge_configs(base, overlay);
-        // Should use overlay's TUI apps since it's not empty
-        assert_eq!(merged.tui_apps.fullscreen_commands.len(), 2);
+        // Should have base commands PLUS overlay's custom commands
+        assert_eq!(merged.tui_apps.fullscreen_commands.len(), base_len + 2);
+        // Should contain the new custom apps
         assert!(merged
             .tui_apps
             .fullscreen_commands
@@ -771,6 +777,15 @@ mod tests {
             .tui_apps
             .fullscreen_commands
             .contains(&"another_app".to_string()));
+        // Should ALSO still contain the defaults
+        assert!(merged
+            .tui_apps
+            .fullscreen_commands
+            .contains(&"vim".to_string()));
+        assert!(merged
+            .tui_apps
+            .fullscreen_commands
+            .contains(&"top".to_string()));
     }
 
     #[test]
@@ -787,5 +802,28 @@ mod tests {
             .tui_apps
             .fullscreen_commands
             .contains(&"vim".to_string()));
+    }
+
+    #[test]
+    fn test_merge_tui_apps_configs_no_duplicates() {
+        let base = Config::default();
+        let mut overlay = Config::default();
+        // Try to add "vim" which is already in defaults - should not create duplicate
+        overlay.tui_apps.fullscreen_commands = vec!["vim".to_string(), "custom_app".to_string()];
+
+        let merged = utils::merge_configs(base, overlay);
+        // Count how many times "vim" appears
+        let vim_count = merged
+            .tui_apps
+            .fullscreen_commands
+            .iter()
+            .filter(|c| *c == "vim")
+            .count();
+        assert_eq!(vim_count, 1, "vim should only appear once");
+        // Should have custom_app added
+        assert!(merged
+            .tui_apps
+            .fullscreen_commands
+            .contains(&"custom_app".to_string()));
     }
 }
