@@ -33,7 +33,7 @@
 //! - [`ansi`] - ANSI color and style utilities
 //! - [`commands`] - Command parsing and validation
 //! - [`execution`] - Direct command execution (for testing)
-//! - [`state`] - Application state management
+//! - [`state_manager`] - Application state management
 //!
 //! ## Quick Start
 //!

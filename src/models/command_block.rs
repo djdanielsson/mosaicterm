@@ -4,7 +4,7 @@
 //! This is a core domain entity that encapsulates command execution
 //! results with ANSI formatting support.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -42,8 +42,8 @@ pub struct CommandBlock {
     /// Lines of output with ANSI formatting
     pub output: Vec<OutputLine>,
 
-    /// When the command was executed
-    pub timestamp: DateTime<Utc>,
+    /// When the command was executed (in local time)
+    pub timestamp: DateTime<Local>,
 
     /// Success, failure, or running state
     pub status: ExecutionStatus,
@@ -65,7 +65,7 @@ impl CommandBlock {
             id: Uuid::new_v4().to_string(),
             command,
             output: Vec::new(),
-            timestamp: Utc::now(),
+            timestamp: Local::now(),
             status: ExecutionStatus::Pending,
             working_directory,
             execution_time: None,
