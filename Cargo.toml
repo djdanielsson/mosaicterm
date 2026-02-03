@@ -48,6 +48,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 arboard = "3.4"
 hostname = "0.4"
 notify = "8.2"
+zeroize = "1.8"
 
 # Windows-specific dependencies
 [target.'cfg(windows)'.dependencies]
@@ -99,6 +100,11 @@ path = "tests/contract/test_pty_lifecycle.rs"
 [[test]]
 name = "test_ui_rendering"
 path = "tests/contract/test_ui_rendering.rs"
+
+# Security tests
+[[test]]
+name = "test_password_isolation"
+path = "tests/security/test_password_isolation.rs"
 
 # Unit tests
 [[test]]

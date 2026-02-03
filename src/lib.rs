@@ -92,6 +92,7 @@ pub mod config;
 pub mod context;
 pub mod error;
 pub mod history;
+pub mod security_audit;
 pub mod state_manager;
 
 // Platform abstraction

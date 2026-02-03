@@ -522,6 +522,8 @@ impl MosaicTermApp {
         // Check if this is an SSH command - track it for session management
         if self.is_ssh_command(&command) {
             info!("SSH command detected, will track session: {}", command);
+            let host = self.extract_ssh_host(&command);
+            mosaicterm::security_audit::log_ssh_connection(&host);
             self.ssh_session_command = Some(command.clone());
             // Session will be activated after successful authentication
         }
@@ -1458,6 +1460,7 @@ impl eframe::App for MosaicTermApp {
                                     // Update status to show we're connected
                                     if let Some(cmd) = &self.ssh_session_command {
                                         let host = self.extract_ssh_host(cmd);
+                                        mosaicterm::security_audit::log_ssh_session_start(&host);
                                         self.set_status_message(Some(format!(
                                             "🔗 Connected to {}",
                                             host

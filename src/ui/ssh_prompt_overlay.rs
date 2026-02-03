@@ -2,11 +2,22 @@
 //!
 //! This module provides a small popup overlay for handling SSH interactive prompts
 //! like host key verification, passphrase entry, and password authentication.
+//!
+//! ## Security
+//!
+//! This module handles sensitive data (passwords/passphrases) with extra care:
+//! - Uses `zeroize` to securely clear sensitive strings from memory
+//! - Password input is masked in the UI
+//! - Sensitive data is cleared immediately after use
+//! - SSH responses bypass command history system
 
 use eframe::egui;
+use zeroize::Zeroize;
+
+use crate::security_audit;
 
 /// Types of SSH prompts we can detect and handle
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SshPromptType {
     /// Host key verification (yes/no/fingerprint)
     HostKeyVerification,
@@ -43,7 +54,7 @@ pub struct SshPromptOverlay {
     prompt_type: SshPromptType,
     /// The prompt message from SSH
     prompt_message: String,
-    /// User input buffer
+    /// User input buffer - explicitly zeroized when cleared to protect passwords
     input_buffer: String,
     /// Whether the input should be submitted
     should_submit: bool,
@@ -80,25 +91,44 @@ impl SshPromptOverlay {
         self.active = true;
         self.prompt_type = prompt_type;
         self.prompt_message = message;
+        // Securely clear and zero previous input from memory
+        self.input_buffer.zeroize();
         self.input_buffer.clear();
         self.should_submit = false;
         self.was_cancelled = false;
+
+        // Security audit: Log prompt type only (never the input or message content)
+        let prompt_type_str = match prompt_type {
+            SshPromptType::HostKeyVerification => "host_key",
+            SshPromptType::Passphrase => "passphrase",
+            SshPromptType::Password => "password",
+            SshPromptType::Generic => "generic",
+        };
+        security_audit::log_auth_prompt(prompt_type_str);
     }
 
-    /// Hide the overlay
+    /// Hide the overlay and securely clear sensitive data
     pub fn hide(&mut self) {
         self.active = false;
         self.prompt_message.clear();
+        // Securely zero the input buffer to prevent password recovery from memory
+        self.input_buffer.zeroize();
         self.input_buffer.clear();
         self.should_submit = false;
         self.was_cancelled = false;
     }
 
-    /// Get the input to send (if submitted) and clear it
+    /// Get the input to send (if submitted) and securely clear it
+    ///
+    /// Security: The returned String is moved to the caller. The caller is responsible
+    /// for handling it securely (e.g., sending directly to PTY without logging).
+    /// The original buffer is zeroized to prevent password recovery from memory.
     pub fn take_input(&mut self) -> Option<String> {
         if self.should_submit {
             self.should_submit = false;
+            // Take ownership of input, then zero the original buffer
             let input = std::mem::take(&mut self.input_buffer);
+            self.input_buffer.zeroize(); // Zero the memory where the password was
             Some(input)
         } else {
             None

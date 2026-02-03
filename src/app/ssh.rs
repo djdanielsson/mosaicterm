@@ -7,6 +7,7 @@ use futures::executor;
 use tracing::info;
 
 use super::MosaicTermApp;
+use mosaicterm::security_audit;
 
 impl MosaicTermApp {
     /// Check if a command is an SSH command
@@ -31,6 +32,13 @@ impl MosaicTermApp {
     pub(super) fn end_ssh_session(&mut self) {
         if self.ssh_session_active {
             info!("Ending SSH session - performing full cleanup");
+
+            // Log session end (non-sensitive)
+            security_audit::log_security_event(
+                security_audit::SecurityEvent::SshSessionEnd,
+                Some("reason=user_exit"),
+            );
+
             self.ssh_session_active = false;
             self.ssh_session_command = None;
             self.ssh_remote_prompt = None;

@@ -3,6 +3,20 @@
 //! Represents a single executed command and its complete output.
 //! This is a core domain entity that encapsulates command execution
 //! results with ANSI formatting support.
+//!
+//! ## Security Note
+//!
+//! `CommandBlock` implements `Serialize` for internal use (testing, debugging),
+//! but **should never be persisted to disk** in production. Command blocks may
+//! contain sensitive output from commands. If persistence is needed in the future:
+//!
+//! - Sanitize sensitive fields before serialization
+//! - Never serialize blocks from SSH sessions
+//! - Implement opt-in persistence with explicit user consent
+//! - Use encrypted storage for any persisted blocks
+//!
+//! Currently, only command strings (not full blocks) are persisted to the
+//! history file (`~/.mosaicterm_history`).
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};

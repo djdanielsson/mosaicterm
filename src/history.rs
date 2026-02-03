@@ -61,8 +61,9 @@ impl HistoryManager {
     /// Load history from file
     pub fn load(&mut self) -> Result<()> {
         if !self.history_file.exists() {
-            // Create empty history file
+            // Create empty history file with secure permissions
             File::create(&self.history_file)?;
+            Self::set_secure_permissions(&self.history_file)?;
             return Ok(());
         }
 
@@ -200,6 +201,25 @@ impl HistoryManager {
     /// Get history file path
     pub fn history_file(&self) -> &Path {
         &self.history_file
+    }
+
+    /// Set secure file permissions (Unix: 0600, owner read/write only)
+    /// On Windows, this is a no-op as Windows uses a different permission system
+    fn set_secure_permissions(path: &Path) -> Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(path)?.permissions();
+            perms.set_mode(0o600); // Owner read/write only
+            std::fs::set_permissions(path, perms)?;
+        }
+        #[cfg(not(unix))]
+        {
+            // Windows: File permissions are handled by NTFS ACLs
+            // The file is created in the user's home directory which is already protected
+            let _ = path; // Suppress unused variable warning
+        }
+        Ok(())
     }
 }
 
