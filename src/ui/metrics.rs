@@ -73,12 +73,7 @@ impl MetricsPanel {
         self.render_window(ui.ctx(), stats, pty_count);
     }
 
-    fn render_window(
-        &mut self,
-        ctx: &egui::Context,
-        stats: &AppStatistics,
-        pty_count: usize,
-    ) {
+    fn render_window(&mut self, ctx: &egui::Context, stats: &AppStatistics, pty_count: usize) {
         let mut open = self.visible;
         Window::new("⚡ Performance Metrics")
             .open(&mut open)

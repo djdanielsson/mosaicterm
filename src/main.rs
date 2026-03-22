@@ -461,11 +461,7 @@ fn load_or_create_window_icon() -> eframe::egui::IconData {
 }
 
 fn find_icon_path() -> Option<std::path::PathBuf> {
-    let static_candidates: &[&str] = &[
-        "icon.png",
-        "bin/mosaicterm/icon.png",
-        "../icon.png",
-    ];
+    let static_candidates: &[&str] = &["icon.png", "bin/mosaicterm/icon.png", "../icon.png"];
 
     for c in static_candidates {
         let p = Path::new(c);

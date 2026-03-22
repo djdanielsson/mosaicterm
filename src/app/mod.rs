@@ -91,8 +91,7 @@ const MAX_LINE_LENGTH: usize = 10_000;
 
 // Atomic flags for native macOS menu bar actions
 #[cfg(target_os = "macos")]
-static NATIVE_MENU_ABOUT: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static NATIVE_MENU_ABOUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[cfg(target_os = "macos")]
 static NATIVE_MENU_DEV: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[cfg(target_os = "macos")]
@@ -261,7 +260,9 @@ fn find_system_font(family_name: &str) -> Option<Vec<u8>> {
             }
             dirs.push(std::path::PathBuf::from("/Library/Fonts"));
             dirs.push(std::path::PathBuf::from("/System/Library/Fonts"));
-            dirs.push(std::path::PathBuf::from("/System/Library/Fonts/Supplemental"));
+            dirs.push(std::path::PathBuf::from(
+                "/System/Library/Fonts/Supplemental",
+            ));
         }
 
         #[cfg(target_os = "linux")]
@@ -332,7 +333,8 @@ fn find_system_font(family_name: &str) -> Option<Vec<u8>> {
                     || stem.ends_with("nerdfontregular");
                 let is_bold = stem.contains("bold");
                 let is_italic = stem.contains("italic") || stem.contains("oblique");
-                let is_thin = stem.contains("thin") || stem.contains("extralight") || stem.contains("light");
+                let is_thin =
+                    stem.contains("thin") || stem.contains("extralight") || stem.contains("light");
 
                 if is_regular && !is_bold && !is_italic && !is_thin {
                     best_match = Some(path);
@@ -974,10 +976,7 @@ impl MosaicTermApp {
                 // Disable prompt themes in zsh
                 environment.insert("ZSH_THEME".to_string(), "".to_string());
                 // Prevent p10k instant prompt
-                environment.insert(
-                    "POWERLEVEL9K_INSTANT_PROMPT".to_string(),
-                    "off".to_string(),
-                );
+                environment.insert("POWERLEVEL9K_INSTANT_PROMPT".to_string(), "off".to_string());
             }
             ModelShellType::Fish => {
                 environment.insert("fish_prompt".to_string(), "".to_string());
@@ -1904,11 +1903,17 @@ impl MosaicTermApp {
                     .unwrap_or_else(|| "(no terminal)".to_string());
 
                 for (k, v) in [
-                    ("Terminal ready", self.state_manager.is_terminal_ready().to_string()),
+                    (
+                        "Terminal ready",
+                        self.state_manager.is_terminal_ready().to_string(),
+                    ),
                     ("Working dir", working_dir),
                     ("Command count", cmd_count.to_string()),
                     ("TUI overlay", self.tui_overlay.is_active().to_string()),
-                    ("SSH session", self.ssh_prompt_overlay.is_active().to_string()),
+                    (
+                        "SSH session",
+                        self.ssh_prompt_overlay.is_active().to_string(),
+                    ),
                     (
                         "Prompt style",
                         format!("{:?}", self.runtime_config.config().prompt.style),
@@ -2296,12 +2301,10 @@ impl eframe::App for MosaicTermApp {
         // Non-macOS: provide keyboard shortcut fallbacks
         #[cfg(not(target_os = "macos"))]
         {
-            if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::A))
-            {
+            if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::A)) {
                 self.show_about_dialog = !self.show_about_dialog;
             }
-            if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::D))
-            {
+            if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::D)) {
                 self.show_dev_panel = !self.show_dev_panel;
             }
         }
@@ -2595,8 +2598,11 @@ impl MosaicTermApp {
 
         if let Some(font_data) = find_system_font(&font_family) {
             let size = font_data.len();
-            self.startup_messages
-                .push(format!("Loaded font '{}' ({:.1} KB)", font_family, size as f64 / 1024.0));
+            self.startup_messages.push(format!(
+                "Loaded font '{}' ({:.1} KB)",
+                font_family,
+                size as f64 / 1024.0
+            ));
 
             let mut fonts = egui::FontDefinitions::default();
             fonts.font_data.insert(
@@ -2678,9 +2684,10 @@ impl MosaicTermApp {
         style
             .text_styles
             .insert(egui::TextStyle::Body, egui::FontId::monospace(font_size));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Monospace, egui::FontId::monospace(font_size));
+        style.text_styles.insert(
+            egui::TextStyle::Monospace,
+            egui::FontId::monospace(font_size),
+        );
 
         ctx.set_style(style);
     }
@@ -2696,11 +2703,7 @@ impl MosaicTermApp {
             ui.horizontal(|ui| {
                 // Render prompt segments with Powerline arrow separators
                 ui.spacing_mut().item_spacing.x = 0.0;
-                let font_size = self
-                    .runtime_config
-                    .config()
-                    .ui
-                    .font_size as f32;
+                let font_size = self.runtime_config.config().ui.font_size as f32;
                 let segments = self.prompt_segments.clone();
                 let bg_color = self.ui_colors.background;
                 for (i, seg) in segments.iter().enumerate() {
@@ -2716,10 +2719,8 @@ impl MosaicTermApp {
 
                         // Draw Powerline arrow separator between segments
                         if let Some(sep) = seg.separator {
-                            let next_bg = segments
-                                .get(i + 1)
-                                .and_then(|s| s.bg)
-                                .unwrap_or(bg_color);
+                            let next_bg =
+                                segments.get(i + 1).and_then(|s| s.bg).unwrap_or(bg_color);
                             let sep_text = egui::RichText::new(sep.to_string())
                                 .font(egui::FontId::monospace(font_size))
                                 .color(seg_bg)
@@ -2730,15 +2731,11 @@ impl MosaicTermApp {
                         // Non-background segment: paint text directly via painter
                         // to guarantee color isn't overridden by widget styling.
                         let font = egui::FontId::monospace(font_size);
-                        let galley = ui.painter().layout_no_wrap(
-                            seg.text.clone(),
-                            font.clone(),
-                            seg.fg,
-                        );
-                        let (rect, _response) = ui.allocate_exact_size(
-                            galley.size(),
-                            egui::Sense::hover(),
-                        );
+                        let galley =
+                            ui.painter()
+                                .layout_no_wrap(seg.text.clone(), font.clone(), seg.fg);
+                        let (rect, _response) =
+                            ui.allocate_exact_size(galley.size(), egui::Sense::hover());
                         ui.painter().galley(rect.min, galley);
                     }
                 }
@@ -2754,29 +2751,31 @@ impl MosaicTermApp {
                 let right_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowRight));
 
                 // Render the TextEdit with no visible frame/border
-                let input_response = ui.scope(|ui| {
-                    let bg = self.ui_colors.background;
-                    let vis = ui.visuals_mut();
-                    vis.extreme_bg_color = bg;
-                    vis.widgets.inactive.bg_fill = bg;
-                    vis.widgets.active.bg_fill = bg;
-                    vis.widgets.hovered.bg_fill = bg;
-                    vis.widgets.noninteractive.bg_fill = bg;
-                    vis.widgets.inactive.bg_stroke = egui::Stroke::NONE;
-                    vis.widgets.active.bg_stroke = egui::Stroke::NONE;
-                    vis.widgets.hovered.bg_stroke = egui::Stroke::NONE;
-                    vis.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
-                    vis.selection.stroke = egui::Stroke::NONE;
+                let input_response = ui
+                    .scope(|ui| {
+                        let bg = self.ui_colors.background;
+                        let vis = ui.visuals_mut();
+                        vis.extreme_bg_color = bg;
+                        vis.widgets.inactive.bg_fill = bg;
+                        vis.widgets.active.bg_fill = bg;
+                        vis.widgets.hovered.bg_fill = bg;
+                        vis.widgets.noninteractive.bg_fill = bg;
+                        vis.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                        vis.widgets.active.bg_stroke = egui::Stroke::NONE;
+                        vis.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                        vis.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
+                        vis.selection.stroke = egui::Stroke::NONE;
 
-                    ui.add(
-                        egui::TextEdit::singleline(&mut current_input)
-                            .font(egui::FontId::monospace(font_size))
-                            .desired_width(f32::INFINITY)
-                            .frame(false)
-                            .margin(egui::Vec2::new(2.0, 3.0))
-                            .lock_focus(true),
-                    )
-                }).inner;
+                        ui.add(
+                            egui::TextEdit::singleline(&mut current_input)
+                                .font(egui::FontId::monospace(font_size))
+                                .desired_width(f32::INFINITY)
+                                .frame(false)
+                                .margin(egui::Vec2::new(2.0, 3.0))
+                                .lock_focus(true),
+                        )
+                    })
+                    .inner;
 
                 // Store input rect for positioning completion popup
                 let input_rect = input_response.rect;
@@ -3517,7 +3516,10 @@ impl MosaicTermApp {
             ui.painter().rect_stroke(
                 rect,
                 egui::Rounding::same(4.0),
-                egui::Stroke::new(0.5, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 20)),
+                egui::Stroke::new(
+                    0.5,
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 20),
+                ),
             );
 
             // Accent stripe on left edge
@@ -3738,9 +3740,8 @@ impl MosaicTermApp {
                             self.tui_overlay.add_raw_output(&data);
 
                             // Track alternate screen enter (TUI app starting)
-                            let has_alt_screen_enter =
-                                data.windows(8).any(|w| w == b"\x1b[?1049h")
-                                    || data.windows(6).any(|w| w == b"\x1b[?47h");
+                            let has_alt_screen_enter = data.windows(8).any(|w| w == b"\x1b[?1049h")
+                                || data.windows(6).any(|w| w == b"\x1b[?47h");
                             if has_alt_screen_enter {
                                 self.tui_overlay.note_alt_screen_enter();
                             }
