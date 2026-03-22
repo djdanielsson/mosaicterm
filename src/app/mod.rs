@@ -1098,26 +1098,6 @@ impl eframe::App for MosaicTermApp {
             self.metrics_panel.toggle();
         }
 
-        // Only print debug once per second to avoid spam
-        use std::sync::Mutex;
-        static LAST_DEBUG_TIME: Mutex<Option<std::time::Instant>> = Mutex::new(None);
-        {
-            let now = std::time::Instant::now();
-            if let Ok(mut last_time) = LAST_DEBUG_TIME.lock() {
-                let should_print = match *last_time {
-                    None => true,
-                    Some(prev) => now.duration_since(prev).as_secs() >= 1,
-                };
-                if should_print {
-                    println!("🔄 MosaicTerm UI is rendering...");
-                    *last_time = Some(now);
-                }
-            } else {
-                // Mutex is poisoned - log but don't panic
-                debug!("Debug time mutex is poisoned, skipping debug print");
-            }
-        }
-
         // Auto-refresh completion cache if needed (checks every frame but only refreshes after 5 min timeout)
         if let Err(e) = self.completion_provider.refresh_command_cache_if_needed() {
             debug!("Failed to refresh completion cache: {}", e);
@@ -1302,11 +1282,16 @@ impl eframe::App for MosaicTermApp {
         }
 
         // Main layout with scrollable history and pinned input
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // Calculate available space for layout
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::none()
+                    .fill(self.ui_colors.background)
+                    .inner_margin(egui::Margin::same(2.0)),
+            )
+            .show(ctx, |ui| {
             let available_height = ui.available_height();
-            let input_height = 120.0; // Fixed height for input area
-            let history_height = available_height - input_height - 20.0; // Leave some margin
+            let input_height = 60.0;
+            let history_height = (available_height - input_height).max(100.0);
 
             // Layout from bottom to top: input at bottom, then history above it
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
@@ -1579,70 +1564,71 @@ impl MosaicTermApp {
     fn setup_visual_style(&self, ctx: &egui::Context) {
         let mut style = (*ctx.style()).clone();
 
-        // Set up theme from configuration
         style.visuals.dark_mode = true;
         style.visuals.window_fill = self.ui_colors.background;
         style.visuals.panel_fill = self.ui_colors.background;
+        style.visuals.window_rounding = egui::Rounding::same(4.0);
+        style.visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(50, 50, 70));
 
-        // Set selection color from theme
         style.visuals.selection.bg_fill = self.ui_colors.selection;
         style.visuals.selection.stroke = egui::Stroke::new(1.0, self.ui_colors.accent);
 
-        // Customize widget spacing for better terminal-like appearance
-        style.spacing.item_spacing = egui::vec2(8.0, 4.0);
-        style.spacing.button_padding = egui::vec2(8.0, 4.0);
+        style.spacing.item_spacing = egui::vec2(4.0, 2.0);
+        style.spacing.button_padding = egui::vec2(8.0, 3.0);
+        style.spacing.window_margin = egui::Margin::same(4.0);
 
-        // Set font size for better readability
         style
             .text_styles
             .insert(egui::TextStyle::Body, egui::FontId::monospace(12.0));
         style
             .text_styles
-            .insert(egui::TextStyle::Monospace, egui::FontId::monospace(11.0));
+            .insert(egui::TextStyle::Monospace, egui::FontId::monospace(12.0));
 
-        // Apply the style
         ctx.set_style(style);
     }
 
     /// Render the fixed input area at the bottom
     fn render_fixed_input_area(&mut self, ui: &mut egui::Ui) {
-        // Create a fixed input block with clear visual boundaries using theme colors
         let input_frame = egui::Frame::none()
             .fill(self.ui_colors.input.background)
-            .stroke(egui::Stroke::new(2.0, self.ui_colors.input.focused_border))
-            .inner_margin(egui::Margin::symmetric(15.0, 10.0))
-            .outer_margin(egui::Margin::symmetric(5.0, 5.0));
+            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+            .outer_margin(egui::Margin::symmetric(2.0, 2.0))
+            .rounding(egui::Rounding::same(4.0));
 
         let frame_response = input_frame.show(ui, |ui| {
-            ui.vertical(|ui| {
-                // Input prompt label - use the custom prompt from config
+            ui.horizontal(|ui| {
                 ui.label(
                     egui::RichText::new(self.input_prompt.prompt_text())
-                        .font(egui::FontId::monospace(16.0))
+                        .font(egui::FontId::monospace(13.0))
                         .color(self.ui_colors.input.prompt)
                         .strong(),
                 );
 
-                // Get current input for display
                 let old_input = self.input_prompt.current_input().to_string();
                 let mut current_input = old_input.clone();
 
-                // Check for keys BEFORE TextEdit consumes them
                 let tab_pressed = ui.input(|i| i.key_pressed(egui::Key::Tab));
                 let escape_pressed = ui.input(|i| i.key_pressed(egui::Key::Escape));
                 let up_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowUp));
                 let down_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowDown));
 
-                // Input field - take full width
-                // We set .lock_focus(true) to prevent Tab from moving focus away
                 let input_response = ui.add(
                     egui::TextEdit::singleline(&mut current_input)
-                        .font(egui::FontId::monospace(14.0))
+                        .font(egui::FontId::monospace(13.0))
                         .desired_width(f32::INFINITY)
-                        .hint_text("Type a command and press Enter...")
-                        .margin(egui::Vec2::new(8.0, 6.0))
-                        .lock_focus(true), // Prevent Tab from changing focus
+                        .hint_text("Type a command...")
+                        .margin(egui::Vec2::new(6.0, 4.0))
+                        .lock_focus(true),
                 );
+
+                if input_response.has_focus() {
+                    let glow_rect = input_response.rect.expand(1.5);
+                    ui.painter().rect_stroke(
+                        glow_rect,
+                        3.0,
+                        egui::Stroke::new(1.0, self.ui_colors.input.focused_border),
+                    );
+                }
 
                 // Store input rect for positioning completion popup
                 let input_rect = input_response.rect;
@@ -2051,39 +2037,36 @@ impl MosaicTermApp {
 
     /// Render the command history area above the input
     fn render_command_history_area(&mut self, ui: &mut egui::Ui) {
-        // Clone colors for use in closures
         let colors = self.ui_colors.clone();
 
         ui.vertical(|ui| {
-            // Status bar at the top
             let status_frame = egui::Frame::none()
                 .fill(colors.status_bar.background)
-                .stroke(egui::Stroke::new(1.0, colors.status_bar.border))
-                .inner_margin(egui::Margin::symmetric(10.0, 5.0));
+                .inner_margin(egui::Margin::symmetric(6.0, 2.0));
 
             status_frame.show(ui, |ui| {
+                ui.set_height(16.0);
                 ui.horizontal(|ui| {
+                    let (status_text, status_color) =
+                        match self.state_manager.status_message() {
+                            Some(msg) => (msg, colors.status_bar.ssh_indicator),
+                            None => ("Ready".to_string(), colors.status_bar.text),
+                        };
                     ui.label(
-                        egui::RichText::new("MosaicTerm")
-                            .font(egui::FontId::proportional(16.0))
-                            .color(colors.blocks.command_text)
-                            .strong(),
+                        egui::RichText::new(status_text)
+                            .font(egui::FontId::monospace(11.0))
+                            .color(status_color),
                     );
+
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new("Ready")
-                                .font(egui::FontId::proportional(12.0))
-                                .color(colors.status_bar.ssh_indicator),
-                        );
-                        ui.separator();
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "History: {}",
-                                self.state_manager.get_command_history().len()
-                            ))
-                            .font(egui::FontId::monospace(12.0))
-                            .color(colors.status_bar.text),
-                        );
+                        let history_len = self.state_manager.get_command_history().len();
+                        if history_len > 0 {
+                            ui.label(
+                                egui::RichText::new(format!("{} cmds", history_len))
+                                    .font(egui::FontId::monospace(11.0))
+                                    .color(colors.status_bar.text),
+                            );
+                        }
                     });
                 });
             });
@@ -2109,22 +2092,36 @@ impl MosaicTermApp {
                             }
                         }
 
-                        // If no commands, show welcome message
                         if command_history.is_empty() {
-                            ui.add_space(50.0);
+                            ui.add_space(40.0);
                             ui.vertical_centered(|ui| {
                                 ui.label(
-                                    egui::RichText::new("🎉 Welcome to MosaicTerm!")
-                                        .font(egui::FontId::proportional(24.0))
-                                        .color(colors.warning)
+                                    egui::RichText::new("MosaicTerm")
+                                        .font(egui::FontId::proportional(28.0))
+                                        .color(colors.accent)
                                         .strong(),
                                 );
-                                ui.add_space(10.0);
+                                ui.add_space(6.0);
                                 ui.label(
-                                    egui::RichText::new("Type a command in the input area below")
-                                        .font(egui::FontId::proportional(16.0))
-                                        .color(colors.blocks.command_text),
+                                    egui::RichText::new("Type a command below to get started")
+                                        .font(egui::FontId::proportional(14.0))
+                                        .color(colors.status_bar.text),
                                 );
+                                ui.add_space(20.0);
+                                let hint_color = egui::Color32::from_rgb(100, 100, 120);
+                                for hint in &[
+                                    "Tab         Auto-complete commands and paths",
+                                    "Up/Down     Navigate command history",
+                                    "Ctrl+R      Search history",
+                                    "Ctrl+L      Clear screen",
+                                    "Ctrl+Q      Quit",
+                                ] {
+                                    ui.label(
+                                        egui::RichText::new(*hint)
+                                            .font(egui::FontId::monospace(12.0))
+                                            .color(hint_color),
+                                    );
+                                }
                             });
                         }
                     });
@@ -2139,64 +2136,82 @@ impl MosaicTermApp {
         _index: usize,
         colors: &mosaicterm::ui::UiColors,
     ) -> Option<(String, egui::Pos2)> {
+        let border_color = match block.status {
+            ExecutionStatus::Running => colors.blocks.status_running,
+            ExecutionStatus::Failed => colors.blocks.status_failed,
+            _ => colors.blocks.border,
+        };
+
         let block_frame = egui::Frame::none()
-            .fill(colors.status_bar.background)
-            .stroke(egui::Stroke::new(1.0, colors.status_bar.border))
+            .fill(colors.blocks.background)
+            .stroke(egui::Stroke::new(1.0, border_color))
             .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-            .outer_margin(egui::Margin::symmetric(0.0, 4.0));
+            .outer_margin(egui::Margin::symmetric(0.0, 3.0))
+            .rounding(egui::Rounding::same(4.0));
 
         let frame_response = block_frame.show(ui, |ui| {
             ui.vertical(|ui| {
-                // Command header with timestamp and status
                 ui.horizontal(|ui| {
+                    // Command prompt symbol
+                    ui.label(
+                        egui::RichText::new("$")
+                            .font(egui::FontId::monospace(13.0))
+                            .color(colors.blocks.prompt),
+                    );
+                    ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(&block.command)
-                            .font(egui::FontId::monospace(14.0))
-                            .color(colors.blocks.command_text),
+                            .font(egui::FontId::monospace(13.0))
+                            .color(colors.blocks.command_text)
+                            .strong(),
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Status indicator - use theme colors
+                        // Timestamp on the right
+                        ui.label(
+                            egui::RichText::new(block.timestamp.format("%H:%M:%S").to_string())
+                                .font(egui::FontId::monospace(10.0))
+                                .color(colors.blocks.timestamp),
+                        );
+                        ui.add_space(8.0);
+
                         let (status_text, status_color) = match block.status {
-                            ExecutionStatus::Running => ("Running", colors.blocks.status_running),
+                            ExecutionStatus::Running => ("running", colors.blocks.status_running),
                             ExecutionStatus::Completed => {
-                                ("Completed", colors.blocks.status_completed)
+                                ("ok", colors.blocks.status_completed)
                             }
-                            ExecutionStatus::Failed => ("Failed", colors.blocks.status_failed),
+                            ExecutionStatus::Failed => ("failed", colors.blocks.status_failed),
                             ExecutionStatus::Cancelled => {
-                                ("Cancelled", colors.blocks.status_cancelled)
+                                ("cancelled", colors.blocks.status_cancelled)
                             }
-                            ExecutionStatus::Pending => ("Pending", colors.blocks.status_pending),
-                            ExecutionStatus::TuiMode => ("TUI Mode", colors.blocks.status_tui),
+                            ExecutionStatus::Pending => ("pending", colors.blocks.status_pending),
+                            ExecutionStatus::TuiMode => ("tui", colors.blocks.status_tui),
                         };
 
                         ui.label(
                             egui::RichText::new(status_text)
-                                .font(egui::FontId::proportional(12.0))
+                                .font(egui::FontId::monospace(10.0))
                                 .color(status_color),
                         );
                     });
                 });
 
-                // Output area if available
                 if !block.output.is_empty() {
-                    ui.add_space(6.0);
+                    ui.add_space(4.0);
+
                     let output_frame = egui::Frame::none()
                         .fill(colors.blocks.header_background)
-                        .stroke(egui::Stroke::new(1.0, colors.blocks.hover_border))
-                        .inner_margin(egui::Margin::symmetric(8.0, 6.0));
+                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                        .rounding(egui::Rounding::same(3.0));
 
                     output_frame.show(ui, |ui| {
                         for line in block.output.iter() {
-                            // Show all output lines with ANSI color support
                             if !line.ansi_codes.is_empty() {
-                                // Use ANSI text renderer for colored text
                                 let mut ansi_renderer =
                                     mosaicterm::ui::text::AnsiTextRenderer::new();
                                 if let Err(e) =
                                     ansi_renderer.render_ansi_text(ui, &line.text, &line.ansi_codes)
                                 {
-                                    // Fallback to plain text if ANSI rendering fails
                                     debug!(
                                         "ANSI rendering failed: {}, falling back to plain text",
                                         e
@@ -2208,7 +2223,6 @@ impl MosaicTermApp {
                                     );
                                 }
                             } else {
-                                // Plain text without ANSI codes
                                 ui.label(
                                     egui::RichText::new(&line.text)
                                         .font(egui::FontId::monospace(12.0))
@@ -2218,15 +2232,6 @@ impl MosaicTermApp {
                         }
                     });
                 }
-
-                // Timestamp
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        egui::RichText::new(format!("{}", block.timestamp.format("%H:%M:%S")))
-                            .font(egui::FontId::monospace(10.0))
-                            .color(colors.blocks.timestamp),
-                    );
-                });
             });
         });
 
