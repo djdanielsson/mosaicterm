@@ -404,15 +404,25 @@ impl Terminal {
         }
     }
 
-    /// Check if there's pending PTY output to read
-    pub async fn has_pending_pty_output(&mut self) -> Result<bool> {
+    /// Try to read and process any pending PTY output without blocking.
+    /// Returns the processed lines if data was available, empty vec otherwise.
+    /// Unlike the old `has_pending_pty_output`, this never discards data.
+    pub async fn try_read_and_process_output(&mut self) -> Result<Vec<OutputLine>> {
         if let Some(pty_handle) = &self.pty_handle {
-            // PtyManager is already async and thread-safe, no lock needed
             let manager = &*self.pty_manager;
-            let output = manager.read_output(pty_handle, 10).await?;
-            Ok(!output.is_empty())
+            let output = manager.try_read_output_now(pty_handle).await?;
+            if output.is_empty() {
+                return Ok(Vec::new());
+            }
+            let chunk = crate::terminal::output::OutputChunk {
+                data: output,
+                timestamp: chrono::Utc::now(),
+                stream_type: crate::terminal::output::StreamType::Stdout,
+                is_complete: false,
+            };
+            self.output_processor.process_chunk(chunk)
         } else {
-            Ok(false)
+            Ok(Vec::new())
         }
     }
 

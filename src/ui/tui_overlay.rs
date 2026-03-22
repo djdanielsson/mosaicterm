@@ -78,7 +78,7 @@ pub struct TuiOverlay {
     /// The command being run in the overlay
     command: Option<String>,
     /// PTY handle ID for the running TUI app
-    pty_handle_id: Option<usize>,
+    pty_handle_id: Option<String>,
     /// Virtual screen buffer
     screen_buffer: ScreenBuffer,
     /// Whether the TUI app has exited
@@ -109,7 +109,7 @@ impl TuiOverlay {
     }
 
     /// Start the overlay with a command
-    pub fn start(&mut self, command: String, pty_handle_id: usize) {
+    pub fn start(&mut self, command: String, pty_handle_id: String) {
         self.active = true;
         self.command = Some(command);
         self.pty_handle_id = Some(pty_handle_id);
@@ -127,8 +127,8 @@ impl TuiOverlay {
     }
 
     /// Get the PTY handle ID
-    pub fn pty_handle(&self) -> Option<usize> {
-        self.pty_handle_id
+    pub fn pty_handle(&self) -> Option<&str> {
+        self.pty_handle_id.as_deref()
     }
 
     /// Get the command being run
@@ -506,17 +506,17 @@ mod tests {
     #[test]
     fn test_tui_overlay_start() {
         let mut overlay = TuiOverlay::new();
-        overlay.start("vim".to_string(), 123);
+        overlay.start("vim".to_string(), "pty-123".to_string());
         assert!(overlay.is_active());
         assert_eq!(overlay.command(), Some("vim"));
-        assert_eq!(overlay.pty_handle(), Some(123));
+        assert_eq!(overlay.pty_handle(), Some("pty-123"));
         assert!(!overlay.has_exited());
     }
 
     #[test]
     fn test_tui_overlay_stop() {
         let mut overlay = TuiOverlay::new();
-        overlay.start("vim".to_string(), 123);
+        overlay.start("vim".to_string(), "pty-123".to_string());
         overlay.stop();
         assert!(!overlay.is_active());
         assert!(overlay.command().is_none());
@@ -527,7 +527,7 @@ mod tests {
     #[test]
     fn test_tui_overlay_mark_exited() {
         let mut overlay = TuiOverlay::new();
-        overlay.start("vim".to_string(), 123);
+        overlay.start("vim".to_string(), "pty-123".to_string());
         overlay.mark_exited();
         assert!(overlay.has_exited());
         assert!(overlay.is_active()); // Still active until stopped

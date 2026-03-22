@@ -51,8 +51,17 @@ proptest! {
         prop_assert!(result.is_ok());
 
         let lines = result.unwrap();
-        // Should produce at least one line with proper ending
-        prop_assert!(!lines.is_empty() || lines.is_empty());
+        if ending == "\r" {
+            prop_assert!(
+                lines.is_empty(),
+                "bare CR clears the line without flushing a completed row"
+            );
+        } else {
+            prop_assert!(
+                !lines.is_empty(),
+                "LF or CRLF should flush at least one completed line"
+            );
+        }
     }
 
     #[test]

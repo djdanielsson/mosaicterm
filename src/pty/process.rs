@@ -62,7 +62,7 @@ pub async fn spawn_pty_process(
         })?;
 
     // Get the PID
-    let pid = child.process_id().unwrap_or(0);
+    let pid = child.process_id().unwrap_or(1);
 
     // Create PTY process model with working directory
     let mut pty_process = if let Some(dir) = working_directory {

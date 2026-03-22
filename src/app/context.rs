@@ -23,7 +23,7 @@ use mosaicterm::context::ContextDetector;
 use mosaicterm::state_manager::StateManager;
 use mosaicterm::terminal::Terminal;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{debug, info};
 
 /// Detect git context from the filesystem
 ///
@@ -78,7 +78,7 @@ pub fn parse_env_and_detect_contexts(
     output: &str,
     context_detector: &ContextDetector,
 ) -> Vec<String> {
-    info!("Parsing environment output: {}", output);
+    debug!("Parsing environment output ({} bytes)", output.len());
     let env = parse_env_output(output);
 
     // Detect contexts from environment

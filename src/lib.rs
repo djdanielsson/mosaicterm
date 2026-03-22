@@ -70,7 +70,7 @@
 //!
 //! ## Safety and Reliability
 //!
-//! - **No Panics:** All fallible operations return `Result`
+//! - **Prefer Result:** Fallible operations return `Result` where practical
 //! - **Memory Limits:** Enforced output size limits prevent OOM
 //! - **Graceful Degradation:** Falls back to defaults when config loading fails
 //! - **Timeout Detection:** Configurable command timeouts (30s regular, 5min interactive)
@@ -544,7 +544,12 @@ pub fn validate_system() -> Result<SystemValidation> {
 
 /// Check if a command exists on the system
 fn command_exists(cmd: &str) -> bool {
-    std::process::Command::new("which")
+    #[cfg(unix)]
+    let check_cmd = "which";
+    #[cfg(windows)]
+    let check_cmd = "where";
+
+    std::process::Command::new(check_cmd)
         .arg(cmd)
         .output()
         .map(|output| output.status.success())

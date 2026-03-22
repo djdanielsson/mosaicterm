@@ -462,9 +462,11 @@ impl StateManager {
         self.active_session_mut().map(|s| &mut s.command_history)
     }
 
-    /// Get command history (returns empty vec if no active session)
-    pub fn get_command_history(&self) -> Vec<CommandBlock> {
-        self.command_history().cloned().unwrap_or_default()
+    /// Get command history slice (returns empty slice if no active session)
+    pub fn get_command_history(&self) -> &[CommandBlock] {
+        self.command_history()
+            .map(|h| h.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Clear command history for the active session
@@ -539,10 +541,9 @@ impl StateManager {
         }
     }
 
-    /// Set last command execution time for active session
-    pub fn set_last_command_time(&mut self, _time: DateTime<Utc>) {
-        // Note: We track this in session state as Instant, not DateTime
-        // This is a compatibility shim during migration
+    /// Record that a command was just executed.
+    /// Stores the current instant for elapsed-time calculations.
+    pub fn set_last_command_time(&mut self) {
         if let Some(session) = self.active_session_mut() {
             session.last_command_time = Some(std::time::Instant::now());
         }

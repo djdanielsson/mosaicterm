@@ -325,6 +325,11 @@ impl MosaicTermApp {
     /// Create application with runtime configuration
     pub fn with_config(runtime_config: RuntimeConfig) -> Self {
         let mut app = Self::new();
+        app.prompt_formatter = PromptFormatter::new(
+            runtime_config.config().terminal.prompt_format.clone(),
+        );
+        app.ui_colors =
+            mosaicterm::ui::UiColors::from_theme(&runtime_config.config().ui.theme);
         app.runtime_config = runtime_config;
         app
     }
@@ -588,7 +593,7 @@ impl MosaicTermApp {
             self.state_manager.add_command_block(command_block);
 
             // Record command execution time
-            self.state_manager.set_last_command_time(chrono::Utc::now());
+            self.state_manager.set_last_command_time();
 
             // Clone command and working directory before sending to async loop (they will be moved)
             let command_for_async = command.clone();
@@ -631,7 +636,7 @@ impl MosaicTermApp {
         // Command block is now managed through StateManager only
 
         // Record command execution time for timeout detection
-        self.state_manager.set_last_command_time(chrono::Utc::now());
+        self.state_manager.set_last_command_time();
 
         // UI will be updated automatically on the next frame
 
@@ -758,20 +763,17 @@ impl MosaicTermApp {
         if let Some(_terminal) = &mut self.terminal {
             if let Some(handle) = _terminal.pty_handle() {
                 // Store handle ID before mutable borrow
-                let handle_id = handle.id.len(); // Simple ID based on handle ID length
+                let handle_id = handle.id.clone();
 
                 // Send command to PTY
                 {
-                    // PtyManager is already async and thread-safe, no lock needed
                     let pty_manager = &*self.pty_manager;
 
-                    // Set TERM to xterm-256color for proper TUI support
                     let env_cmd = "export TERM=xterm-256color\n";
                     if let Err(e) = pty_manager.send_input(handle, env_cmd.as_bytes()).await {
                         warn!("Failed to set TERM for TUI command: {}", e);
                     }
 
-                    // Brief delay to let env command process
                     std::thread::sleep(std::time::Duration::from_millis(10));
 
                     let cmd = format!("{}\n", command);
@@ -779,9 +781,8 @@ impl MosaicTermApp {
                         warn!("Failed to send TUI command to PTY: {}", e);
                         return Err(e);
                     }
-                } // Drop pty_manager lock here
+                }
 
-                // Start the overlay with PTY handle ID
                 self.tui_overlay.start(command.clone(), handle_id);
                 self.set_status_message(Some(format!("Running TUI app: {}", command)));
 
@@ -989,17 +990,19 @@ impl MosaicTermApp {
             .clone()
         {
             if let Some(menu_pos) = self.command_blocks.interaction_state().context_menu_pos {
-                // Find the command block and extract data we need
-                let command_history = self.state_manager.get_command_history();
-                if let Some(block) = command_history.iter().find(|b| &b.id == block_id) {
-                    let command = block.command.clone();
-                    let status = block.status;
-                    let output_lines: Vec<String> = block
-                        .output
-                        .iter()
-                        .map(|line| line.text.as_str().to_string())
-                        .collect();
-
+                // Find the command block and extract all data before borrowing self mutably
+                let block_data = {
+                    let command_history = self.state_manager.get_command_history();
+                    command_history.iter().find(|b| &b.id == block_id).map(|block| {
+                        (
+                            block.command.clone(),
+                            block.status,
+                            block.output.iter().map(|line| line.text.clone()).collect::<Vec<_>>(),
+                            block.working_directory.clone(),
+                        )
+                    })
+                };
+                if let Some((command, status, output_lines, working_dir)) = block_data {
                     // Create context menu
                     let mut menu_open = true;
                     egui::Window::new("Context Menu")
@@ -1012,10 +1015,8 @@ impl MosaicTermApp {
 
                             // Rerun command
                             if ui.button("🔄 Rerun Command").clicked() {
-                                // Execute the same command again (non-blocking)
-                                // Clone once and reuse
                                 let command_to_rerun = command.clone();
-                                let working_dir_to_rerun = block.working_directory.clone();
+                                let working_dir_to_rerun = working_dir.clone();
                                 self.input_prompt.add_to_history(command_to_rerun.clone());
                                 let _ = self.async_tx.send(AsyncRequest::ExecuteCommand(
                                     command_to_rerun.clone(),
@@ -2714,8 +2715,8 @@ impl MosaicTermApp {
                                             || line_text.ends_with("#");
 
                                         let looks_like_prompt = ends_with_prompt_char
-                                            && (line_text.contains("@") 
-                                                || line_text.contains(":") 
+                                            && (line_text.contains("@")
+                                                || line_text.contains(":")
                                                 || line_text.len() < 50
                                                 // In SSH mode, also accept short lines that look like prompts
                                                 || (self.ssh_session_active && line_text.len() < 100));
@@ -3096,7 +3097,7 @@ impl MosaicTermApp {
                                                 // Simple heuristics for completion detection
                                                 let looks_complete = text.is_empty() ||  // Empty line often indicates completion
                                                 text.ends_with("$") ||              // Shell prompt ending
-                                                text.ends_with("%") ||              // Zsh prompt ending  
+                                                text.ends_with("%") ||              // Zsh prompt ending
                                                 text.ends_with(">") ||              // Fish/PowerShell prompt ending
                                                 text.contains("@") && (text.contains("$") || text.contains("%")); // user@host$ pattern
 

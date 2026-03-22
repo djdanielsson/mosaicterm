@@ -1,7 +1,11 @@
-//! Contract Tests for PTY Process Lifecycle Management
+//! Specification examples: PTY process lifecycle
 //!
-//! These tests define the expected behavior of PTY process creation,
-//! monitoring, and termination using PtyManager.
+//! Encodes **expected behavior** from the contract below by driving the public
+//! [`mosaicterm::pty::PtyManager`] API (real OS PTY/subprocess behavior). These are
+//! **contract-oriented** examples: they document lifecycle rules the product should satisfy, not a
+//! full MosaicTerm integration test—no GUI, shell UX, or application-level wiring. They remain
+//! bounded to the PTY manager surface described in the spec rather than end-to-end production
+//! scenarios that would require the complete runtime stack.
 //!
 //! Contract: PTY Process Lifecycle Management
 //! See: specs/001-mosaicterm-terminal-emulator/contracts/pty-lifecycle.md

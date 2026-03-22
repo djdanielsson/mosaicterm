@@ -103,9 +103,9 @@ impl TerminalViewport {
         self.scroll_position = position.max(0.0);
     }
 
-    /// Scroll to bottom
+    /// Scroll to bottom (set position to maximum)
     pub fn scroll_to_bottom(&mut self) {
-        self.scroll_position = 0.0;
+        self.scroll_position = f32::MAX;
     }
 
     /// Get viewport dimensions
@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(viewport.scroll_position(), 0.0);
 
         viewport.scroll_to_bottom();
-        assert_eq!(viewport.scroll_position(), 0.0);
+        assert_eq!(viewport.scroll_position(), f32::MAX);
     }
 
     #[test]

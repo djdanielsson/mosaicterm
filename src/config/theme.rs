@@ -252,20 +252,20 @@ impl Color {
 
     pub fn to_egui(&self) -> egui::Color32 {
         egui::Color32::from_rgba_premultiplied(
-            (self.r * 255.0) as u8,
-            (self.g * 255.0) as u8,
-            (self.b * 255.0) as u8,
-            (self.a * 255.0) as u8,
+            (self.r.clamp(0.0, 1.0) * 255.0) as u8,
+            (self.g.clamp(0.0, 1.0) * 255.0) as u8,
+            (self.b.clamp(0.0, 1.0) * 255.0) as u8,
+            (self.a.clamp(0.0, 1.0) * 255.0) as u8,
         )
     }
 
     pub fn hex(&self) -> String {
         format!(
             "#{:02x}{:02x}{:02x}{:02x}",
-            (self.r * 255.0) as u8,
-            (self.g * 255.0) as u8,
-            (self.b * 255.0) as u8,
-            (self.a * 255.0) as u8,
+            (self.r.clamp(0.0, 1.0) * 255.0) as u8,
+            (self.g.clamp(0.0, 1.0) * 255.0) as u8,
+            (self.b.clamp(0.0, 1.0) * 255.0) as u8,
+            (self.a.clamp(0.0, 1.0) * 255.0) as u8,
         )
     }
 }

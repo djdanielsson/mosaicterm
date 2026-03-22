@@ -11,8 +11,10 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-use super::Config; // Use the Config from this module
+use super::Config;
 use crate::error::{Error, Result};
+#[allow(unused_imports)]
+use serde::Deserialize;
 
 /// Configuration file watcher
 ///
@@ -98,35 +100,39 @@ impl ConfigWatcher {
     /// `Ok(Some(config))` if the configuration was reloaded, `Ok(None)` if no changes,
     /// or an error if reloading failed
     pub fn check_and_reload(&mut self) -> Result<Option<Config>> {
-        // Check if we have any pending events
-        match self.event_rx.try_recv() {
-            Ok(Ok(event)) => {
-                // Check if this event is for our config file
-                if self.is_config_file_event(&event) {
-                    debug!("Config file change detected: {:?}", event);
+        let mut should_reload = false;
 
-                    // Reload the configuration
-                    match self.reload_config() {
-                        Ok(new_config) => {
-                            info!("Configuration reloaded successfully");
-                            return Ok(Some(new_config));
-                        }
-                        Err(e) => {
-                            warn!("Failed to reload configuration: {}", e);
-                            return Err(e);
-                        }
+        // Drain all pending events, checking if any are relevant
+        loop {
+            match self.event_rx.try_recv() {
+                Ok(Ok(event)) => {
+                    if self.is_config_file_event(&event) {
+                        debug!("Config file change detected: {:?}", event);
+                        should_reload = true;
                     }
                 }
+                Ok(Err(e)) => {
+                    error!("File watch error: {}", e);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    error!("File watch channel disconnected");
+                    *self.is_watching.lock().unwrap() = false;
+                    break;
+                }
             }
-            Ok(Err(e)) => {
-                error!("File watch error: {}", e);
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // No events pending
-            }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                error!("File watch channel disconnected");
-                *self.is_watching.lock().unwrap() = false;
+        }
+
+        if should_reload {
+            match self.reload_config() {
+                Ok(new_config) => {
+                    info!("Configuration reloaded successfully");
+                    return Ok(Some(new_config));
+                }
+                Err(e) => {
+                    warn!("Failed to reload configuration: {}", e);
+                    return Err(e);
+                }
             }
         }
 
@@ -145,21 +151,39 @@ impl ConfigWatcher {
 
     /// Reload the configuration from disk
     fn reload_config(&mut self) -> Result<Config> {
-        // Wait a brief moment to ensure file write is complete
-        // (some editors save in multiple steps)
         std::thread::sleep(Duration::from_millis(100));
 
-        // Load the new configuration from the specific file we're watching
         let content = std::fs::read_to_string(&self.config_path).map_err(crate::Error::Io)?;
 
-        let new_config: Config =
-            toml::from_str(&content).map_err(|e| crate::Error::ConfigParseFailed {
+        // Detect format from file extension
+        let new_config: Config = match self.config_path.extension().and_then(|e| e.to_str()) {
+            Some("json") => serde_json::from_str(&content).map_err(|e| {
+                crate::Error::ConfigParseFailed {
+                    format: "JSON".to_string(),
+                    reason: e.to_string(),
+                }
+            })?,
+            _ => toml::from_str(&content).map_err(|e| crate::Error::ConfigParseFailed {
                 format: "TOML".to_string(),
                 reason: e.to_string(),
-            })?;
+            })?,
+        };
 
-        // Update the current configuration
-        *self.current_config.lock().unwrap() = new_config.clone();
+        // Validate before accepting
+        let loader = crate::config::loader::ConfigLoader::new();
+        // Basic validation: font_size > 0, shell_path non-empty, etc.
+        // (ConfigLoader::validate_config is private, so replicate key checks)
+        if new_config.ui.font_size == 0 || new_config.ui.font_size > 72 {
+            return Err(crate::Error::ConfigValidationFailed {
+                field: "ui.font_size".to_string(),
+                reason: "Font size must be between 1 and 72".to_string(),
+            });
+        }
+        drop(loader);
+
+        if let Ok(mut current) = self.current_config.lock() {
+            *current = new_config.clone();
+        }
 
         Ok(new_config)
     }

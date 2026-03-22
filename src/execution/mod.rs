@@ -54,7 +54,6 @@ pub const DEFAULT_DIRECT_EXECUTION_COMMANDS: &[&str] = &[
     "chown",
     "md5sum",
     "sha256sum",
-    "wc",
     "cut",
     "tr",
     "sed",
@@ -175,11 +174,11 @@ impl DirectExecutor {
             }
             Ok(Err(e)) => {
                 command_block.add_output_line(OutputLine::new(format!("Error: {}", e)));
-                command_block.mark_completed(Duration::from_millis(0));
+                command_block.mark_failed(Duration::from_millis(0), 1);
             }
             Err(_) => {
                 command_block.add_output_line(OutputLine::new("Command timed out"));
-                command_block.mark_completed(Duration::from_millis(0));
+                command_block.mark_failed(Duration::from_millis(0), 124);
             }
         }
 

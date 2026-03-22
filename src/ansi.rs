@@ -18,7 +18,7 @@ pub struct AnsiParser {
 struct ParserState {
     /// Current foreground color
     fg_color: Option<Color>,
-    /// Current background color  
+    /// Current background color
     bg_color: Option<Color>,
     /// Current text attributes
     attributes: Vec<TextAttribute>,
@@ -27,7 +27,7 @@ struct ParserState {
 impl AnsiParser {
     /// Create a new ANSI parser
     pub fn new() -> Self {
-        let escape_regex = Regex::new(r"\x1b\[[0-9;]*[mK]").unwrap();
+        let escape_regex = Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap();
         Self {
             escape_regex,
             state: ParserState::default(),

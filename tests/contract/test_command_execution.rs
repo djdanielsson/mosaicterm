@@ -1,6 +1,11 @@
-//! Contract Tests for Command Execution and Output Streaming
+//! Specification examples: command execution and output streaming
 //!
-//! These tests define the expected behavior of command execution and output handling.
+//! This module encodes **expected behavior patterns** from the contract below. It is **not** an
+//! integration test of MosaicTerm’s production PTY manager, byte streams, or subprocess I/O—those
+//! paths depend on a real PTY/shell runtime. Instead, tests use **local mock helpers**
+//! (`send_command`, `read_output`, `process_output_chunk`, etc.) and minimal use of
+//! [`mosaicterm::pty::PtyHandle`] as a stand-in so the contract’s success/failure shapes stay
+//! executable without pulling in the full execution stack.
 //!
 //! Contract: Command Execution and Output Streaming
 //! See: specs/001-mosaicterm-terminal-emulator/contracts/command-execution.md

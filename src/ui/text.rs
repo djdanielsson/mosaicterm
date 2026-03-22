@@ -606,6 +606,10 @@ impl AnsiTextRenderer {
         let mut hasher = DefaultHasher::new();
         text.hash(&mut hasher);
         ansi_codes.len().hash(&mut hasher);
+        for code in ansi_codes {
+            code.position.hash(&mut hasher);
+            code.code.hash(&mut hasher);
+        }
 
         format!("{:x}", hasher.finish())
     }

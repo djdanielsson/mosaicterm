@@ -110,11 +110,12 @@ async fn test_special_characters_in_command() {
 }
 
 #[tokio::test]
-async fn test_malformed_unicode() {
-    // Test that malformed unicode doesn't crash the system
+async fn test_placeholder_pending_malformed_unicode() {
+    // Placeholder: we do not yet feed malformed Unicode into the executor or parser.
+    // This only checks that a trivial successful command still runs; replace when
+    // real malformed-Unicode coverage exists.
     let executor = DirectExecutor::new();
 
-    // Create a command that might produce unusual output
     let result = executor.execute_command("echo 'test'").await;
 
     assert!(result.is_ok(), "Should handle all unicode scenarios");

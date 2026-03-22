@@ -37,7 +37,7 @@ impl SignalOps for UnixSignals {
     }
 
     fn is_process_running(&self, pid: u32) -> bool {
-        // Check if process exists by sending signal 0 (SIGCONT)
-        kill(Pid::from_raw(pid as i32), NixSignal::SIGCONT).is_ok()
+        // Signal 0 checks process existence without side effects
+        kill(Pid::from_raw(pid as i32), None).is_ok()
     }
 }

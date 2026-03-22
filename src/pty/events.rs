@@ -47,6 +47,17 @@ pub enum PtyEvent {
 /// Subscription handle for receiving PTY events
 pub struct PtyEventSubscription {
     receiver: broadcast::Receiver<PtyEvent>,
+    active_subscribers: Arc<RwLock<usize>>,
+}
+
+impl Drop for PtyEventSubscription {
+    fn drop(&mut self) {
+        let subscribers = Arc::clone(&self.active_subscribers);
+        tokio::spawn(async move {
+            let mut count = subscribers.write().await;
+            *count = count.saturating_sub(1);
+        });
+    }
 }
 
 impl PtyEventSubscription {
@@ -98,9 +109,10 @@ impl PtyEventBus {
     /// Subscribe to PTY events
     pub async fn subscribe(&self) -> PtyEventSubscription {
         let receiver = self.sender.subscribe();
-        let mut count = self.active_subscribers.write().await;
-        *count += 1;
-        PtyEventSubscription { receiver }
+        PtyEventSubscription {
+            receiver,
+            active_subscribers: Arc::clone(&self.active_subscribers),
+        }
     }
 
     /// Publish an event to all subscribers

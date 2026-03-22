@@ -59,7 +59,7 @@ impl AppArgs {
                         i += 1;
                     }
                 }
-                "--height" | "-h" => {
+                "--height" | "-H" => {
                     if i + 1 < args.len() {
                         app_args.height = args[i + 1].parse().ok();
                         i += 1;
@@ -69,9 +69,11 @@ impl AppArgs {
                     if i + 1 < args.len() {
                         app_args.theme = Some(args[i + 1].clone());
                         i += 1;
+                    } else {
+                        return Err("Missing theme name".into());
                     }
                 }
-                "--help" | "-?" => {
+                "--help" | "-h" | "-?" => {
                     print_help();
                     process::exit(0);
                 }
@@ -105,9 +107,9 @@ fn print_help() {
     println!("    -c, --config <PATH>    Path to configuration file");
     println!("    -d, --debug            Enable debug mode");
     println!("    -w, --width <WIDTH>    Initial window width");
-    println!("    -h, --height <HEIGHT>  Initial window height");
+    println!("    -H, --height <HEIGHT>  Initial window height");
     println!("    -t, --theme <THEME>    Initial theme (dark, light, high-contrast)");
-    println!("    -?, --help             Print this help message");
+    println!("    -h, -?, --help         Print this help message");
     println!("    -v, --version          Print version information");
     println!();
     println!("CONFIGURATION:");
@@ -290,7 +292,7 @@ fn create_application(_args: &AppArgs, runtime_config: RuntimeConfig) -> Result<
 /// Helper function to round size to even numbers for Wayland compatibility
 /// Wayland requires buffer sizes to be integer multiples of buffer_scale
 fn round_for_wayland(size: f32) -> f32 {
-    (size / 2.0).floor() * 2.0
+    ((size / 2.0).floor() * 2.0).max(2.0)
 }
 
 /// Create native options for the application window

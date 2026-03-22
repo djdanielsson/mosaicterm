@@ -51,6 +51,8 @@ pub struct RenderedBlock {
     timestamp_display: String,
     /// Whether block is expanded
     expanded: bool,
+    /// Cache invalidation key (includes output length and status)
+    cache_key: String,
 }
 
 #[derive(Debug, Clone)]
@@ -320,16 +322,26 @@ impl CommandBlocks {
 
     /// Render a single command block
     pub fn render_block(&mut self, ui: &mut egui::Ui, block: &CommandBlock) -> Result<()> {
-        let block_id = block.id.clone();
+        // Cache key includes block id, output length, and status to invalidate on changes
+        let cache_key = format!(
+            "{}_{}_{}_{:?}",
+            block.id,
+            block.output.len(),
+            block.exit_code.unwrap_or(-1),
+            block.status
+        );
 
-        // Check if we have a cached rendered block
-        if !self.rendered_blocks.contains_key(&block_id) {
-            let rendered = self.render_command_block(block)?;
-            self.rendered_blocks.insert(block_id.clone(), rendered);
+        if self
+            .rendered_blocks
+            .get(&block.id)
+            .map_or(true, |cached| cached.cache_key != cache_key)
+        {
+            let mut rendered = self.render_command_block(block)?;
+            rendered.cache_key = cache_key;
+            self.rendered_blocks.insert(block.id.clone(), rendered);
         }
 
-        // Get the rendered block and render it
-        if let Some(rendered) = self.rendered_blocks.get(&block_id).cloned() {
+        if let Some(rendered) = self.rendered_blocks.get(&block.id).cloned() {
             self.render_rendered_block(ui, &rendered);
         }
 
@@ -388,7 +400,8 @@ impl CommandBlocks {
             output_area,
             status_indicator,
             timestamp_display,
-            expanded: true, // Default to expanded
+            expanded: true,
+            cache_key: String::new(),
         })
     }
 
@@ -747,6 +760,7 @@ mod tests {
             status_indicator: StatusIcon::Success,
             timestamp_display: "12:34:56".to_string(),
             expanded: true,
+            cache_key: String::new(),
         };
 
         assert_eq!(block.id, "test");
@@ -771,6 +785,7 @@ mod tests {
                 status_indicator: StatusIcon::Success,
                 timestamp_display: String::new(),
                 expanded: true,
+                cache_key: String::new(),
             },
         );
 

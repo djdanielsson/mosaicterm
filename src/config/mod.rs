@@ -388,20 +388,23 @@ impl RuntimeConfig {
         }
     }
 
-    /// Load configuration from file
+    /// Load configuration from a specific file
     pub fn load_from_file(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let mut theme_manager = ThemeManager::new();
         let shell_manager = ShellManager::new();
 
-        // Load configuration
-        let config = loader::ConfigLoader::load_with_options(loader::LoadOptions {
-            create_default: false,
-            merge_defaults: false,
-            validate: true,
-        })?;
+        let content = std::fs::read_to_string(path)?;
+        let format = utils::get_config_format(path);
+        let config: Config = match format {
+            Some(loader::ConfigFormat::Json) => serde_json::from_str(&content)?,
+            #[cfg(feature = "yaml")]
+            Some(loader::ConfigFormat::Yaml) => serde_yaml::from_str(&content)?,
+            _ => toml::from_str(&content)?,
+        };
 
-        // Apply current theme
-        theme_manager.set_theme(&config.ui.theme_name).unwrap_or(());
+        if let Err(e) = theme_manager.set_theme(&config.ui.theme_name) {
+            tracing::warn!("Failed to apply theme '{}': {}", config.ui.theme_name, e);
+        }
 
         Ok(Self {
             config,
@@ -461,14 +464,17 @@ impl RuntimeConfig {
         Ok(())
     }
 
-    /// Reload configuration from file
+    /// Reload configuration from the stored file path
     pub fn reload(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(_path) = &self.config_path {
-            let new_config = loader::ConfigLoader::load_with_options(loader::LoadOptions {
-                create_default: false,
-                merge_defaults: false,
-                validate: true,
-            })?;
+        if let Some(path) = &self.config_path.clone() {
+            let content = std::fs::read_to_string(path)?;
+            let format = utils::get_config_format(path);
+            let new_config: Config = match format {
+                Some(loader::ConfigFormat::Json) => serde_json::from_str(&content)?,
+                #[cfg(feature = "yaml")]
+                Some(loader::ConfigFormat::Yaml) => serde_yaml::from_str(&content)?,
+                _ => toml::from_str(&content)?,
+            };
             self.set_config(new_config)?;
         }
         Ok(())

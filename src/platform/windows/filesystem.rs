@@ -60,6 +60,11 @@ impl FilesystemOps for WindowsFilesystem {
             }
         }
 
+        // Reject path separators in command to prevent directory traversal
+        if command.contains('\\') || command.contains('/') || command.contains(':') {
+            return Ok(None);
+        }
+
         // Fallback: manually scan PATH
         if let Ok(path_env) = env::var("PATH") {
             let executable_extensions = ["", ".exe", ".bat", ".cmd", ".ps1", ".com"];

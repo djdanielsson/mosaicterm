@@ -377,15 +377,15 @@ pub mod segmentation {
 
     /// Check if line contains a command prompt
     fn is_command_prompt(line: &OutputLine) -> bool {
-        let prompt_patterns = [r"^\$", r"^#", r"^>", r"bash-\d+\.\d+\$", r"zsh-\d+\.\d+%"];
+        use once_cell::sync::Lazy;
+        static PROMPT_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+            [r"^\$", r"^#", r"^>", r"bash-\d+\.\d+\$", r"zsh-\d+\.\d+%"]
+                .iter()
+                .map(|p| Regex::new(p).unwrap())
+                .collect()
+        });
 
-        for pattern in &prompt_patterns {
-            if Regex::new(pattern).unwrap().is_match(&line.text) {
-                return true;
-            }
-        }
-
-        false
+        PROMPT_PATTERNS.iter().any(|re| re.is_match(&line.text))
     }
 }
 

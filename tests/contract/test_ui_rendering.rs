@@ -1,7 +1,12 @@
-//! Contract Tests for UI Block Rendering and Layout
+//! Specification examples: UI block rendering and layout
 //!
-//! These tests define the expected behavior of command block rendering,
-//! scrollable history, and input prompt display.
+//! Encodes **expected behavior** from the contract below using **local stub types and helpers**
+//! in this file (`BlockStyle`, `render_command_block`, `Viewport`, `render_ansi_text`, etc.). These
+//! are illustrative stand-ins for the contract’s rendering and layout rules; they do **not**
+//! exercise MosaicTerm’s production TUI, viewport, or shipped text/ANSI pipeline, which need a
+//! full GUI/runtime. [`mosaicterm::models::CommandBlock`] appears only as shared domain data where
+//! convenient; the rendering logic asserted here remains specification scaffolding, not the real
+//! UI implementation.
 //!
 //! Contract: UI Block Rendering and Layout
 //! See: specs/001-mosaicterm-terminal-emulator/contracts/ui-rendering.md

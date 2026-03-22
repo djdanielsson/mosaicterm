@@ -88,7 +88,7 @@ impl InputPrompt {
     }
 
     /// Create with custom configuration
-    pub fn with_config(_config: InputConfig) -> Self {
+    pub fn with_config(config: InputConfig) -> Self {
         Self {
             current_input: String::new(),
             history: VecDeque::new(),
@@ -96,7 +96,7 @@ impl InputPrompt {
             cursor_position: 0,
             focused: true,
             prompt_text: "$ ".to_string(),
-            max_history: 100,
+            max_history: config.max_length,
             request_focus: false,
         }
     }

@@ -80,7 +80,7 @@ impl MosaicTermApp {
         if ctx.memory(|mem| mem.focus().is_none()) {
             // Application shortcuts
             if ctx.input(|i| i.key_pressed(egui::Key::Q) && i.modifiers.ctrl) {
-                std::process::exit(0); // Ctrl+Q to quit
+                self.handle_exit();
             }
 
             if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl) {
@@ -110,15 +110,12 @@ impl MosaicTermApp {
             self.handle_scroll_to_bottom();
         }
 
-        // Tab navigation
-        if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl) {
-            // Ctrl+Tab to switch focus
-            self.handle_focus_next();
-        }
-
-        if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && i.modifiers.shift) {
-            // Ctrl+Shift+Tab to switch focus backward
+        if ctx.input(|i| {
+            i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && i.modifiers.shift
+        }) {
             self.handle_focus_previous();
+        } else if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl) {
+            self.handle_focus_next();
         }
     }
 
@@ -160,7 +157,7 @@ impl MosaicTermApp {
                 }
 
                 // Clear the command time so new commands can be submitted
-                self.state_manager.set_last_command_time(chrono::Utc::now());
+                self.state_manager.set_last_command_time();
 
                 // For interactive programs, we need to restart the PTY session
                 // because the shell can get into a corrupted state
@@ -213,7 +210,7 @@ impl MosaicTermApp {
                 );
 
                 // Clear the command time so new commands can be submitted
-                self.state_manager.set_last_command_time(chrono::Utc::now());
+                self.state_manager.set_last_command_time();
 
                 // Check if the command being killed is interactive
                 let command_history = self.state_manager.get_command_history();

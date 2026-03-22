@@ -19,8 +19,8 @@ mod command_validation_tests {
     #[test]
     fn test_validate_command_with_args() {
         let result = validate_command("ls -la");
-        // May be rejected if args contain suspicious patterns
-        assert!(result.is_ok() || result.is_err());
+        // Entire string is looked up as one executable name, not argv split.
+        assert!(result.is_err());
     }
 
     #[test]
@@ -33,8 +33,8 @@ mod command_validation_tests {
     #[test]
     fn test_validate_command_with_newlines() {
         let result = validate_command("echo\ntest");
-        // Multiline should be handled
-        assert!(result.is_err() || result.is_ok());
+        // No executable matches the full string including the newline.
+        assert!(result.is_err());
     }
 
     #[test]
@@ -56,8 +56,8 @@ mod command_validation_tests {
     fn test_validate_max_length_command() {
         let max_cmd = "a".repeat(10000); // At the limit
         let result = validate_command(&max_cmd);
-        // Should accept commands at the limit
-        assert!(result.is_ok() || result.is_err());
+        // Long arbitrary name should not resolve on PATH.
+        assert!(result.is_err());
     }
 
     #[test]
@@ -91,53 +91,46 @@ mod command_validation_tests {
     #[test]
     fn test_validate_safe_pipe() {
         let result = validate_command("cat file.txt | grep test");
-        // Validation behavior depends on security settings
-        assert!(result.is_ok() || result.is_err());
+        // Full shell line is not a single PATH executable name.
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_validate_redirect() {
         let result = validate_command("echo test > output.txt");
-        // Validation behavior depends on security settings
-        assert!(result.is_ok() || result.is_err());
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_validate_builtin() {
-        let builtins = vec!["cd /tmp", "pwd", "exit"];
-        for cmd in builtins {
-            let result = validate_command(cmd);
-            // Builtins should validate
-            assert!(result.is_ok() || result.is_err());
-        }
+        // PATH lookup uses the whole string; only real binaries like `pwd` resolve.
+        assert!(validate_command("cd /tmp").is_err());
+        assert!(validate_command("exit").is_err());
+        assert!(validate_command("pwd").is_ok());
     }
 
     #[test]
     fn test_validate_command_expansion() {
         let result = validate_command("echo $(date)");
-        // Validation behavior depends on security settings
-        assert!(result.is_ok() || result.is_err());
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_validate_env_var() {
         let result = validate_command("echo $HOME");
-        // Validation behavior depends on security settings
-        assert!(result.is_ok() || result.is_err());
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_validate_unicode() {
         let result = validate_command("echo 你好世界");
-        // Validation behavior depends on security settings
-        assert!(result.is_ok() || result.is_err());
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_validate_special_chars() {
         let result = validate_command("ls @#$%");
-        // Most special characters should be allowed
-        assert!(result.is_ok() || result.is_err());
+        assert!(result.is_err());
     }
 
     #[test]
@@ -145,8 +138,7 @@ mod command_validation_tests {
         let cmds = vec!["echo \"test\"", "echo 'test'", "echo `date`"];
         for cmd in cmds {
             let result = validate_command(cmd);
-            // Validation behavior depends on security settings
-            assert!(result.is_ok() || result.is_err());
+            assert!(result.is_err());
         }
     }
 }

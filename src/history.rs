@@ -169,8 +169,11 @@ impl HistoryManager {
             .collect()
     }
 
-    /// Search history with regex
+    /// Search history with regex (pattern size is limited to prevent ReDoS)
     pub fn search_regex(&self, pattern: &str) -> Result<Vec<String>> {
+        if pattern.len() > 1024 {
+            return Err(anyhow::anyhow!("Regex pattern too long (max 1024 chars)").into());
+        }
         let re = regex::Regex::new(pattern)?;
 
         let mut results: Vec<String> = self

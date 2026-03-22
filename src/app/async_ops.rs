@@ -178,12 +178,27 @@ async fn async_initialize_terminal(terminal_factory: &TerminalFactory) -> Result
 /// Restart PTY in background
 async fn async_restart_pty(
     _pty_manager: &Arc<PtyManager>,
-    _terminal_factory: &TerminalFactory,
+    terminal_factory: &TerminalFactory,
 ) -> Result<()> {
     info!("Async PTY restart started");
 
-    // For now, just log - full implementation would recreate terminal
-    // This is complex because we need to update app state
+    let runtime_config = RuntimeConfig::new().unwrap_or_else(|e| {
+        error!("Failed to create runtime config for restart: {}", e);
+        RuntimeConfig::new_minimal()
+    });
+
+    let shell_type = match runtime_config.config().terminal.shell_type {
+        ModelShellType::Bash => ModelShellType::Bash,
+        ModelShellType::Zsh => ModelShellType::Zsh,
+        ModelShellType::Fish => ModelShellType::Fish,
+        _ => ModelShellType::Bash,
+    };
+
+    let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+    let environment: std::collections::HashMap<String, String> = std::env::vars().collect();
+    let session = TerminalSession::with_environment(shell_type, working_dir, environment);
+
+    let _terminal = terminal_factory.create_and_initialize(session).await?;
 
     info!("Async PTY restart completed");
     Ok(())

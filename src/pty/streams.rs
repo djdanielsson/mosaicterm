@@ -73,14 +73,6 @@ impl PtyStreams {
         }
         count
     }
-    pub async fn data_available(&mut self) -> Result<bool> {
-        // Non-blocking check first
-        if let Ok(bytes) = self.output_rx.try_recv() {
-            // Push back by immediately sending to a small buffer channel is not trivial; just return true
-            return Ok(!bytes.is_empty());
-        }
-        Ok(false)
-    }
 }
 
 impl Default for PtyStreams {

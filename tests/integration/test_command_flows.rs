@@ -104,20 +104,19 @@ async fn test_command_timing() {
 
 #[tokio::test]
 async fn test_empty_command() {
-    // Test that empty commands are handled gracefully
     let executor = DirectExecutor::new();
     let result = executor.execute_command("").await;
 
-    // Should either succeed with no output or fail gracefully
-    // Depending on implementation, this might be filtered out before execution
-    assert!(result.is_ok() || result.is_err());
+    assert!(result.is_err(), "empty command should return an error");
 }
 
 #[tokio::test]
 async fn test_whitespace_only_command() {
-    // Test that whitespace-only commands are handled gracefully
     let executor = DirectExecutor::new();
     let result = executor.execute_command("   ").await;
 
-    assert!(result.is_ok() || result.is_err());
+    assert!(
+        result.is_err(),
+        "whitespace-only command should return an error"
+    );
 }

@@ -1,6 +1,6 @@
 //! Property-based tests for command validation
 
-use mosaicterm::pty::process::validate_command;
+use mosaicterm::pty::process::{is_command_available, validate_command};
 use proptest::prelude::*;
 
 // Windows is much slower at regex validation, so use smaller ranges
@@ -28,9 +28,7 @@ proptest! {
     #[test]
     fn test_validate_simple_commands(cmd in "[a-z]{1,20}") {
         let result = validate_command(&cmd);
-        // Simple lowercase commands should mostly validate
-        // (unless they happen to match a dangerous pattern)
-        prop_assert!(result.is_ok() || result.is_err());
+        prop_assert_eq!(result.is_ok(), is_command_available(&cmd));
     }
 
     #[test]
@@ -66,9 +64,7 @@ proptest! {
     fn test_handles_various_lengths(len in 1usize..MAX_LENGTH_TEST) {
         let cmd = "a".repeat(len);
         let result = validate_command(&cmd);
-        // Validation depends on security rules and command patterns
-        // Just ensure it doesn't panic
-        prop_assert!(result.is_ok() || result.is_err());
+        prop_assert_eq!(result.is_ok(), is_command_available(&cmd));
     }
 
     #[test]
@@ -93,8 +89,7 @@ proptest! {
     ) {
         let full_cmd = format!("{} {}", cmd, flags.join(" "));
         let result = validate_command(&full_cmd);
-        // Simple flags should be okay
-        prop_assert!(result.is_ok() || result.is_err());
+        prop_assert_eq!(result.is_ok(), is_command_available(&full_cmd));
     }
 
     #[test]
@@ -125,6 +120,7 @@ proptest! {
 #[cfg(test)]
 mod security_props {
     use super::*;
+    use mosaicterm::pty::process::is_command_available;
 
     proptest! {
         #[test]
@@ -151,8 +147,7 @@ mod security_props {
         ) {
             let cmd = format!("{} | {}", cmd1, cmd2);
             let result = validate_command(&cmd);
-            // Safe pipes might be allowed depending on implementation
-            prop_assert!(result.is_ok() || result.is_err());
+            prop_assert_eq!(result.is_ok(), is_command_available(&cmd));
         }
     }
 }

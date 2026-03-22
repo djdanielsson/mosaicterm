@@ -254,10 +254,8 @@ impl ConfigLoader {
             paths.push(home.join(".config").join("mosaicterm"));
         }
 
-        // Current working directory
-        if let Ok(cwd) = env::current_dir() {
-            paths.push(cwd.join(".mosaicterm"));
-        }
+        // CWD is intentionally excluded from search paths to prevent
+        // untrusted project directories from injecting configuration.
 
         paths
     }

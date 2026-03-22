@@ -71,6 +71,9 @@ impl CompletionPopup {
     /// Move selection down
     pub fn select_next(&mut self) {
         if let Some(result) = &self.completion_result {
+            if result.suggestions.is_empty() {
+                return;
+            }
             self.selected_index = (self.selected_index + 1) % result.suggestions.len();
         }
     }

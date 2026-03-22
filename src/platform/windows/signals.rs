@@ -14,23 +14,26 @@ impl WindowsSignals {
 #[async_trait::async_trait]
 impl SignalOps for WindowsSignals {
     async fn send_interrupt(&self, pid: u32) -> Result<()> {
-        use windows_sys::Win32::System::Console::GenerateConsoleCtrlEvent;
-        use windows_sys::Win32::System::Console::CTRL_C_EVENT;
+        use windows_sys::Win32::System::Console::{
+            AttachConsole, FreeConsole, GenerateConsoleCtrlEvent, CTRL_C_EVENT,
+        };
 
-        // GenerateConsoleCtrlEvent sends Ctrl+C to a process group
-        // On Windows, we need to attach to the console of the target process
-        // For now, we'll use TerminateProcess as a fallback for interrupt
-        // Note: Proper Ctrl+C handling requires console attachment which is complex
-
-        // Try to send Ctrl+C event (only works if process shares our console)
+        // Proper Ctrl+C on Windows requires attaching to the target's console.
+        // GenerateConsoleCtrlEvent's second arg is a process group ID, not a PID.
+        // Using 0 sends to all processes attached to the current console.
         unsafe {
-            if GenerateConsoleCtrlEvent(CTRL_C_EVENT, pid) != 0 {
-                return Ok(());
+            // Detach from our own console, attach to the target's, send Ctrl+C, re-attach ours.
+            let attached = AttachConsole(pid) != 0;
+            if attached {
+                let sent = GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) != 0;
+                FreeConsole();
+                if sent {
+                    return Ok(());
+                }
             }
         }
 
-        // If that fails, fall back to termination
-        // This is not ideal but Windows doesn't have Unix-style signals
+        // Fallback: hard termination (Windows lacks Unix-style signals)
         self.send_terminate(pid).await
     }
 

@@ -113,11 +113,15 @@ impl ScreenBuffer {
 
     /// Add a line to the buffer
     pub fn add_line(&mut self, line: BufferLine) {
+        self.add_line_with_height(line, 24);
+    }
+
+    /// Add a line with a specific screen height for scrollback overflow
+    pub fn add_line_with_height(&mut self, line: BufferLine, screen_rows: usize) {
+        let rows = screen_rows.max(1);
         self.lines.push(line);
 
-        // If we exceed the screen height, move lines to scrollback
-        while self.lines.len() > 24 {
-            // Assuming 24 rows for now
+        while self.lines.len() > rows {
             if let Some(line) = self.lines.first().cloned() {
                 self.lines.remove(0);
                 self.scrollback.push(line);
@@ -126,7 +130,6 @@ impl ScreenBuffer {
             }
         }
 
-        // Maintain scrollback limit
         while self.scrollback.len() > self.max_scrollback {
             self.scrollback.remove(0);
         }
@@ -224,8 +227,8 @@ impl TerminalState {
         let new_row = (self.cursor.row as isize + delta_row).max(0) as usize;
         let new_col = (self.cursor.col as isize + delta_col).max(0) as usize;
 
-        self.cursor.row = new_row.min(self.dimensions.rows - 1);
-        self.cursor.col = new_col.min(self.dimensions.cols - 1);
+        self.cursor.row = new_row.min(self.dimensions.rows.saturating_sub(1));
+        self.cursor.col = new_col.min(self.dimensions.cols.saturating_sub(1));
         self.update_activity();
     }
 
