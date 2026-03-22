@@ -60,6 +60,8 @@ mod async_ops;
 mod commands;
 mod context;
 mod input;
+#[allow(dead_code)]
+pub mod pane_tree;
 mod prompt;
 mod ssh;
 
@@ -135,8 +137,10 @@ pub(crate) enum AsyncResult {
 pub struct MosaicTermApp {
     /// Centralized state manager - single source of truth
     state_manager: StateManager,
-    /// Terminal emulator instance
+    /// Terminal emulator instance (primary/single-pane mode)
     terminal: Option<Terminal>,
+    /// Multi-pane tree (Phase 3)
+    pane_tree: Option<pane_tree::PaneTree>,
     /// PTY manager for process management (with per-terminal locking)
     pty_manager: Arc<PtyManager>,
     /// Terminal factory for creating terminals
@@ -167,7 +171,6 @@ pub struct MosaicTermApp {
     env_query_in_progress: bool,
     env_query_lines: Vec<String>,
     /// Tokio runtime for async operations
-    /// Note: Field is kept alive to prevent runtime shutdown, even though it's not directly accessed
     #[allow(dead_code)]
     runtime: tokio::runtime::Runtime,
     /// Channel for sending async requests from UI to background
@@ -188,6 +191,61 @@ pub struct MosaicTermApp {
     ssh_remote_prompt: Option<String>,
     /// UI color theme (cached egui colors from config)
     ui_colors: mosaicterm::ui::UiColors,
+    /// Tool availability detection (Phase 5)
+    tool_availability: ToolAvailability,
+    /// Tmux session manager (Phase 4)
+    tmux_manager: Option<mosaicterm::session::TmuxSessionManager>,
+    /// Whether to show the session restore dialog
+    show_session_restore_dialog: bool,
+    /// Pending sessions to offer for restore
+    pending_restore_sessions: Vec<mosaicterm::session::tmux_backend::SessionInfo>,
+}
+
+/// Detected tool availability on the system
+#[derive(Debug, Clone)]
+pub struct ToolAvailability {
+    pub fzf: bool,
+    pub zoxide: bool,
+    pub tmux: bool,
+    pub fd: bool,
+    pub bat: bool,
+    pub eza: bool,
+}
+
+impl ToolAvailability {
+    pub fn detect() -> Self {
+        Self {
+            fzf: command_exists("fzf"),
+            zoxide: command_exists("zoxide"),
+            tmux: command_exists("tmux"),
+            fd: command_exists("fd"),
+            bat: command_exists("bat"),
+            eza: command_exists("eza"),
+        }
+    }
+}
+
+fn command_exists(cmd: &str) -> bool {
+    #[cfg(unix)]
+    {
+        std::process::Command::new("which")
+            .arg(cmd)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("where")
+            .arg(cmd)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
 }
 
 impl Default for MosaicTermApp {
@@ -221,10 +279,17 @@ impl MosaicTermApp {
             RuntimeConfig::new_minimal()
         });
 
-        // Create prompt formatter from config
+        // Create prompt formatter from config with style and custom segments
         let prompt_format = runtime_config.config().terminal.prompt_format.clone();
-        info!("Loading prompt format from config: '{}'", prompt_format);
-        let prompt_formatter = PromptFormatter::new(prompt_format);
+        let prompt_style = runtime_config.config().prompt.style.clone();
+        let prompt_segments = runtime_config.config().prompt.segments.clone();
+        info!(
+            "Loading prompt format from config: '{}', style: {:?}",
+            prompt_format, prompt_style
+        );
+        let prompt_formatter = PromptFormatter::new(prompt_format)
+            .with_style(prompt_style)
+            .with_custom_segments(prompt_segments);
 
         // Create input prompt with initial prompt rendering
         let mut input_prompt = InputPrompt::new();
@@ -286,9 +351,39 @@ impl MosaicTermApp {
         );
         let ui_colors = mosaicterm::ui::UiColors::from_theme(theme);
 
+        let tool_availability = ToolAvailability::detect();
+        info!(
+            "Detected tools: fzf={}, zoxide={}, tmux={}, fd={}, bat={}, eza={}",
+            tool_availability.fzf,
+            tool_availability.zoxide,
+            tool_availability.tmux,
+            tool_availability.fd,
+            tool_availability.bat,
+            tool_availability.eza
+        );
+
+        let tmux_manager = if tool_availability.tmux && runtime_config.config().session.persistence
+        {
+            let mgr = mosaicterm::session::TmuxSessionManager::new();
+            let sessions = mgr.list_mosaicterm_sessions();
+            if !sessions.is_empty() {
+                info!("Found {} existing MosaicTerm tmux sessions", sessions.len());
+            }
+            Some(mgr)
+        } else {
+            None
+        };
+
+        let pending_restore_sessions = tmux_manager
+            .as_ref()
+            .map(|mgr| mgr.list_mosaicterm_sessions())
+            .unwrap_or_default();
+        let show_session_restore_dialog = !pending_restore_sessions.is_empty();
+
         Self {
             state_manager,
             terminal: None,
+            pane_tree: None,
             pty_manager,
             terminal_factory,
             command_blocks,
@@ -319,17 +414,21 @@ impl MosaicTermApp {
             ssh_session_command: None,
             ssh_remote_prompt: None,
             ui_colors,
+            tool_availability,
+            tmux_manager,
+            show_session_restore_dialog,
+            pending_restore_sessions,
         }
     }
 
     /// Create application with runtime configuration
     pub fn with_config(runtime_config: RuntimeConfig) -> Self {
         let mut app = Self::new();
-        app.prompt_formatter = PromptFormatter::new(
-            runtime_config.config().terminal.prompt_format.clone(),
-        );
-        app.ui_colors =
-            mosaicterm::ui::UiColors::from_theme(&runtime_config.config().ui.theme);
+        app.prompt_formatter =
+            PromptFormatter::new(runtime_config.config().terminal.prompt_format.clone())
+                .with_style(runtime_config.config().prompt.style.clone())
+                .with_custom_segments(runtime_config.config().prompt.segments.clone());
+        app.ui_colors = mosaicterm::ui::UiColors::from_theme(&runtime_config.config().ui.theme);
         app.runtime_config = runtime_config;
         app
     }
@@ -514,6 +613,35 @@ impl MosaicTermApp {
         if let Err(e) = self.history_manager.add(command.clone()) {
             warn!("Failed to add command to history: {}", e);
         }
+
+        // Intercept `z` and `zi` commands when zoxide is available
+        let command = if self.tool_availability.zoxide {
+            let parts: Vec<&str> = command.split_whitespace().collect();
+            if let Some(&cmd) = parts.first() {
+                if cmd == "z" || cmd == "zi" {
+                    if parts.len() >= 2 {
+                        let query = parts[1..].join(" ");
+                        if let Some(resolved) = Self::zoxide_query(&query) {
+                            info!("zoxide resolved '{} {}' -> 'cd {}'", cmd, query, resolved);
+                            format!("cd {}", resolved)
+                        } else {
+                            warn!("zoxide found no match for '{}', passing through", query);
+                            command
+                        }
+                    } else {
+                        // Bare `z` goes home, matching zoxide default behavior
+                        info!("Bare 'z' -> 'cd ~'");
+                        "cd ~".to_string()
+                    }
+                } else {
+                    command
+                }
+            } else {
+                command
+            }
+        } else {
+            command
+        };
 
         // Check if this is a TUI command that should open in fullscreen overlay
         if self.is_tui_command(&command) {
@@ -728,10 +856,67 @@ impl MosaicTermApp {
 
     /// Parse environment output and update contexts
     fn parse_env_output(&mut self, output: &str) {
-        let env_context_strings =
-            context::parse_env_and_detect_contexts(output, &self.context_detector);
+        let working_dir = self
+            .terminal
+            .as_ref()
+            .map(|t| t.get_working_directory().to_path_buf());
+        let env_context_strings = context::parse_env_and_detect_contexts(
+            output,
+            &self.context_detector,
+            working_dir.as_deref(),
+        );
         context::update_state_env_contexts(&mut self.state_manager, env_context_strings);
         info!("Updated contexts from shell environment");
+    }
+
+    fn zoxide_query(query: &str) -> Option<String> {
+        let output = std::process::Command::new("zoxide")
+            .args(["query", "--", query])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    fn zoxide_add_background(dir: &std::path::Path) {
+        let dir_str = dir.display().to_string();
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new("zoxide")
+                .args(["add", &dir_str])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        });
+    }
+
+    fn is_env_query_output(line: &str) -> bool {
+        const ENV_PREFIXES: &[&str] = &[
+            "VIRTUAL_ENV=",
+            "CONDA_DEFAULT_ENV=",
+            "CONDA_PREFIX=",
+            "NVM_BIN=",
+            "RBENV_VERSION=",
+            "rvm_ruby_string=",
+            "DIRENV_DIR=",
+            "GOVERSION=",
+            "JAVA_HOME=",
+            "RUSTUP_TOOLCHAIN=",
+            "DOCKER_HOST=",
+            "DOCKER_CONTEXT=",
+            "KUBECONFIG=",
+            "AWS_PROFILE=",
+            "AWS_DEFAULT_PROFILE=",
+            "TF_WORKSPACE=",
+        ];
+        ENV_PREFIXES.iter().any(|p| line.starts_with(p))
     }
 
     /// Check if a command is a TUI app that should open in fullscreen overlay
@@ -980,6 +1165,65 @@ impl MosaicTermApp {
         }
     }
 
+    fn render_session_restore_dialog(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Restore Session")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("Previous MosaicTerm sessions found")
+                        .font(egui::FontId::monospace(13.0))
+                        .color(self.ui_colors.foreground),
+                );
+                ui.add_space(8.0);
+
+                let sessions = self.pending_restore_sessions.clone();
+                for session in &sessions {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(&session.name)
+                                .font(egui::FontId::monospace(12.0))
+                                .color(self.ui_colors.accent),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} windows - {}",
+                                session.windows, session.created
+                            ))
+                            .font(egui::FontId::monospace(11.0))
+                            .color(self.ui_colors.status_bar.text),
+                        );
+                    });
+                }
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Restore").clicked() {
+                        info!("User chose to restore tmux sessions");
+                        self.show_session_restore_dialog = false;
+                    }
+                    if ui.button("Start Fresh").clicked() {
+                        if let Some(mgr) = &self.tmux_manager {
+                            let killed = mgr.kill_all_mosaicterm_sessions();
+                            info!("Killed {} old tmux sessions", killed);
+                        }
+                        self.show_session_restore_dialog = false;
+                        self.pending_restore_sessions.clear();
+                    }
+                });
+
+                if self.runtime_config.config().session.auto_restore {
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("(auto-restore is enabled in config)")
+                            .font(egui::FontId::monospace(10.0))
+                            .color(egui::Color32::from_rgb(120, 120, 140)),
+                    );
+                }
+            });
+    }
+
     /// Render context menu for command blocks
     fn render_context_menu(&mut self, ctx: &egui::Context) {
         // Check if we have an active context menu
@@ -993,14 +1237,21 @@ impl MosaicTermApp {
                 // Find the command block and extract all data before borrowing self mutably
                 let block_data = {
                     let command_history = self.state_manager.get_command_history();
-                    command_history.iter().find(|b| &b.id == block_id).map(|block| {
-                        (
-                            block.command.clone(),
-                            block.status,
-                            block.output.iter().map(|line| line.text.clone()).collect::<Vec<_>>(),
-                            block.working_directory.clone(),
-                        )
-                    })
+                    command_history
+                        .iter()
+                        .find(|b| &b.id == block_id)
+                        .map(|block| {
+                            (
+                                block.command.clone(),
+                                block.status,
+                                block
+                                    .output
+                                    .iter()
+                                    .map(|line| line.text.clone())
+                                    .collect::<Vec<_>>(),
+                                block.working_directory.clone(),
+                            )
+                        })
                 };
                 if let Some((command, status, output_lines, working_dir)) = block_data {
                     // Create context menu
@@ -1281,6 +1532,11 @@ impl eframe::App for MosaicTermApp {
                 });
         }
 
+        // Session restore dialog (Phase 4)
+        if self.show_session_restore_dialog {
+            self.render_session_restore_dialog(ctx);
+        }
+
         // Main layout with scrollable history and pinned input
         egui::CentralPanel::default()
             .frame(
@@ -1289,31 +1545,31 @@ impl eframe::App for MosaicTermApp {
                     .inner_margin(egui::Margin::same(2.0)),
             )
             .show(ctx, |ui| {
-            let available_height = ui.available_height();
-            let input_height = 60.0;
-            let history_height = (available_height - input_height).max(100.0);
+                let available_height = ui.available_height();
+                let input_height = 60.0;
+                let history_height = (available_height - input_height).max(100.0);
 
-            // Layout from bottom to top: input at bottom, then history above it
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                // FIXED INPUT AREA AT BOTTOM - This stays static
-                ui.allocate_ui_with_layout(
-                    egui::Vec2::new(ui.available_width(), input_height),
-                    egui::Layout::left_to_right(egui::Align::LEFT),
-                    |ui| {
-                        self.render_fixed_input_area(ui);
-                    },
-                );
+                // Layout from bottom to top: input at bottom, then history above it
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                    // FIXED INPUT AREA AT BOTTOM - This stays static
+                    ui.allocate_ui_with_layout(
+                        egui::Vec2::new(ui.available_width(), input_height),
+                        egui::Layout::left_to_right(egui::Align::LEFT),
+                        |ui| {
+                            self.render_fixed_input_area(ui);
+                        },
+                    );
 
-                // HISTORY AREA ABOVE INPUT - Scrollable, with commands stacking from newest to oldest
-                ui.allocate_ui_with_layout(
-                    egui::Vec2::new(ui.available_width(), history_height),
-                    egui::Layout::top_down(egui::Align::LEFT),
-                    |ui| {
-                        self.render_command_history_area(ui);
-                    },
-                );
+                    // HISTORY AREA ABOVE INPUT - Scrollable, with commands stacking from newest to oldest
+                    ui.allocate_ui_with_layout(
+                        egui::Vec2::new(ui.available_width(), history_height),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            self.render_command_history_area(ui);
+                        },
+                    );
+                });
             });
-        });
 
         // Render context menu if active
         self.render_context_menu(ctx);
@@ -1589,11 +1845,23 @@ impl MosaicTermApp {
 
     /// Render the fixed input area at the bottom
     fn render_fixed_input_area(&mut self, ui: &mut egui::Ui) {
+        // Thin separator line above the input area
+        let sep_rect = egui::Rect::from_min_size(
+            egui::pos2(ui.max_rect().left(), ui.cursor().top()),
+            egui::vec2(ui.available_width(), 1.0),
+        );
+        ui.painter().rect_filled(
+            sep_rect,
+            egui::Rounding::ZERO,
+            egui::Color32::from_rgb(50, 55, 70),
+        );
+        ui.add_space(1.0);
+
         let input_frame = egui::Frame::none()
             .fill(self.ui_colors.input.background)
-            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-            .outer_margin(egui::Margin::symmetric(2.0, 2.0))
-            .rounding(egui::Rounding::same(4.0));
+            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+            .outer_margin(egui::Margin::symmetric(2.0, 1.0))
+            .rounding(egui::Rounding::same(0.0));
 
         let frame_response = input_frame.show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -1616,16 +1884,20 @@ impl MosaicTermApp {
                     egui::TextEdit::singleline(&mut current_input)
                         .font(egui::FontId::monospace(13.0))
                         .desired_width(f32::INFINITY)
-                        .hint_text("Type a command...")
-                        .margin(egui::Vec2::new(6.0, 4.0))
+                        .hint_text(
+                            egui::RichText::new("Type a command...")
+                                .font(egui::FontId::monospace(13.0))
+                                .color(egui::Color32::from_rgb(80, 85, 100)),
+                        )
+                        .margin(egui::Vec2::new(6.0, 5.0))
                         .lock_focus(true),
                 );
 
                 if input_response.has_focus() {
-                    let glow_rect = input_response.rect.expand(1.5);
+                    let glow_rect = input_response.rect.expand(1.0);
                     ui.painter().rect_stroke(
                         glow_rect,
-                        3.0,
+                        2.0,
                         egui::Stroke::new(1.0, self.ui_colors.input.focused_border),
                     );
                 }
@@ -1935,8 +2207,15 @@ impl MosaicTermApp {
                             ui.separator();
                             ui.add_space(8.0);
 
-                            // Search results
-                            let results = self.history_manager.search(&self.history_search_query);
+                            // Search results - use fzf if available for better fuzzy matching
+                            let results = if !self.history_search_query.is_empty() {
+                                let history_entries: Vec<String> =
+                                    self.history_manager.entries().iter().rev().cloned().collect();
+                                self.completion_provider
+                                    .fzf_filter_history(&history_entries, &self.history_search_query)
+                            } else {
+                                self.history_manager.search(&self.history_search_query)
+                            };
 
                             // Handle arrow key navigation (check if search field is focused)
                             let selected_idx = self.state_manager.get_history_search_selected();
@@ -2047,11 +2326,10 @@ impl MosaicTermApp {
             status_frame.show(ui, |ui| {
                 ui.set_height(16.0);
                 ui.horizontal(|ui| {
-                    let (status_text, status_color) =
-                        match self.state_manager.status_message() {
-                            Some(msg) => (msg, colors.status_bar.ssh_indicator),
-                            None => ("Ready".to_string(), colors.status_bar.text),
-                        };
+                    let (status_text, status_color) = match self.state_manager.status_message() {
+                        Some(msg) => (msg, colors.status_bar.ssh_indicator),
+                        None => ("Ready".to_string(), colors.status_bar.text),
+                    };
                     ui.label(
                         egui::RichText::new(status_text)
                             .font(egui::FontId::monospace(11.0))
@@ -2066,6 +2344,17 @@ impl MosaicTermApp {
                                     .font(egui::FontId::monospace(11.0))
                                     .color(colors.status_bar.text),
                             );
+                        }
+                        if let Some(tree) = &self.pane_tree {
+                            let count = tree.pane_count();
+                            if count > 1 {
+                                ui.separator();
+                                ui.label(
+                                    egui::RichText::new(format!("pane {}", tree.active_id()))
+                                        .font(egui::FontId::monospace(11.0))
+                                        .color(colors.accent),
+                                );
+                            }
                         }
                     });
                 });
@@ -2136,55 +2425,62 @@ impl MosaicTermApp {
         _index: usize,
         colors: &mosaicterm::ui::UiColors,
     ) -> Option<(String, egui::Pos2)> {
-        let border_color = match block.status {
+        let accent_color = match block.status {
             ExecutionStatus::Running => colors.blocks.status_running,
             ExecutionStatus::Failed => colors.blocks.status_failed,
-            _ => colors.blocks.border,
+            ExecutionStatus::Completed => colors.blocks.status_completed,
+            ExecutionStatus::Cancelled => colors.blocks.status_cancelled,
+            ExecutionStatus::Pending => colors.blocks.border,
+            ExecutionStatus::TuiMode => colors.blocks.status_tui,
         };
 
+        let is_compact = block.output.is_empty();
+
+        let bg = colors.blocks.background;
         let block_frame = egui::Frame::none()
-            .fill(colors.blocks.background)
-            .stroke(egui::Stroke::new(1.0, border_color))
-            .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-            .outer_margin(egui::Margin::symmetric(0.0, 3.0))
-            .rounding(egui::Rounding::same(4.0));
+            .fill(bg)
+            .inner_margin(if is_compact {
+                egui::Margin::symmetric(8.0, 3.0)
+            } else {
+                egui::Margin::symmetric(8.0, 5.0)
+            })
+            .outer_margin(egui::Margin::symmetric(0.0, 2.0))
+            .rounding(egui::Rounding::same(3.0));
 
         let frame_response = block_frame.show(ui, |ui| {
+            // Draw left accent stripe
+            let rect = ui.max_rect();
+            let stripe_rect = egui::Rect::from_min_max(
+                egui::pos2(rect.left() - 8.0, rect.top()),
+                egui::pos2(rect.left() - 5.0, rect.bottom()),
+            );
+            ui.painter()
+                .rect_filled(stripe_rect, egui::Rounding::same(1.5), accent_color);
+
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
-                    // Command prompt symbol
-                    ui.label(
-                        egui::RichText::new("$")
-                            .font(egui::FontId::monospace(13.0))
-                            .color(colors.blocks.prompt),
-                    );
-                    ui.add_space(4.0);
                     ui.label(
                         egui::RichText::new(&block.command)
-                            .font(egui::FontId::monospace(13.0))
+                            .font(egui::FontId::monospace(12.0))
                             .color(colors.blocks.command_text)
                             .strong(),
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Timestamp on the right
                         ui.label(
                             egui::RichText::new(block.timestamp.format("%H:%M:%S").to_string())
                                 .font(egui::FontId::monospace(10.0))
                                 .color(colors.blocks.timestamp),
                         );
-                        ui.add_space(8.0);
 
                         let (status_text, status_color) = match block.status {
                             ExecutionStatus::Running => ("running", colors.blocks.status_running),
-                            ExecutionStatus::Completed => {
-                                ("ok", colors.blocks.status_completed)
-                            }
-                            ExecutionStatus::Failed => ("failed", colors.blocks.status_failed),
+                            ExecutionStatus::Completed => ("ok", colors.blocks.status_completed),
+                            ExecutionStatus::Failed => ("fail", colors.blocks.status_failed),
                             ExecutionStatus::Cancelled => {
-                                ("cancelled", colors.blocks.status_cancelled)
+                                ("cancel", colors.blocks.status_cancelled)
                             }
-                            ExecutionStatus::Pending => ("pending", colors.blocks.status_pending),
+                            ExecutionStatus::Pending => ("...", colors.blocks.status_pending),
                             ExecutionStatus::TuiMode => ("tui", colors.blocks.status_tui),
                         };
 
@@ -2197,12 +2493,12 @@ impl MosaicTermApp {
                 });
 
                 if !block.output.is_empty() {
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
 
                     let output_frame = egui::Frame::none()
                         .fill(colors.blocks.header_background)
-                        .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                        .rounding(egui::Rounding::same(3.0));
+                        .inner_margin(egui::Margin::symmetric(6.0, 3.0))
+                        .rounding(egui::Rounding::same(2.0));
 
                     output_frame.show(ui, |ui| {
                         for line in block.output.iter() {
@@ -2234,6 +2530,14 @@ impl MosaicTermApp {
                 }
             });
         });
+
+        // Hover effect: lighten background
+        if frame_response.response.hovered() {
+            let hover_rect = frame_response.response.rect;
+            let hover_color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 15);
+            ui.painter()
+                .rect_filled(hover_rect, egui::Rounding::same(3.0), hover_color);
+        }
 
         // Check if mouse is over this block and right-click was pressed
         if frame_response.response.hovered() && ui.input(|i| i.pointer.secondary_clicked()) {
@@ -2434,17 +2738,29 @@ impl MosaicTermApp {
                             // Send raw bytes directly to overlay - TUI apps need ANSI codes!
                             self.tui_overlay.add_raw_output(&data);
 
-                            // Check if output contains shell prompt (indicating TUI app exited)
+                            // Check if the TUI process has exited by looking for a
+                            // shell prompt at the very end of the output. Must be strict
+                            // to avoid false positives from editor content (e.g. vim).
                             let data_str = String::from_utf8_lossy(&data);
-                            let has_prompt = data_str.ends_with("$ ")
-                                || data_str.ends_with("% ")
-                                || data_str.ends_with("> ")
-                                || data_str.contains("@")
-                                    && (data_str.contains("$") || data_str.contains("%"));
+                            let trimmed = data_str.trim_end();
+                            let has_prompt = trimmed.ends_with("$ ")
+                                || trimmed.ends_with("% ")
+                                || trimmed.ends_with("# ");
 
-                            if has_prompt {
-                                debug!("Detected prompt in TUI output, marking as exited");
-                                self.tui_overlay.mark_exited();
+                            if has_prompt && self.tui_overlay.has_exited() {
+                                debug!("Confirmed TUI exit with prompt in output");
+                            } else if has_prompt {
+                                // Only mark as exited if the last few chars look exactly
+                                // like a fresh shell prompt line
+                                let last_line = trimmed.lines().last().unwrap_or("");
+                                let looks_like_prompt = last_line.ends_with("$ ")
+                                    || last_line.ends_with("% ")
+                                    || last_line.ends_with("# ");
+                                let is_short_line = last_line.len() < 200;
+                                if looks_like_prompt && is_short_line {
+                                    debug!("Detected shell prompt after TUI exit: '{}'", last_line);
+                                    self.tui_overlay.mark_exited();
+                                }
                             }
 
                             return; // Don't process output for command blocks
@@ -2689,21 +3005,29 @@ impl MosaicTermApp {
 
                                         // Skip exit code marker, env query markers, pwd marker, and the echo commands
                                         if line_text.starts_with("MOSAICTERM_EXITCODE:")
-                                                || line_text.contains("echo \"MOSAICTERM_EXITCODE:")
-                                                || line_text == "echo \"MOSAICTERM_EXITCODE:$?\""
-                                                || line_text.starts_with("MOSAICTERM_PWD:")
-                                                || line_text.contains("echo \"MOSAICTERM_PWD:")
-                                                || line_text.contains("MOSAICTERM_ENV_QUERY")
-                                                || line_text.starts_with("echo 'MOSAICTERM_ENV_QUERY")
-                                                || line_text.starts_with("echo \"VIRTUAL_ENV=")
-                                                || line_text.starts_with("echo \"CONDA_DEFAULT_ENV=")
-                                                || line_text.starts_with("echo \"NVM_BIN=")
-                                                || line_text.starts_with("echo \"RBENV_VERSION=")
-                                                // Also skip the OUTPUT of those echo commands
-                                                || line_text.starts_with("VIRTUAL_ENV=")
-                                                || line_text.starts_with("CONDA_DEFAULT_ENV=")
-                                                || line_text.starts_with("NVM_BIN=")
-                                                || line_text.starts_with("RBENV_VERSION=")
+                                            || line_text.contains("echo \"MOSAICTERM_EXITCODE:")
+                                            || line_text == "echo \"MOSAICTERM_EXITCODE:$?\""
+                                            || line_text.starts_with("MOSAICTERM_PWD:")
+                                            || line_text.contains("echo \"MOSAICTERM_PWD:")
+                                            || line_text.contains("MOSAICTERM_ENV_QUERY")
+                                            || line_text.starts_with("echo 'MOSAICTERM_ENV_QUERY")
+                                            || line_text.starts_with("echo \"VIRTUAL_ENV=")
+                                            || line_text.starts_with("echo \"CONDA_DEFAULT_ENV=")
+                                            || line_text.starts_with("echo \"CONDA_PREFIX=")
+                                            || line_text.starts_with("echo \"NVM_BIN=")
+                                            || line_text.starts_with("echo \"RBENV_VERSION=")
+                                            || line_text.starts_with("echo \"rvm_ruby_string=")
+                                            || line_text.starts_with("echo \"DIRENV_DIR=")
+                                            || line_text.starts_with("echo \"GOVERSION=")
+                                            || line_text.starts_with("echo \"JAVA_HOME=")
+                                            || line_text.starts_with("echo \"RUSTUP_TOOLCHAIN=")
+                                            || line_text.starts_with("echo \"DOCKER_HOST=")
+                                            || line_text.starts_with("echo \"DOCKER_CONTEXT=")
+                                            || line_text.starts_with("echo \"KUBECONFIG=")
+                                            || line_text.starts_with("echo \"AWS_PROFILE=")
+                                            || line_text.starts_with("echo \"AWS_DEFAULT_PROFILE=")
+                                            || line_text.starts_with("echo \"TF_WORKSPACE=")
+                                            || Self::is_env_query_output(line_text)
                                         {
                                             continue;
                                         }
@@ -3172,9 +3496,27 @@ impl MosaicTermApp {
             if let Some(terminal) = &self.terminal {
                 if let Some(handle) = terminal.pty_handle() {
                     let marker = "MOSAICTERM_ENV_QUERY";
-                    // Print each variable explicitly with its name, even if empty
                     let query_cmd = format!(
-                        "echo '{}:START'; echo \"VIRTUAL_ENV=${{VIRTUAL_ENV}}\"; echo \"CONDA_DEFAULT_ENV=${{CONDA_DEFAULT_ENV}}\"; echo \"NVM_BIN=${{NVM_BIN}}\"; echo \"RBENV_VERSION=${{RBENV_VERSION}}\"; echo '{}:END'\n",
+                        concat!(
+                            "echo '{}:START';",
+                            " echo \"VIRTUAL_ENV=${{VIRTUAL_ENV}}\";",
+                            " echo \"CONDA_DEFAULT_ENV=${{CONDA_DEFAULT_ENV}}\";",
+                            " echo \"CONDA_PREFIX=${{CONDA_PREFIX}}\";",
+                            " echo \"NVM_BIN=${{NVM_BIN}}\";",
+                            " echo \"RBENV_VERSION=${{RBENV_VERSION}}\";",
+                            " echo \"rvm_ruby_string=${{rvm_ruby_string}}\";",
+                            " echo \"DIRENV_DIR=${{DIRENV_DIR}}\";",
+                            " echo \"GOVERSION=${{GOVERSION}}\";",
+                            " echo \"JAVA_HOME=${{JAVA_HOME}}\";",
+                            " echo \"RUSTUP_TOOLCHAIN=${{RUSTUP_TOOLCHAIN}}\";",
+                            " echo \"DOCKER_HOST=${{DOCKER_HOST}}\";",
+                            " echo \"DOCKER_CONTEXT=${{DOCKER_CONTEXT}}\";",
+                            " echo \"KUBECONFIG=${{KUBECONFIG}}\";",
+                            " echo \"AWS_PROFILE=${{AWS_PROFILE}}\";",
+                            " echo \"AWS_DEFAULT_PROFILE=${{AWS_DEFAULT_PROFILE}}\";",
+                            " echo \"TF_WORKSPACE=${{TF_WORKSPACE}}\";",
+                            " echo '{}:END'\n",
+                        ),
                         marker, marker
                     );
 
@@ -3212,8 +3554,10 @@ impl MosaicTermApp {
                     .set_previous_directory(Some(current_tracked));
                 self.update_contexts();
                 self.update_prompt();
-                // Note: DirectExecutor will pick up the new directory on next command
-                // since it reads from terminal.get_working_directory() each time
+
+                if self.tool_availability.zoxide {
+                    Self::zoxide_add_background(&canonical_dir);
+                }
             }
         }
     }

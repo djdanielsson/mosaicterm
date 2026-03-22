@@ -22,6 +22,14 @@ pub struct Config {
     /// Key bindings configuration
     #[serde(default)]
     pub key_bindings: KeyBindingsConfig,
+
+    /// Prompt configuration
+    #[serde(default)]
+    pub prompt: PromptConfig,
+
+    /// Session persistence configuration
+    #[serde(default)]
+    pub session: SessionConfig,
 }
 
 /// UI-related configuration
@@ -516,6 +524,80 @@ impl Default for StatusBarColors {
             border: Color::from_rgb8(80, 80, 100),
         }
     }
+}
+
+/// Prompt style configuration
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum PromptStyle {
+    Classic,
+    Minimal,
+    Powerline,
+    Starship,
+    OhMyZsh,
+    Custom,
+}
+
+impl Default for PromptStyle {
+    fn default() -> Self {
+        Self::Minimal
+    }
+}
+
+/// A single prompt segment definition for Custom style
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptSegmentConfig {
+    pub content: String,
+    #[serde(default)]
+    pub fg: Option<String>,
+    #[serde(default)]
+    pub bg: Option<String>,
+    #[serde(default)]
+    pub bold: bool,
+    #[serde(default)]
+    pub condition: Option<String>,
+}
+
+/// Prompt configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromptConfig {
+    pub style: PromptStyle,
+    pub format: String,
+    #[serde(default)]
+    pub segments: Vec<PromptSegmentConfig>,
+    #[serde(default = "default_show_git")]
+    pub show_git: bool,
+    #[serde(default = "default_show_env")]
+    pub show_env: bool,
+}
+
+fn default_show_git() -> bool {
+    true
+}
+
+fn default_show_env() -> bool {
+    true
+}
+
+impl Default for PromptConfig {
+    fn default() -> Self {
+        Self {
+            style: PromptStyle::default(),
+            format: "$PWD > ".to_string(),
+            segments: Vec::new(),
+            show_git: true,
+            show_env: true,
+        }
+    }
+}
+
+/// Session persistence configuration
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionConfig {
+    pub persistence: bool,
+    pub auto_restore: bool,
 }
 
 /// Key bindings configuration

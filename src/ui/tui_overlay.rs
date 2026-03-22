@@ -108,11 +108,19 @@ impl Default for CellStyle {
 
 impl CellStyle {
     fn effective_fg(&self) -> AnsiColor {
-        if self.reverse { self.bg } else { self.fg }
+        if self.reverse {
+            self.bg
+        } else {
+            self.fg
+        }
     }
 
     fn effective_bg(&self) -> AnsiColor {
-        if self.reverse { self.fg } else { self.bg }
+        if self.reverse {
+            self.fg
+        } else {
+            self.bg
+        }
     }
 }
 
@@ -178,7 +186,10 @@ impl ScreenBuffer {
     }
 
     fn clear(&mut self) {
-        let blank = Cell { ch: ' ', style: self.current_style };
+        let blank = Cell {
+            ch: ' ',
+            style: self.current_style,
+        };
         for row in &mut self.grid {
             row.fill(blank);
         }
@@ -187,7 +198,10 @@ impl ScreenBuffer {
     }
 
     fn clear_from_cursor_to_end_of_screen(&mut self) {
-        let blank = Cell { ch: ' ', style: self.current_style };
+        let blank = Cell {
+            ch: ' ',
+            style: self.current_style,
+        };
         if self.cursor_row < self.rows {
             for c in self.cursor_col..self.cols {
                 self.grid[self.cursor_row][c] = blank;
@@ -199,7 +213,10 @@ impl ScreenBuffer {
     }
 
     fn clear_from_start_to_cursor(&mut self) {
-        let blank = Cell { ch: ' ', style: self.current_style };
+        let blank = Cell {
+            ch: ' ',
+            style: self.current_style,
+        };
         for r in 0..self.cursor_row {
             self.grid[r].fill(blank);
         }
@@ -212,7 +229,10 @@ impl ScreenBuffer {
 
     fn clear_line_from_cursor(&mut self) {
         if self.cursor_row < self.rows {
-            let blank = Cell { ch: ' ', style: self.current_style };
+            let blank = Cell {
+                ch: ' ',
+                style: self.current_style,
+            };
             for c in self.cursor_col..self.cols {
                 self.grid[self.cursor_row][c] = blank;
             }
@@ -221,7 +241,10 @@ impl ScreenBuffer {
 
     fn clear_line_to_cursor(&mut self) {
         if self.cursor_row < self.rows {
-            let blank = Cell { ch: ' ', style: self.current_style };
+            let blank = Cell {
+                ch: ' ',
+                style: self.current_style,
+            };
             for c in 0..=self.cursor_col.min(self.cols - 1) {
                 self.grid[self.cursor_row][c] = blank;
             }
@@ -230,7 +253,10 @@ impl ScreenBuffer {
 
     fn clear_entire_line(&mut self) {
         if self.cursor_row < self.rows {
-            let blank = Cell { ch: ' ', style: self.current_style };
+            let blank = Cell {
+                ch: ' ',
+                style: self.current_style,
+            };
             self.grid[self.cursor_row].fill(blank);
         }
     }
@@ -277,7 +303,10 @@ impl ScreenBuffer {
     }
 
     fn scroll_up(&mut self, n: usize) {
-        let blank = Cell { ch: ' ', style: CellStyle::default() };
+        let blank = Cell {
+            ch: ' ',
+            style: CellStyle::default(),
+        };
         for _ in 0..n {
             if self.scroll_top < self.scroll_bottom && self.scroll_bottom < self.rows {
                 for r in self.scroll_top..self.scroll_bottom {
@@ -289,7 +318,10 @@ impl ScreenBuffer {
     }
 
     fn scroll_down(&mut self, n: usize) {
-        let blank = Cell { ch: ' ', style: CellStyle::default() };
+        let blank = Cell {
+            ch: ' ',
+            style: CellStyle::default(),
+        };
         for _ in 0..n {
             if self.scroll_top < self.scroll_bottom && self.scroll_bottom < self.rows {
                 for r in (self.scroll_top + 1..=self.scroll_bottom).rev() {
@@ -301,7 +333,10 @@ impl ScreenBuffer {
     }
 
     fn insert_lines(&mut self, n: usize) {
-        let blank = Cell { ch: ' ', style: CellStyle::default() };
+        let blank = Cell {
+            ch: ' ',
+            style: CellStyle::default(),
+        };
         for _ in 0..n {
             if self.cursor_row <= self.scroll_bottom && self.scroll_bottom < self.rows {
                 for r in (self.cursor_row + 1..=self.scroll_bottom).rev() {
@@ -313,7 +348,10 @@ impl ScreenBuffer {
     }
 
     fn delete_lines(&mut self, n: usize) {
-        let blank = Cell { ch: ' ', style: CellStyle::default() };
+        let blank = Cell {
+            ch: ' ',
+            style: CellStyle::default(),
+        };
         for _ in 0..n {
             if self.cursor_row <= self.scroll_bottom && self.scroll_bottom < self.rows {
                 for r in self.cursor_row..self.scroll_bottom {
@@ -326,7 +364,10 @@ impl ScreenBuffer {
 
     fn insert_chars(&mut self, n: usize) {
         if self.cursor_row < self.rows {
-            let blank = Cell { ch: ' ', style: self.current_style };
+            let blank = Cell {
+                ch: ' ',
+                style: self.current_style,
+            };
             for _ in 0..n {
                 if self.cursor_col < self.cols {
                     self.grid[self.cursor_row].pop();
@@ -339,7 +380,10 @@ impl ScreenBuffer {
 
     fn delete_chars(&mut self, n: usize) {
         if self.cursor_row < self.rows {
-            let blank = Cell { ch: ' ', style: self.current_style };
+            let blank = Cell {
+                ch: ' ',
+                style: self.current_style,
+            };
             for _ in 0..n {
                 if self.cursor_col < self.grid[self.cursor_row].len() {
                     self.grid[self.cursor_row].remove(self.cursor_col);
@@ -442,6 +486,10 @@ pub struct TuiOverlay {
     has_exited: bool,
     /// Last measured available size in character cells (rows, cols)
     last_char_size: Option<(usize, usize)>,
+    /// Timestamp of last Escape press for double-Escape detection
+    last_escape_time: Option<std::time::Instant>,
+    /// Pending resize (rows, cols) that the caller should apply to the PTY
+    pending_resize: Option<(u16, u16)>,
 }
 
 impl Default for TuiOverlay {
@@ -460,6 +508,8 @@ impl TuiOverlay {
             screen_buffer: ScreenBuffer::new(50, 120),
             has_exited: false,
             last_char_size: None,
+            last_escape_time: None,
+            pending_resize: None,
         }
     }
 
@@ -511,6 +561,17 @@ impl TuiOverlay {
         (self.screen_buffer.rows, self.screen_buffer.cols)
     }
 
+    /// Get the last measured character cell size (rows, cols), if available.
+    pub fn last_size(&self) -> Option<(usize, usize)> {
+        self.last_char_size
+    }
+
+    /// Take the pending resize request, if any.
+    /// Returns (rows, cols) as u16 suitable for PTY resize calls.
+    pub fn take_pending_resize(&mut self) -> Option<(u16, u16)> {
+        self.pending_resize.take()
+    }
+
     /// Add raw output data and process ANSI sequences
     pub fn add_raw_output(&mut self, data: &[u8]) {
         let text = String::from_utf8_lossy(data);
@@ -549,16 +610,17 @@ impl TuiOverlay {
                     chars.next();
                     while let Some(&next_ch) = chars.peek() {
                         chars.next();
-                        if next_ch == '\x07'
-                            || (next_ch == '\x1b' && chars.peek() == Some(&'\\'))
-                        {
+                        if next_ch == '\x07' || (next_ch == '\x1b' && chars.peek() == Some(&'\\')) {
                             if next_ch == '\x1b' {
                                 chars.next();
                             }
                             break;
                         }
                     }
-                } else if chars.peek() == Some(&'P') || chars.peek() == Some(&'^') || chars.peek() == Some(&'_') {
+                } else if chars.peek() == Some(&'P')
+                    || chars.peek() == Some(&'^')
+                    || chars.peek() == Some(&'_')
+                {
                     chars.next();
                     while let Some(&next_ch) = chars.peek() {
                         chars.next();
@@ -623,17 +685,13 @@ impl TuiOverlay {
         match cmd {
             'H' | 'f' => {
                 let parts: Vec<&str> = clean_params.split(';').collect();
-                let row = parts
-                    .first()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(1);
+                let row = parts.first().and_then(|s| s.parse().ok()).unwrap_or(1);
                 let col = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1);
                 self.screen_buffer.move_cursor(row, col);
             }
             'A' => {
                 let n: usize = clean_params.parse().unwrap_or(1).max(1);
-                self.screen_buffer.cursor_row =
-                    self.screen_buffer.cursor_row.saturating_sub(n);
+                self.screen_buffer.cursor_row = self.screen_buffer.cursor_row.saturating_sub(n);
             }
             'B' | 'e' => {
                 let n: usize = clean_params.parse().unwrap_or(1).max(1);
@@ -647,8 +705,7 @@ impl TuiOverlay {
             }
             'D' => {
                 let n: usize = clean_params.parse().unwrap_or(1).max(1);
-                self.screen_buffer.cursor_col =
-                    self.screen_buffer.cursor_col.saturating_sub(n);
+                self.screen_buffer.cursor_col = self.screen_buffer.cursor_col.saturating_sub(n);
             }
             'E' => {
                 let n: usize = clean_params.parse().unwrap_or(1).max(1);
@@ -658,19 +715,20 @@ impl TuiOverlay {
             }
             'F' => {
                 let n: usize = clean_params.parse().unwrap_or(1).max(1);
-                self.screen_buffer.cursor_row =
-                    self.screen_buffer.cursor_row.saturating_sub(n);
+                self.screen_buffer.cursor_row = self.screen_buffer.cursor_row.saturating_sub(n);
                 self.screen_buffer.cursor_col = 0;
             }
             'G' | '`' => {
                 let col: usize = clean_params.parse().unwrap_or(1);
-                self.screen_buffer.cursor_col =
-                    col.saturating_sub(1).min(self.screen_buffer.cols.saturating_sub(1));
+                self.screen_buffer.cursor_col = col
+                    .saturating_sub(1)
+                    .min(self.screen_buffer.cols.saturating_sub(1));
             }
             'd' => {
                 let row: usize = clean_params.parse().unwrap_or(1);
-                self.screen_buffer.cursor_row =
-                    row.saturating_sub(1).min(self.screen_buffer.rows.saturating_sub(1));
+                self.screen_buffer.cursor_row = row
+                    .saturating_sub(1)
+                    .min(self.screen_buffer.rows.saturating_sub(1));
             }
             'J' => {
                 let mode: u8 = clean_params.parse().unwrap_or(0);
@@ -748,10 +806,8 @@ impl TuiOverlay {
                 }
             }
             's' => {
-                self.screen_buffer.saved_cursor = Some((
-                    self.screen_buffer.cursor_row,
-                    self.screen_buffer.cursor_col,
-                ));
+                self.screen_buffer.saved_cursor =
+                    Some((self.screen_buffer.cursor_row, self.screen_buffer.cursor_col));
             }
             'u' => {
                 if let Some((r, c)) = self.screen_buffer.saved_cursor {
@@ -760,8 +816,28 @@ impl TuiOverlay {
                 }
             }
             'h' | 'l' => {
-                // Mode set/reset - consumed but not acted upon
-                // (alternate screen buffer, cursor visibility, etc.)
+                // DEC private mode set/reset
+                let set = cmd == 'h';
+                for p in params.replace('?', "").split(';') {
+                    match p.trim() {
+                        "1049" | "47" | "1047" => {
+                            // Alternate screen buffer
+                            if set {
+                                self.screen_buffer.clear();
+                            }
+                        }
+                        "25" => {
+                            // Cursor visibility (not visually rendered yet)
+                        }
+                        "1" => {
+                            // Application cursor keys mode
+                        }
+                        "7" => {
+                            // Auto-wrap mode
+                        }
+                        _ => {}
+                    }
+                }
             }
             'n' | 'c' => {
                 // Device status reports / device attributes - consumed
@@ -777,10 +853,7 @@ impl TuiOverlay {
             return;
         }
 
-        let codes: Vec<u16> = params
-            .split(';')
-            .filter_map(|s| s.parse().ok())
-            .collect();
+        let codes: Vec<u16> = params.split(';').filter_map(|s| s.parse().ok()).collect();
 
         let mut i = 0;
         while i < codes.len() {
@@ -909,11 +982,15 @@ impl TuiOverlay {
                                 .font(egui::FontId::proportional(12.0))
                                 .color(egui::Color32::from_rgb(100, 200, 100)),
                         );
+                        ui.label(
+                            egui::RichText::new("  (double-Esc to close)")
+                                .font(egui::FontId::proportional(11.0))
+                                .color(egui::Color32::from_rgb(140, 140, 160)),
+                        );
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let btn = ui.button(
-                            egui::RichText::new("  Exit  ")
-                                .font(egui::FontId::proportional(12.0)),
+                            egui::RichText::new("  Exit  ").font(egui::FontId::proportional(12.0)),
                         );
                         if btn.clicked() || self.has_exited {
                             should_close = true;
@@ -942,18 +1019,28 @@ impl TuiOverlay {
                 if self.last_char_size != Some(new_size) {
                     self.last_char_size = Some(new_size);
                     self.screen_buffer.resize(rows, cols);
+                    self.pending_resize = Some((rows as u16, cols as u16));
                 }
 
                 let job = self.screen_buffer.render_to_layout_job(mono_font);
                 let galley = ui.fonts(|fonts| fonts.layout_job(job));
-                let (response, painter) =
-                    ui.allocate_painter(galley.size(), egui::Sense::hover());
+                let (response, painter) = ui.allocate_painter(galley.size(), egui::Sense::hover());
                 painter.galley(response.rect.min, galley);
             });
 
-        // Handle Escape key to close overlay
+        // Double-Escape to close overlay (single Escape is forwarded to the app)
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            should_close = true;
+            let now = std::time::Instant::now();
+            if let Some(last) = self.last_escape_time {
+                if now.duration_since(last).as_millis() < 400 {
+                    should_close = true;
+                    self.last_escape_time = None;
+                } else {
+                    self.last_escape_time = Some(now);
+                }
+            } else {
+                self.last_escape_time = Some(now);
+            }
         }
 
         if should_close {
@@ -965,7 +1052,7 @@ impl TuiOverlay {
     }
 
     /// Handle keyboard input for the TUI app.
-    /// Escape is reserved for closing the overlay and is not forwarded.
+    /// Double-Escape closes the overlay; single Escape is forwarded to the app.
     pub fn handle_input(&self, ctx: &egui::Context) -> Option<Vec<u8>> {
         if !self.active {
             return None;
@@ -982,12 +1069,11 @@ impl TuiOverlay {
                     ..
                 } = event
                 {
-                    // Escape is handled by render() to close overlay — don't forward
-                    if *key == egui::Key::Escape {
-                        continue;
-                    }
                     if *key == egui::Key::D && modifiers.ctrl {
                         input_data.extend_from_slice(b"\x04");
+                    } else if *key == egui::Key::Escape {
+                        // Forward Escape to the PTY (double-Escape close is handled in render())
+                        input_data.extend_from_slice(b"\x1b");
                     } else {
                         let terminal_seq = key_to_terminal_sequence(*key, modifiers);
                         if !terminal_seq.is_empty() {
@@ -1044,7 +1130,26 @@ fn key_to_terminal_sequence(key: egui::Key, modifiers: &egui::Modifiers) -> Vec<
         egui::Key::F11 => vec![b'\x1b', b'[', b'2', b'3', b'~'],
         egui::Key::F12 => vec![b'\x1b', b'[', b'2', b'4', b'~'],
         // Ctrl key combinations
+        egui::Key::A if modifiers.ctrl => vec![b'\x01'],
+        egui::Key::B if modifiers.ctrl => vec![b'\x02'],
         egui::Key::C if modifiers.ctrl => vec![b'\x03'],
+        egui::Key::E if modifiers.ctrl => vec![b'\x05'],
+        egui::Key::F if modifiers.ctrl => vec![b'\x06'],
+        egui::Key::G if modifiers.ctrl => vec![b'\x07'],
+        egui::Key::H if modifiers.ctrl => vec![b'\x08'],
+        egui::Key::K if modifiers.ctrl => vec![b'\x0b'],
+        egui::Key::L if modifiers.ctrl => vec![b'\x0c'],
+        egui::Key::N if modifiers.ctrl => vec![b'\x0e'],
+        egui::Key::O if modifiers.ctrl => vec![b'\x0f'],
+        egui::Key::P if modifiers.ctrl => vec![b'\x10'],
+        egui::Key::R if modifiers.ctrl => vec![b'\x12'],
+        egui::Key::S if modifiers.ctrl => vec![b'\x13'],
+        egui::Key::T if modifiers.ctrl => vec![b'\x14'],
+        egui::Key::U if modifiers.ctrl => vec![b'\x15'],
+        egui::Key::V if modifiers.ctrl => vec![b'\x16'],
+        egui::Key::W if modifiers.ctrl => vec![b'\x17'],
+        egui::Key::X if modifiers.ctrl => vec![b'\x18'],
+        egui::Key::Y if modifiers.ctrl => vec![b'\x19'],
         egui::Key::Z if modifiers.ctrl => vec![b'\x1a'],
         _ => Vec::new(),
     }

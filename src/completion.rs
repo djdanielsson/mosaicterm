@@ -48,7 +48,9 @@
 use crate::error::Result;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use tracing::debug;
 
 /// Completion provider for shell commands and paths
 #[derive(Debug, Clone)]
@@ -59,6 +61,8 @@ pub struct CompletionProvider {
     cache_updated: Option<std::time::Instant>,
     /// Cache timeout duration (5 minutes)
     cache_timeout: std::time::Duration,
+    /// Whether fzf is available for fuzzy filtering
+    fzf_available: bool,
 }
 
 /// Completion result containing suggestions
@@ -116,11 +120,28 @@ pub enum CompletionItemType {
 impl CompletionProvider {
     /// Create a new completion provider
     pub fn new() -> Self {
+        let fzf_available = std::process::Command::new("which")
+            .arg("fzf")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if fzf_available {
+            debug!("fzf detected - using fuzzy filtering for completions");
+        }
+
         Self {
             command_cache: Vec::new(),
             cache_updated: None,
-            cache_timeout: std::time::Duration::from_secs(300), // 5 minutes
+            cache_timeout: std::time::Duration::from_secs(300),
+            fzf_available,
         }
+    }
+
+    pub fn set_fzf_available(&mut self, available: bool) {
+        self.fzf_available = available;
     }
 
     /// Get completions for the given input
@@ -160,24 +181,95 @@ impl CompletionProvider {
     fn complete_command(&mut self, prefix: &str) -> Result<CompletionResult> {
         self.refresh_command_cache_if_needed()?;
 
-        let suggestions: Vec<CompletionItem> = self
-            .command_cache
-            .iter()
-            .filter(|cmd| cmd.starts_with(prefix))
-            .take(50) // Limit to 50 suggestions
-            .map(|cmd| CompletionItem {
-                text: cmd.clone(),
-                label: cmd.clone(),
-                item_type: CompletionItemType::Command,
-                description: None,
-            })
-            .collect();
+        let suggestions = if self.fzf_available && !prefix.is_empty() {
+            self.fzf_filter(&self.command_cache.clone(), prefix, 50)
+                .into_iter()
+                .map(|cmd| CompletionItem {
+                    text: cmd.clone(),
+                    label: cmd,
+                    item_type: CompletionItemType::Command,
+                    description: None,
+                })
+                .collect()
+        } else {
+            self.command_cache
+                .iter()
+                .filter(|cmd| cmd.starts_with(prefix))
+                .take(50)
+                .map(|cmd| CompletionItem {
+                    text: cmd.clone(),
+                    label: cmd.clone(),
+                    item_type: CompletionItemType::Command,
+                    description: None,
+                })
+                .collect()
+        };
 
         Ok(CompletionResult {
             suggestions,
             prefix: prefix.to_string(),
             completion_type: CompletionType::Command,
         })
+    }
+
+    /// Run candidates through `fzf --filter` for fuzzy scoring
+    fn fzf_filter(&self, candidates: &[String], query: &str, limit: usize) -> Vec<String> {
+        let mut child = match std::process::Command::new("fzf")
+            .args(["--filter", query])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => {
+                return candidates
+                    .iter()
+                    .filter(|c| c.starts_with(query))
+                    .take(limit)
+                    .cloned()
+                    .collect();
+            }
+        };
+
+        if let Some(stdin) = child.stdin.take() {
+            let mut writer = std::io::BufWriter::new(stdin);
+            for candidate in candidates {
+                let _ = writeln!(writer, "{}", candidate);
+            }
+        }
+
+        let output = match child.wait_with_output() {
+            Ok(o) => o,
+            Err(_) => {
+                return candidates
+                    .iter()
+                    .filter(|c| c.starts_with(query))
+                    .take(limit)
+                    .cloned()
+                    .collect();
+            }
+        };
+
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .take(limit)
+            .map(|l| l.to_string())
+            .collect()
+    }
+
+    /// Filter history through fzf for Ctrl+R search
+    pub fn fzf_filter_history(&self, history: &[String], query: &str) -> Vec<String> {
+        if self.fzf_available && !query.is_empty() {
+            self.fzf_filter(history, query, 20)
+        } else {
+            history
+                .iter()
+                .filter(|h| h.contains(query))
+                .take(20)
+                .cloned()
+                .collect()
+        }
     }
 
     /// Complete a file or directory path

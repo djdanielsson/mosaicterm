@@ -23,6 +23,14 @@ pub enum ContextType {
     Rbenv,
     Rvm,
     Direnv,
+    GoVersion,
+    JavaHome,
+    RustToolchain,
+    Docker,
+    Kubernetes,
+    AwsProfile,
+    Terraform,
+    Mise,
 }
 
 impl EnvironmentContext {
@@ -37,24 +45,25 @@ impl EnvironmentContext {
     /// Format the context for display
     pub fn format(&self) -> String {
         match self.context_type {
-            ContextType::PythonVenv => format!("🐍 venv:{}", self.display_name),
-            ContextType::Conda => format!("🐍 conda:{}", self.display_name),
-            ContextType::NvmNode => format!("📦 node:{}", self.display_name),
-            ContextType::Rbenv => format!("💎 ruby:{}", self.display_name),
-            ContextType::Rvm => format!("💎 ruby:{}", self.display_name),
-            ContextType::Direnv => "📂 direnv".to_string(),
-        }
-    }
-
-    /// Get a short format without emoji for use in prompts
-    pub fn format_short(&self) -> String {
-        match self.context_type {
             ContextType::PythonVenv => format!("venv:{}", self.display_name),
             ContextType::Conda => format!("conda:{}", self.display_name),
             ContextType::NvmNode => format!("node:{}", self.display_name),
             ContextType::Rbenv | ContextType::Rvm => format!("ruby:{}", self.display_name),
             ContextType::Direnv => "direnv".to_string(),
+            ContextType::GoVersion => format!("go:{}", self.display_name),
+            ContextType::JavaHome => format!("java:{}", self.display_name),
+            ContextType::RustToolchain => format!("rust:{}", self.display_name),
+            ContextType::Docker => format!("docker:{}", self.display_name),
+            ContextType::Kubernetes => format!("k8s:{}", self.display_name),
+            ContextType::AwsProfile => format!("aws:{}", self.display_name),
+            ContextType::Terraform => format!("tf:{}", self.display_name),
+            ContextType::Mise => format!("mise:{}", self.display_name),
         }
+    }
+
+    /// Get a short format for use in prompts
+    pub fn format_short(&self) -> String {
+        self.format()
     }
 }
 
@@ -65,8 +74,19 @@ impl ContextDetector {
         Self {}
     }
 
-    /// Detect active contexts from environment variables
+    /// Detect active contexts from environment variables.
+    /// If `working_dir` is provided, directory-sensitive contexts (like Rust)
+    /// are only shown when relevant project files exist.
     pub fn detect_contexts(&self, env: &HashMap<String, String>) -> Vec<EnvironmentContext> {
+        self.detect_contexts_with_dir(env, None)
+    }
+
+    /// Detect active contexts with optional working directory awareness
+    pub fn detect_contexts_with_dir(
+        &self,
+        env: &HashMap<String, String>,
+        working_dir: Option<&Path>,
+    ) -> Vec<EnvironmentContext> {
         let mut contexts = Vec::new();
 
         // Python venv - only if VIRTUAL_ENV is set to a non-empty value
@@ -137,6 +157,115 @@ impl ContextDetector {
             });
         }
 
+        // Go version - only show when inside a Go project
+        if let Some(goversion) = env.get("GOVERSION") {
+            if !goversion.is_empty() {
+                let in_go_project = working_dir
+                    .map(is_go_project_dir)
+                    .unwrap_or(true);
+                if in_go_project {
+                    contexts.push(EnvironmentContext {
+                        context_type: ContextType::GoVersion,
+                        display_name: goversion.trim_start_matches("go").to_string(),
+                    });
+                }
+            }
+        }
+
+        // Java - only show when inside a Java project
+        if let Some(java_home) = env.get("JAVA_HOME") {
+            if !java_home.is_empty() {
+                let in_java_project = working_dir
+                    .map(is_java_project_dir)
+                    .unwrap_or(true);
+                if in_java_project {
+                    let version = Path::new(java_home)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("active")
+                        .to_string();
+                    contexts.push(EnvironmentContext {
+                        context_type: ContextType::JavaHome,
+                        display_name: version,
+                    });
+                }
+            }
+        }
+
+        // Rust toolchain - only show when inside a Rust project directory
+        if let Some(toolchain) = env.get("RUSTUP_TOOLCHAIN") {
+            if !toolchain.is_empty() {
+                let in_rust_project = working_dir
+                    .map(is_rust_project_dir)
+                    .unwrap_or(true); // default to showing if no dir info
+                if in_rust_project {
+                    contexts.push(EnvironmentContext {
+                        context_type: ContextType::RustToolchain,
+                        display_name: toolchain.clone(),
+                    });
+                }
+            }
+        }
+
+        // Docker
+        if env.get("DOCKER_HOST").is_some() || env.get("DOCKER_CONTEXT").is_some() {
+            let name = env
+                .get("DOCKER_CONTEXT")
+                .or(env.get("DOCKER_HOST"))
+                .cloned()
+                .unwrap_or_else(|| "active".to_string());
+            contexts.push(EnvironmentContext {
+                context_type: ContextType::Docker,
+                display_name: name,
+            });
+        }
+
+        // Kubernetes
+        if let Some(kube) = env.get("KUBECONFIG") {
+            if !kube.is_empty() {
+                let ctx_name = Path::new(kube)
+                    .file_stem()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("active")
+                    .to_string();
+                contexts.push(EnvironmentContext {
+                    context_type: ContextType::Kubernetes,
+                    display_name: ctx_name,
+                });
+            }
+        }
+
+        // AWS
+        if let Some(profile) = env.get("AWS_PROFILE").or(env.get("AWS_DEFAULT_PROFILE")) {
+            if !profile.is_empty() {
+                contexts.push(EnvironmentContext {
+                    context_type: ContextType::AwsProfile,
+                    display_name: profile.clone(),
+                });
+            }
+        }
+
+        // Terraform
+        if let Some(workspace) = env.get("TF_WORKSPACE") {
+            if !workspace.is_empty() {
+                contexts.push(EnvironmentContext {
+                    context_type: ContextType::Terraform,
+                    display_name: workspace.clone(),
+                });
+            }
+        }
+
+        // mise/asdf
+        let mise_active = env.keys().any(|k| k.starts_with("MISE_"));
+        let asdf_active = env.keys().any(|k| k.starts_with("ASDF_"));
+        if mise_active || asdf_active {
+            let name = if mise_active { "mise" } else { "asdf" };
+            contexts.push(EnvironmentContext {
+                context_type: ContextType::Mise,
+                display_name: name.to_string(),
+            });
+        }
+
         contexts
     }
 
@@ -163,6 +292,66 @@ impl Default for ContextDetector {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Check if the given directory (or any ancestor up to 5 levels) is a Rust project
+fn is_rust_project_dir(dir: &Path) -> bool {
+    let markers = ["Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml"];
+    let mut current = Some(dir);
+    let mut depth = 0;
+    while let Some(d) = current {
+        if depth > 5 {
+            break;
+        }
+        for marker in &markers {
+            if d.join(marker).exists() {
+                return true;
+            }
+        }
+        current = d.parent();
+        depth += 1;
+    }
+    false
+}
+
+/// Check if the given directory (or any ancestor up to 5 levels) is a Go project
+fn is_go_project_dir(dir: &Path) -> bool {
+    let markers = ["go.mod", "go.sum"];
+    let mut current = Some(dir);
+    let mut depth = 0;
+    while let Some(d) = current {
+        if depth > 5 {
+            break;
+        }
+        for marker in &markers {
+            if d.join(marker).exists() {
+                return true;
+            }
+        }
+        current = d.parent();
+        depth += 1;
+    }
+    false
+}
+
+/// Check if the given directory (or any ancestor up to 5 levels) is a Java project
+fn is_java_project_dir(dir: &Path) -> bool {
+    let markers = ["pom.xml", "build.gradle", "build.gradle.kts", ".java-version"];
+    let mut current = Some(dir);
+    let mut depth = 0;
+    while let Some(d) = current {
+        if depth > 5 {
+            break;
+        }
+        for marker in &markers {
+            if d.join(marker).exists() {
+                return true;
+            }
+        }
+        current = d.parent();
+        depth += 1;
+    }
+    false
 }
 
 /// Extract Node version from NVM_BIN path

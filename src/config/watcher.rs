@@ -157,12 +157,12 @@ impl ConfigWatcher {
 
         // Detect format from file extension
         let new_config: Config = match self.config_path.extension().and_then(|e| e.to_str()) {
-            Some("json") => serde_json::from_str(&content).map_err(|e| {
-                crate::Error::ConfigParseFailed {
+            Some("json") => {
+                serde_json::from_str(&content).map_err(|e| crate::Error::ConfigParseFailed {
                     format: "JSON".to_string(),
                     reason: e.to_string(),
-                }
-            })?,
+                })?
+            }
             _ => toml::from_str(&content).map_err(|e| crate::Error::ConfigParseFailed {
                 format: "TOML".to_string(),
                 reason: e.to_string(),

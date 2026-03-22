@@ -110,12 +110,43 @@ impl MosaicTermApp {
             self.handle_scroll_to_bottom();
         }
 
-        if ctx.input(|i| {
-            i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && i.modifiers.shift
-        }) {
+        if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && i.modifiers.shift) {
             self.handle_focus_previous();
         } else if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl) {
             self.handle_focus_next();
+        }
+
+        // Pane management shortcuts
+        if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl && i.modifiers.shift) {
+            self.handle_split_right();
+        }
+
+        if ctx.input(|i| i.key_pressed(egui::Key::E) && i.modifiers.ctrl && i.modifiers.shift) {
+            self.handle_split_down();
+        }
+
+        if ctx.input(|i| i.key_pressed(egui::Key::W) && i.modifiers.ctrl && i.modifiers.shift) {
+            self.handle_close_pane();
+        }
+
+        if ctx.input(|i| {
+            i.key_pressed(egui::Key::ArrowRight) && i.modifiers.ctrl && i.modifiers.shift
+        }) {
+            self.handle_navigate_pane(super::pane_tree::Direction::Right);
+        }
+        if ctx
+            .input(|i| i.key_pressed(egui::Key::ArrowLeft) && i.modifiers.ctrl && i.modifiers.shift)
+        {
+            self.handle_navigate_pane(super::pane_tree::Direction::Left);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp) && i.modifiers.ctrl && i.modifiers.shift)
+        {
+            self.handle_navigate_pane(super::pane_tree::Direction::Up);
+        }
+        if ctx
+            .input(|i| i.key_pressed(egui::Key::ArrowDown) && i.modifiers.ctrl && i.modifiers.shift)
+        {
+            self.handle_navigate_pane(super::pane_tree::Direction::Down);
         }
     }
 
@@ -298,8 +329,69 @@ impl MosaicTermApp {
 
     /// Handle focus previous (Ctrl+Shift+Tab)
     pub(super) fn handle_focus_previous(&mut self) {
-        // Cycle focus to previous UI element
         info!("Focus previous requested (Ctrl+Shift+Tab)");
         self.set_status_message(Some("Focus cycled to previous element".to_string()));
+    }
+
+    /// Split active pane to the right
+    pub(super) fn handle_split_right(&mut self) {
+        self.split_active_pane(super::pane_tree::SplitAxis::Horizontal);
+    }
+
+    /// Split active pane downward
+    pub(super) fn handle_split_down(&mut self) {
+        self.split_active_pane(super::pane_tree::SplitAxis::Vertical);
+    }
+
+    fn split_active_pane(&mut self, axis: super::pane_tree::SplitAxis) {
+        use super::pane_tree::{Pane, PaneTree};
+
+        if self.pane_tree.is_none() {
+            let initial_pane = Pane::new("pane-0".to_string(), self.terminal.take());
+            self.pane_tree = Some(PaneTree::new(initial_pane));
+        }
+
+        let msg = if let Some(tree) = &mut self.pane_tree {
+            let active_id = tree.active_id().to_string();
+            if let Some(new_id) = tree.split(&active_id, axis, None) {
+                info!("Split pane: {} -> new pane {}", active_id, new_id);
+                Some(format!("Split pane ({} panes)", tree.pane_count()))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(msg) = msg {
+            self.set_status_message(Some(msg));
+        }
+    }
+
+    pub(super) fn handle_close_pane(&mut self) {
+        let msg = if let Some(tree) = &mut self.pane_tree {
+            if tree.pane_count() <= 1 {
+                Some("Cannot close last pane".to_string())
+            } else {
+                let active = tree.active_id().to_string();
+                if tree.close(&active) {
+                    info!("Closed pane: {}", active);
+                    Some(format!("Closed pane ({} remaining)", tree.pane_count()))
+                } else {
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(msg) = msg {
+            self.set_status_message(Some(msg));
+        }
+    }
+
+    pub(super) fn handle_navigate_pane(&mut self, direction: super::pane_tree::Direction) {
+        if let Some(tree) = &mut self.pane_tree {
+            tree.navigate(direction);
+            info!("Navigate to pane: {}", tree.active_id());
+        }
     }
 }

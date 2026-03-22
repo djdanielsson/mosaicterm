@@ -10,12 +10,17 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 
 ## ✨ Key Features
 
-- **Block-Based History**: Commands and their outputs are grouped into discrete, scrollable blocks
+- **Block-Based History**: Commands and their outputs are grouped into discrete, scrollable blocks with color-coded status stripes
 - **Pinned Input Prompt**: Always-visible input field at the bottom for seamless command entry
+- **Configurable Prompt Styles**: Classic, Minimal, Powerline, Starship, Oh My Zsh, and fully Custom prompt styles
+- **Split Panes**: Native multi-pane support with keyboard shortcuts (Ctrl+Shift+D/E/W)
+- **TUI App Support**: Run vim, top, htop, and other interactive terminal apps in a fullscreen overlay
 - **SSH Session Support**: Seamless SSH connections with interactive prompt overlays for passwords and passphrases
 - **Comprehensive Theming**: Full color customization via config file with hex color support (Solarized, etc.)
-- **Environment Support**: Full support for Python venv, nvm, conda, rbenv, rvm, direnv and other environment tools
-- **Custom Prompts**: Fully customizable prompt format with variable substitution ($USER, $HOSTNAME, $PWD, etc.)
+- **Smart Environment Detection**: Auto-detects Python venv, conda, nvm, rbenv, Go, Rust, Java, Docker, Kubernetes, AWS, Terraform, and more -- only shown when relevant to the current project directory
+- **fzf Integration**: If fzf is installed, tab completion and history search (Ctrl+R) automatically use fuzzy matching
+- **zoxide Integration**: If zoxide is installed, `z` and `zi` commands are automatically intercepted for smart directory jumping
+- **Tmux Session Persistence**: Optional tmux-backed sessions for persistence across app restarts
 - **Tab Completion**: Intelligent command and path completion with popup UI (double-tab to activate)
 - **Native ANSI Support**: Full color support for `ls`, `bat`, `fzf`, and other CLI tools
 - **Zsh Integration**: Seamless support for zsh with Oh My Zsh, plugins, and completions
@@ -30,7 +35,7 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 - **macOS**: 14.0+ (Intel and Apple Silicon) or **Linux** (Ubuntu 20.04+, Fedora 34+, Debian 11+, or similar) on x86_64 or ARM64
 - **Windows**: Windows 10+ on x86_64 or ARM64
 - **Shell**: bash, zsh, or fish (Unix) / PowerShell or cmd.exe (Windows)
-- **Optional**: fzf, eza, bat, rg, fd, jq (for enhanced CLI experience)
+- **Optional**: fzf (fuzzy completion), zoxide (smart cd), tmux (session persistence), eza, bat, rg, fd
 
 ### Installation
 
@@ -79,7 +84,7 @@ cargo run --release
   - Primary: `$XDG_CONFIG_HOME/mosaicterm/config.toml` (defaults to `~/.config/mosaicterm/config.toml`)
   - Fallback: `~/.mosaicterm/config.toml`
 - **Display Server**: Works with both X11 and Wayland
-- **Wayland Support**: 
+- **Wayland Support**:
   - MosaicTerm automatically detects and configures for Wayland
   - The application automatically forces integer DPI scaling (1x or 2x) to help prevent buffer size errors
   - **If you still encounter "buffer size must be integer multiple of buffer_scale" errors:**
@@ -89,12 +94,12 @@ cargo run --release
     # Or set environment variable before running:
     export WINIT_UNIX_BACKEND=x11
     mosaicterm
-    
+
     # Option 2: Disable fractional scaling in system settings
     # GNOME: Settings > Displays > Scale to 100% or 200% (not 125%, 150%, etc.)
     # KDE: System Settings > Display and Monitor > Scale Display to 100% or 200%
     # Fedora: Settings > Displays > Fractional Scaling OFF, use 100% or 200%
-    
+
     # Option 3: Force X11 via environment variable (persists across sessions)
     echo 'export WINIT_UNIX_BACKEND=x11' >> ~/.bashrc  # or ~/.zshrc
     ```
@@ -104,7 +109,7 @@ cargo run --release
   ```bash
   # Ubuntu/Debian
   sudo apt-get install build-essential libssl-dev pkg-config libx11-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev
-  
+
   # Fedora/RHEL
   sudo dnf install gcc openssl-devel pkg-config libX11-devel libxcb-devel libxkbcommon-devel gtk3-devel
   ```
@@ -116,22 +121,32 @@ MosaicTerm is built with a modular architecture:
 ```
 src/
 ├── main.rs              # Application entry point
-├── app.rs               # Main GUI application
+├── app/                 # Main GUI application
+│   ├── mod.rs           # Core app logic and UI rendering
+│   ├── input.rs         # Keyboard shortcuts and input handling
+│   ├── commands.rs      # Command detection (TUI, cd, etc.)
+│   ├── context.rs       # Git and environment context detection
+│   ├── prompt.rs        # Prompt building with style support
+│   └── pane_tree.rs     # Split pane tree data structure
+├── config/              # Configuration management
+│   ├── mod.rs           # Runtime config, themes, hot-reload
+│   ├── prompt.rs        # Prompt segment rendering (6 styles)
+│   └── loader.rs        # Config file discovery and loading
+├── session/             # Session persistence
+│   ├── mod.rs           # Session module
+│   └── tmux_backend.rs  # Tmux CLI integration
 ├── pty/                 # Pseudoterminal management
 │   ├── manager.rs       # PTY lifecycle
 │   ├── process.rs       # Process spawning
 │   └── streams.rs       # Async I/O handling
 ├── terminal/            # Terminal emulation
-│   ├── ansi_parser.rs   # ANSI escape sequences
-│   ├── state.rs         # Terminal state
-│   └── prompt.rs        # Prompt detection
 ├── ui/                  # GUI components
-│   ├── blocks.rs        # Command block rendering
-│   ├── input.rs         # Input prompt component
-│   └── scroll.rs        # Scrollable history
+│   ├── tui_overlay.rs   # Fullscreen TUI app overlay
+│   ├── completion_popup.rs # Tab completion popup
+│   └── ...              # Blocks, input, scroll, colors
+├── completion.rs        # Command/path completion with fzf support
+├── context.rs           # Environment context detection (20+ tools)
 └── models/              # Data structures
-    ├── command_block.rs # Command + output blocks
-    └── terminal_session.rs # Session management
 ```
 
 ### Key Technologies
@@ -149,29 +164,89 @@ MosaicTerm supports TOML-based configuration. Create `~/.config/mosaicterm/confi
 [ui]
 font_family = "JetBrains Mono"
 font_size = 12
-
-[key_bindings.bindings]
-# Interrupt/kill running command (default: Ctrl+C)
-interrupt = { key = "Ctrl+C", enabled = true }
-# Copy text (default: Ctrl+Shift+C to avoid conflict with interrupt)
-copy = { key = "Ctrl+Shift+C", enabled = true }
-# Clear screen (default: Ctrl+L)
-clear = { key = "Ctrl+L", enabled = true }
 theme_name = "default-dark"
 
 [terminal]
-shell_type = "Bash"
-shell_path = "/bin/bash"
-# Customize your prompt with variables like $USER, $HOSTNAME, $PWD
+shell_type = "Zsh"
+shell_path = "/bin/zsh"
 prompt_format = "$USER@$HOSTNAME:$PWD$ "
 
 [pty]
 buffer_size = 1048576
+
+# Prompt style configuration
+[prompt]
+# Available styles: "classic", "minimal", "powerline", "starship", "ohmyzsh", "custom"
+style = "minimal"
+show_git = true
+show_env = true
+
+# Session persistence (requires tmux installed)
+[session]
+persistence = false
+auto_restore = false
 ```
 
-### Custom Prompts
+### Prompt Styles
 
-MosaicTerm supports fully customizable prompts with variable substitution (`$USER`, `$HOSTNAME`, `$PWD`, etc.). See the **[Custom Prompt Guide](docs/CUSTOM_PROMPT.md)** for details and examples.
+MosaicTerm supports six built-in prompt styles. Set `[prompt].style` in your config:
+
+| Style | Description | Example |
+|-------|-------------|---------|
+| `classic` | Traditional `user@host:path$` format | `ddaniels@mac:~/projects$` |
+| `minimal` | Clean path-only with `>` (default) | `~/projects >` |
+| `powerline` | Colored segments with arrow separators | `user  ~/projects  main +2 !1` |
+| `starship` | Colored text segments with emoji icons | `~/projects  main +2 !1` |
+| `ohmyzsh` | Oh My Zsh-inspired with arrow prompt | `ddaniels at mac in ~/projects git:(main) ->` |
+| `custom` | User-defined segments from config | (see below) |
+
+#### Custom Prompt Segments
+
+For full control, use `style = "custom"` with segment definitions:
+
+```toml
+[prompt]
+style = "custom"
+
+[[prompt.segments]]
+content = "$USER@$HOSTNAME"
+fg = "#00D2D2"
+bold = true
+
+[[prompt.segments]]
+content = "$PWD"
+fg = "#50B4FF"
+bold = true
+
+[[prompt.segments]]
+content = "$GIT_BRANCH"
+fg = "#C8C8FF"
+condition = "git"
+
+[[prompt.segments]]
+content = "> "
+fg = "#64DC64"
+bold = true
+```
+
+#### Template Variables
+
+Available variables for `prompt_format` and custom segments:
+
+| Variable | Description |
+|----------|-------------|
+| `$USER` | Current username |
+| `$HOSTNAME` | Machine hostname |
+| `$PWD` | Current working directory (with `~` substitution) |
+| `$GIT_BRANCH` | Current git branch name |
+| `$GIT_STATUS` | Git status indicators (+staged !modified ?untracked) |
+| `$VENV` | Active Python virtual environment name |
+| `$NODE_VERSION` | Active Node.js version (via nvm) |
+| `$RUBY_VERSION` | Active Ruby version (via rbenv/rvm) |
+| `$DOCKER` | Docker context (if active) |
+| `$KUBE` | Kubernetes context (if active) |
+
+See the **[Custom Prompt Guide](docs/CUSTOM_PROMPT.md)** for more details and examples.
 
 ### Environment Variables
 
@@ -180,14 +255,27 @@ MosaicTerm supports fully customizable prompts with variable substitution (`$USE
 
 ## 🌍 Environment Management
 
-MosaicTerm fully supports environment management tools like Python virtual environments, Node Version Manager (nvm), Conda, and more. Unlike some terminal emulators, MosaicTerm loads your shell RC files (`.bashrc`, `.zshrc`, etc.) by default, making these tools work seamlessly.
+MosaicTerm fully supports environment management tools and automatically detects active development contexts. Unlike some terminal emulators, MosaicTerm loads your shell RC files (`.bashrc`, `.zshrc`, etc.) by default, making these tools work seamlessly.
 
-**Smart Prompt Integration**: MosaicTerm automatically detects and displays active environments in your prompt:
-- **Virtual Environments**: Shows `(venv:myproject)` when Python venv, Conda, or similar is active
-- **Git Repositories**: Shows `[main *]` with branch name and dirty status on the right side
-- **Automatic Updates**: Prompt updates after each command to reflect your current environment
+**Smart Context Detection**: MosaicTerm detects and displays active environments in your prompt:
 
-The active environment indicator appears only when relevant, keeping your prompt clean when no special environments are active.
+| Context | Detection | Display |
+|---------|-----------|---------|
+| Python venv | `VIRTUAL_ENV` env var | `venv:myproject` |
+| Conda | `CONDA_DEFAULT_ENV` env var | `conda:myenv` |
+| Node.js | `NVM_BIN` env var (nvm) | `node:18.20.0` |
+| Ruby | `RBENV_VERSION` or `rvm_ruby_string` | `ruby:3.2.0` |
+| Rust | `RUSTUP_TOOLCHAIN` + `Cargo.toml` present | `rust:stable` |
+| Go | `GOVERSION` + `go.mod` present | `go:1.22.0` |
+| Java | `JAVA_HOME` + `pom.xml`/`build.gradle` present | `java:jdk-21` |
+| Docker | `DOCKER_HOST` or `DOCKER_CONTEXT` | `docker:default` |
+| Kubernetes | `KUBECONFIG` | `k8s:production` |
+| AWS | `AWS_PROFILE` or `AWS_DEFAULT_PROFILE` | `aws:staging` |
+| Terraform | `TF_WORKSPACE` | `tf:dev` |
+| mise/asdf | `MISE_`* or `ASDF_`* env vars | `mise` |
+| Git | Git repository detection via `git2` | `main +2 !3 ?1` |
+
+**Project-aware detection**: Language-specific contexts (Rust, Go, Java) are only shown when you're inside a relevant project directory (checked up to 5 parent levels for project files like `Cargo.toml`, `go.mod`, `pom.xml`).
 
 ### How It Works
 
@@ -208,46 +296,63 @@ MosaicTerm maintains a **persistent shell session** where environment changes na
 load_rc_files = false
 ```
 
-## 🎯 Limitations
+## 🎯 TUI Applications
 
-### Interactive Programs (TUI Applications)
+MosaicTerm supports fullscreen TUI applications via an overlay mode. When you run apps like `vim`, `top`, `htop`, `nano`, `less`, etc., they open in a fullscreen overlay with proper terminal emulation.
 
-MosaicTerm uses a **block-based command history** model that works great for standard CLI commands, but has limitations with full-screen interactive (TUI) applications like `vim`, `htop`, `nano`, `less`, `tmux`, etc.
+**Supported TUI apps** (auto-detected): vim, nvim, vi, nano, emacs, helix, micro, top, htop, btop, less, more, man, tmux, screen, ranger, nnn, mc, and more.
 
-**What happens**: These programs expect full terminal control and may display garbled output or escape sequences as text. MosaicTerm will show a warning when you attempt to run them.
+**Controls**:
+- **Double-Escape**: Close the TUI overlay and return to block mode
+- **Exit button**: Click the Exit button in the overlay header
+- All standard keys (including Escape for vim normal mode) are forwarded to the app
 
-**If you accidentally run one**: Right-click the command block and select "Kill Process", or press **Ctrl+C** to terminate it.
+**Keyboard shortcuts** work inside TUI apps: Ctrl+C, Ctrl+Z, Ctrl+D, arrow keys, function keys, and all Ctrl+letter combinations.
 
-**Recommended alternatives**:
-- **Text editing**: Use external editors (`open file.txt` on macOS, `xdg-open file.txt` on Linux)
-- **File viewing**: Use `cat`, `bat`, `head`, `tail` instead of `less`/`more`
-- **System monitoring**: Use `ps aux` instead of `htop`/`top`
-- **Git operations**: Use `git log`, `git status`, `git diff` instead of `tig`/`gitui`
+### Pane Shortcuts
 
-For full-screen interactive programs, use a traditional terminal emulator. Support for interactive programs is planned for a future release.
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+Shift+D` | Split pane right |
+| `Ctrl+Shift+E` | Split pane down |
+| `Ctrl+Shift+W` | Close current pane |
+| `Ctrl+Shift+Arrows` | Navigate between panes |
+
+## 🔌 Tool Integrations
+
+MosaicTerm automatically detects and integrates with common CLI tools when they are installed. No configuration required -- if the tool is in your PATH, it's used automatically. If not, MosaicTerm falls back to built-in behavior.
+
+| Tool | Integration |
+|------|-------------|
+| **fzf** | Fuzzy matching for tab completion and Ctrl+R history search |
+| **zoxide** | Smart directory jumping via `z` and `zi` commands; silent `zoxide add` after `cd` |
+| **tmux** | Session persistence (opt-in via `[session].persistence = true`) |
+| **fd** | Detected for future fast file search integration |
+| **bat** | Detected for future syntax-highlighted previews |
+| **eza** | Detected for future enhanced `ls` integration |
 
 ## 🗺️ Roadmap
 
-### Phase 5: Advanced Features (Current)
+### Completed
 - [x] SSH session support with interactive prompts
-- [x] Cross-platform builds (Linux support complete)
+- [x] Cross-platform builds (Linux, macOS, Windows)
 - [x] Configuration hot-reload
 - [x] Command history persistence
-- [x] Block re-run functionality
-- [x] Lazy ANSI parsing (OnceCell-based deferred parsing)
-- [x] PTY Manager migration (removed deprecated V1)
-- [x] Batch PTY output processing
+- [x] TUI overlay for fullscreen apps (vim, top, htop, etc.)
+- [x] Configurable prompt styles (Classic, Minimal, Powerline, Starship, OhMyZsh, Custom)
+- [x] Expanded environment detection (20+ tools)
+- [x] Native split panes (PaneTree)
+- [x] Tmux session persistence backend
+- [x] fzf integration for completions and history search
+- [x] zoxide integration for smart directory jumping
+- [x] Project-aware context detection (Rust, Go, Java only in project dirs)
 - [x] Event-driven architecture for PTY output (PtyEventBus)
 
-
-### Phase 6: Code Quality & Architecture ✅
-- [x] Split app.rs into modular files
-- [x] Consistent documentation across all modules
-- [x] Comprehensive tests for app.rs and UI components
-
 ### Future Goals
-- [ ] Inline search and filtering
+- [ ] Full PTY resize propagation for TUI overlay
+- [ ] Inline search and filtering within output blocks
 - [ ] Virtual scrolling for large output
+- [ ] Draggable pane dividers for resize
 - [ ] Plugin system architecture
 - [ ] Multi-tab interface
 - [ ] Customizable block actions
@@ -308,7 +413,7 @@ Releases are automated via GitHub Actions. Create a version tag (e.g., `v0.2.0`)
 
 ## 🤝 Contributing
 
-We welcome contributions! 
+We welcome contributions!
 
 ### Development Setup
 

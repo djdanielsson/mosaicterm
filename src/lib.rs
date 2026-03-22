@@ -112,6 +112,9 @@ pub mod ui;
 // Model modules
 pub mod models;
 
+// Session management
+pub mod session;
+
 // Re-exports for core functionality
 pub use config::{Config, RuntimeConfig};
 pub use error::{Error, Result};

@@ -464,9 +464,7 @@ impl StateManager {
 
     /// Get command history slice (returns empty slice if no active session)
     pub fn get_command_history(&self) -> &[CommandBlock] {
-        self.command_history()
-            .map(|h| h.as_slice())
-            .unwrap_or(&[])
+        self.command_history().map(|h| h.as_slice()).unwrap_or(&[])
     }
 
     /// Clear command history for the active session

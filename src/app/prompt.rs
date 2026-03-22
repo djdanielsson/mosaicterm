@@ -3,14 +3,15 @@
 //! Handles the construction and updating of the terminal prompt display,
 //! including environment contexts, git information, and SSH session state.
 
-use mosaicterm::config::prompt::PromptFormatter;
+use mosaicterm::config::prompt::{EnvPromptContext, PromptFormatter};
+use mosaicterm::models::config::PromptStyle;
 use mosaicterm::state_manager::StateManager;
 use mosaicterm::terminal::Terminal;
 use tracing::debug;
 
-/// Build the rendered prompt string with all context information
-///
-/// Format: `(venv:name) ~/path$ [git:branch]`
+/// Build the rendered prompt string with all context information.
+/// When using styled prompts (Powerline, Starship, OhMyZsh, Custom),
+/// the segments are rendered into a flattened string representation.
 pub fn build_prompt(
     terminal: Option<&Terminal>,
     state_manager: &StateManager,
@@ -25,7 +26,6 @@ pub fn build_prompt(
             debug!("Using remote SSH prompt: '{}'", remote_prompt);
             return remote_prompt.to_string();
         } else if let Some(cmd) = ssh_session_command {
-            // No remote prompt captured yet, show a placeholder with host info
             let host = extract_ssh_host(cmd);
             let placeholder = format!("[{}] $ ", host);
             debug!("Using SSH placeholder prompt: '{}'", placeholder);
@@ -33,37 +33,83 @@ pub fn build_prompt(
         }
     }
 
-    // Local mode: use the normal prompt formatter
+    // Local mode: use the prompt formatter with style-aware segment rendering
     if let Some(terminal) = terminal {
         let working_dir = terminal.get_working_directory();
-        let base_prompt = prompt_formatter.render(working_dir);
 
-        let mut left_context = String::new();
-        let mut right_context = String::new();
+        // Gather git and env context for segment-based rendering
+        let git_status = if let Some(session) = state_manager.active_session() {
+            session.git_context.as_ref().and_then(|ctx| {
+                // Parse the git context string back into GitPromptStatus
+                // The context string looks like "main +2 !3 ?1"
+                mosaicterm::config::prompt::GitPromptStatus::from_context_string(ctx)
+            })
+        } else {
+            None
+        };
 
-        // Add environment contexts (venv, conda, nvm) on the LEFT
-        if let Some(session) = state_manager.active_session() {
-            if !session.active_contexts.is_empty() {
-                let context_str = session.active_contexts.join(" ");
-                left_context = format!("({}) ", context_str);
+        let env_contexts: Vec<EnvPromptContext> = state_manager
+            .active_session()
+            .map(|session| {
+                session
+                    .active_contexts
+                    .iter()
+                    .filter_map(|ctx| {
+                        let parts: Vec<&str> = ctx.splitn(2, ':').collect();
+                        if parts.len() == 2 {
+                            Some(EnvPromptContext {
+                                name: parts[0].to_string(),
+                                value: parts[1].to_string(),
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Use render_segments for styled prompts, render for basic
+        let rendered_prompt = match prompt_formatter.style() {
+            PromptStyle::Classic | PromptStyle::Minimal => {
+                let base_prompt = prompt_formatter.render(working_dir);
+                let mut left_context = String::new();
+                let mut right_context = String::new();
+
+                if let Some(session) = state_manager.active_session() {
+                    if !session.active_contexts.is_empty() {
+                        let context_str = session.active_contexts.join(" ");
+                        left_context = format!("({}) ", context_str);
+                    }
+                    if let Some(git) = &session.git_context {
+                        right_context = format!(" [{}]", git);
+                    }
+                }
+
+                format!("{}{}{}", left_context, base_prompt, right_context)
             }
-
-            // Add git context on the RIGHT (if present)
-            if let Some(git) = &session.git_context {
-                right_context = format!(" [{}]", git);
+            _ => {
+                // Powerline, Starship, OhMyZsh, Custom all use segment rendering
+                let segments = prompt_formatter.render_segments(
+                    working_dir,
+                    git_status.as_ref(),
+                    &env_contexts,
+                );
+                segments
+                    .iter()
+                    .map(|s| s.text.clone())
+                    .collect::<String>()
             }
-        }
-
-        // Format: (venv:name) ~/path$ [git:branch]
-        let rendered_prompt = format!("{}{}{}", left_context, base_prompt, right_context);
+        };
 
         debug!(
-            "Built prompt: '{}' (working_dir: {:?})",
-            rendered_prompt, working_dir
+            "Built prompt: '{}' (working_dir: {:?}, style: {:?})",
+            rendered_prompt,
+            working_dir,
+            prompt_formatter.style()
         );
         rendered_prompt
     } else {
-        // No terminal, return a minimal prompt
         "$ ".to_string()
     }
 }

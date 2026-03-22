@@ -13,6 +13,7 @@ pub mod watcher;
 
 use crate::config::shell::ShellManager;
 use crate::config::theme::ThemeManager;
+use crate::models::config::{PromptConfig, SessionConfig};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -38,6 +39,14 @@ pub struct Config {
     /// Interactive TUI app configuration
     #[serde(default)]
     pub tui_apps: TuiAppConfig,
+
+    /// Prompt configuration
+    #[serde(default)]
+    pub prompt: PromptConfig,
+
+    /// Session persistence configuration
+    #[serde(default)]
+    pub session: SessionConfig,
 }
 
 /// UI-related configuration
@@ -554,6 +563,8 @@ pub mod utils {
             pty: merge_pty_configs(base.pty, overlay.pty),
             key_bindings: merge_key_bindings(base.key_bindings, overlay.key_bindings),
             tui_apps: merge_tui_apps_configs(base.tui_apps, overlay.tui_apps),
+            prompt: overlay.prompt,
+            session: overlay.session,
         }
     }
 

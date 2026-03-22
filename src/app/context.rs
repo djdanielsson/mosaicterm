@@ -19,46 +19,87 @@
 //!  env contexts             git context
 //! ```
 
+use mosaicterm::config::prompt::GitPromptStatus;
 use mosaicterm::context::ContextDetector;
 use mosaicterm::state_manager::StateManager;
 use mosaicterm::terminal::Terminal;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-/// Detect git context from the filesystem
-///
-/// Checks the current working directory for a git repository and returns
-/// the current branch name with an optional dirty indicator (*).
-///
-/// # Arguments
-///
-/// * `terminal` - Optional reference to the terminal to get working directory
-///
-/// # Returns
-///
-/// * `Some(branch_name)` - The branch name, with " *" suffix if there are uncommitted changes
-/// * `None` - If not in a git repository or no terminal is available
-///
-/// # Example
-///
-/// ```ignore
-/// let context = detect_git_context(Some(&terminal));
-/// // Returns Some("main *") if on main branch with uncommitted changes
-/// ```
+/// Detect git context from the filesystem (simple string for backward compat)
 pub fn detect_git_context(terminal: Option<&Terminal>) -> Option<String> {
+    detect_git_status(terminal).map(|s| s.format_compact())
+}
+
+/// Detect detailed git status for prompt rendering
+pub fn detect_git_status(terminal: Option<&Terminal>) -> Option<GitPromptStatus> {
     let working_dir = terminal?.get_working_directory();
 
     let repo = git2::Repository::discover(working_dir).ok()?;
-    let head = repo.head().ok()?;
-    let branch_name = head.shorthand()?;
 
-    let has_changes = repo.statuses(None).map(|s| !s.is_empty()).unwrap_or(false);
+    let head = repo.head().ok();
+    let detached = head.as_ref().map(|h| !h.is_branch()).unwrap_or(true);
+    let branch_name = head
+        .as_ref()
+        .and_then(|h| h.shorthand())
+        .unwrap_or("HEAD")
+        .to_string();
 
-    if has_changes {
-        Some(format!("{} *", branch_name))
-    } else {
-        Some(branch_name.to_string())
+    let mut staged = 0usize;
+    let mut modified = 0usize;
+    let mut untracked = 0usize;
+
+    let mut opts = git2::StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(false)
+        .include_unmodified(false);
+
+    if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
+        for entry in statuses.iter() {
+            let s = entry.status();
+            if s.intersects(
+                git2::Status::INDEX_NEW
+                    | git2::Status::INDEX_MODIFIED
+                    | git2::Status::INDEX_DELETED
+                    | git2::Status::INDEX_RENAMED
+                    | git2::Status::INDEX_TYPECHANGE,
+            ) {
+                staged += 1;
+            }
+            if s.intersects(
+                git2::Status::WT_MODIFIED
+                    | git2::Status::WT_DELETED
+                    | git2::Status::WT_RENAMED
+                    | git2::Status::WT_TYPECHANGE,
+            ) {
+                modified += 1;
+            }
+            if s.intersects(git2::Status::WT_NEW) {
+                untracked += 1;
+            }
+        }
     }
+
+    let (ahead, behind) = (|| -> Option<(usize, usize)> {
+        let local_oid = repo.head().ok()?.target()?;
+        let branch = repo.head().ok()?;
+        let branch_name = branch.shorthand()?;
+        let upstream_name = format!("refs/remotes/origin/{}", branch_name);
+        let upstream_ref = repo.find_reference(&upstream_name).ok()?;
+        let upstream_oid = upstream_ref.target()?;
+        repo.graph_ahead_behind(local_oid, upstream_oid).ok()
+    })()
+    .unwrap_or((0, 0));
+
+    Some(GitPromptStatus {
+        branch: branch_name,
+        staged,
+        modified,
+        untracked,
+        ahead,
+        behind,
+        detached,
+    })
 }
 
 /// Parse environment variable output and detect active contexts
@@ -77,12 +118,13 @@ pub fn detect_git_context(terminal: Option<&Terminal>) -> Option<String> {
 pub fn parse_env_and_detect_contexts(
     output: &str,
     context_detector: &ContextDetector,
+    working_dir: Option<&std::path::Path>,
 ) -> Vec<String> {
     debug!("Parsing environment output ({} bytes)", output.len());
     let env = parse_env_output(output);
 
-    // Detect contexts from environment
-    let contexts = context_detector.detect_contexts(&env);
+    // Detect contexts from environment, passing working dir for project-aware filtering
+    let contexts = context_detector.detect_contexts_with_dir(&env, working_dir);
     info!("Detected {} contexts: {:?}", contexts.len(), contexts);
 
     // Format contexts for display (venv/conda/nvm only - git handled separately)
