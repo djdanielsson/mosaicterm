@@ -377,7 +377,7 @@ impl PromptFormatter {
         let user = get_user();
         let hostname = get_hostname();
         segments.push(PromptSegment {
-            text: format!("{} ", user),
+            text: format!("{}@{}", user, hostname),
             fg: egui::Color32::from_rgb(0, 210, 210),
             bg: None,
             bold: true,
@@ -385,8 +385,8 @@ impl PromptFormatter {
         });
 
         segments.push(PromptSegment {
-            text: format!("at {} ", hostname),
-            fg: egui::Color32::from_rgb(180, 180, 200),
+            text: " ".to_string(),
+            fg: egui::Color32::GRAY,
             bg: None,
             bold: false,
             separator: None,
@@ -394,7 +394,7 @@ impl PromptFormatter {
 
         let pwd = format_pwd(working_dir);
         segments.push(PromptSegment {
-            text: format!("in {} ", pwd),
+            text: pwd,
             fg: egui::Color32::from_rgb(80, 180, 255),
             bg: None,
             bold: true,
@@ -402,14 +402,22 @@ impl PromptFormatter {
         });
 
         if let Some(git) = git_status {
-            let dirty_marker = if git.modified > 0 || git.untracked > 0 {
-                " \u{2717}"
+            let dirty = if git.modified > 0 || git.untracked > 0 {
+                "*"
             } else {
-                " \u{2713}"
+                ""
             };
             segments.push(PromptSegment {
-                text: format!("git:({}{}) ", git.branch, dirty_marker),
+                text: format!(" ({}{}) ", git.branch, dirty),
                 fg: egui::Color32::from_rgb(200, 200, 255),
+                bg: None,
+                bold: false,
+                separator: None,
+            });
+        } else {
+            segments.push(PromptSegment {
+                text: " ".to_string(),
+                fg: egui::Color32::GRAY,
                 bg: None,
                 bold: false,
                 separator: None,
@@ -417,7 +425,7 @@ impl PromptFormatter {
         }
 
         segments.push(PromptSegment {
-            text: "\u{279C} ".to_string(),
+            text: "> ".to_string(),
             fg: egui::Color32::from_rgb(100, 220, 100),
             bg: None,
             bold: true,

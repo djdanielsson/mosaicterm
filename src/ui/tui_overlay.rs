@@ -490,6 +490,10 @@ pub struct TuiOverlay {
     last_escape_time: Option<std::time::Instant>,
     /// Pending resize (rows, cols) that the caller should apply to the PTY
     pending_resize: Option<(u16, u16)>,
+    /// When the overlay was activated (for grace-period exit detection)
+    started_at: Option<std::time::Instant>,
+    /// Whether the TUI app has entered alternate screen buffer
+    saw_alt_screen_enter: bool,
 }
 
 impl Default for TuiOverlay {
@@ -510,6 +514,8 @@ impl TuiOverlay {
             last_char_size: None,
             last_escape_time: None,
             pending_resize: None,
+            started_at: None,
+            saw_alt_screen_enter: false,
         }
     }
 
@@ -525,6 +531,8 @@ impl TuiOverlay {
         self.pty_handle_id = Some(pty_handle_id);
         self.screen_buffer.clear();
         self.has_exited = false;
+        self.started_at = Some(std::time::Instant::now());
+        self.saw_alt_screen_enter = false;
     }
 
     /// Stop the overlay
@@ -534,6 +542,25 @@ impl TuiOverlay {
         self.pty_handle_id = None;
         self.screen_buffer.clear();
         self.has_exited = false;
+        self.started_at = None;
+        self.saw_alt_screen_enter = false;
+    }
+
+    /// Whether the overlay is still in the startup grace period (ignore exit sequences)
+    pub fn in_grace_period(&self) -> bool {
+        self.started_at
+            .map(|t| t.elapsed() < std::time::Duration::from_millis(800))
+            .unwrap_or(false)
+    }
+
+    /// Record that we saw the alt screen enter sequence
+    pub fn note_alt_screen_enter(&mut self) {
+        self.saw_alt_screen_enter = true;
+    }
+
+    /// Whether the TUI app has entered alternate screen at least once
+    pub fn saw_alt_screen(&self) -> bool {
+        self.saw_alt_screen_enter
     }
 
     /// Get the PTY handle ID

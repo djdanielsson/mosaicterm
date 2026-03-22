@@ -10,16 +10,33 @@ The configuration file is located at:
 
 ## Prompt Format Setting
 
-In your `config.toml`, locate the `[terminal]` section and set the `prompt_format` field:
+MosaicTerm supports two configuration approaches:
+
+### Basic: Template String
+
+In your `config.toml`, set `prompt_format` in the `[terminal]` section (used by Classic and Minimal styles):
 
 ```toml
 [terminal]
 prompt_format = "$USER@$HOSTNAME:$PWD$ "
 ```
 
+### Advanced: Prompt Style
+
+Use the `[prompt]` section for styled prompts with colored segments:
+
+```toml
+[prompt]
+style = "ohmyzsh"  # classic | minimal | powerline | starship | ohmyzsh | custom
+show_git = true
+show_env = true
+```
+
+See [Built-in Styles](#built-in-styles) below for details on each style.
+
 ## Supported Variables
 
-The following variables are available for use in your prompt:
+The following variables are available for use in `prompt_format` and custom segments:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
@@ -28,6 +45,13 @@ The following variables are available for use in your prompt:
 | `$PWD` | Current working directory (with `~` for home) | `~/workspace` or `/usr/local` |
 | `$HOME` | Home directory path | `/Users/ddaniels` |
 | `$SHELL` | Current shell path | `/bin/zsh` |
+| `$GIT_BRANCH` | Current git branch name | `main` |
+| `$GIT_STATUS` | Git status indicators | `+2 !3 ?1` |
+| `$VENV` | Active Python virtual environment | `myproject` |
+| `$NODE_VERSION` | Active Node.js version (via nvm) | `18.20.0` |
+| `$RUBY_VERSION` | Active Ruby version (via rbenv/rvm) | `3.2.0` |
+| `$DOCKER` | Docker context (if active) | `default` |
+| `$KUBE` | Kubernetes context (if active) | `production` |
 
 ## Example Configurations
 
@@ -56,7 +80,7 @@ prompt_format = "$USER@$HOSTNAME [$PWD]\n$ "
 **Output**:
 ```
 ddaniels@macbook-pro [~/workspace]
-$ 
+$
 ```
 
 ### 5. With Emojis 🎨
@@ -72,7 +96,7 @@ prompt_format = "$USER@$HOSTNAME [$PWD]\n❯ "
 **Output**:
 ```
 ddaniels@macbook-pro [~/workspace]
-❯ 
+❯
 ```
 
 ### 7. Simple Dollar Sign
@@ -139,10 +163,25 @@ The prompt automatically updates when you:
 
 ## Default Prompt
 
-If no custom prompt is configured, MosaicTerm uses:
-```toml
-prompt_format = "$USER@$HOSTNAME:$PWD$ "
+If no custom prompt is configured, MosaicTerm uses the **Minimal** style:
 ```
+~/workspace >
+```
+
+This corresponds to `style = "minimal"` and `format = "$PWD > "`.
+
+## Built-in Styles
+
+| Style | Appearance |
+|-------|-----------|
+| `classic` | `user@host:~/workspace$` |
+| `minimal` | `~/workspace >` (default) |
+| `powerline` | Colored segments with arrow separators: ` user  ~/workspace  main ` |
+| `starship` | Colored text segments with icons |
+| `ohmyzsh` | `user@host ~/workspace (main*) > ` |
+| `custom` | User-defined segments (see README) |
+
+The **ohmyzsh** style renders: `user@host` (cyan), space, `pwd` (blue), git branch with `*` for dirty repos, and `> ` as the prompt character.
 
 ## Reloading Configuration
 
@@ -150,18 +189,38 @@ Currently, you need to restart MosaicTerm to apply prompt changes. Live configur
 
 ## Advanced Examples
 
-### Context-Aware Prompt (Future Feature)
-While not yet implemented, future versions will support:
-- `$GIT_BRANCH` - Current git branch
-- `$EXIT_CODE` - Last command exit code
-- `$TIME` - Current time
-- Color codes for different states
+### Context-Aware Prompt
 
-Stay tuned for updates!
+Git and environment variables are already supported. Example with git context:
+
+```toml
+[prompt]
+style = "custom"
+
+[[prompt.segments]]
+content = "$USER@$HOSTNAME"
+fg = "#00D2D2"
+bold = true
+
+[[prompt.segments]]
+content = " $PWD "
+fg = "#50B4FF"
+bold = true
+
+[[prompt.segments]]
+content = "($GIT_BRANCH)"
+fg = "#C8C8FF"
+condition = "git"
+
+[[prompt.segments]]
+content = " > "
+fg = "#64DC64"
+```
+
+Future additions planned: `$EXIT_CODE`, `$TIME`.
 
 ## Related Documentation
 
 - [Configuration Guide](../README.md#configuration)
 - [Key Bindings](./KEY_BINDINGS.md)
 - [Themes](./THEMES.md)
-

@@ -6,7 +6,7 @@
 //! - Uptime, active PTY processes
 //! - Recent performance history
 
-use eframe::egui::{Align, Color32, Layout, RichText, Ui, Window};
+use eframe::egui::{self, Align, Color32, Layout, RichText, Ui, Window};
 use std::time::{Duration, Instant};
 
 use crate::state_manager::AppStatistics;
@@ -52,23 +52,40 @@ impl MetricsPanel {
         self.visible = visible;
     }
 
-    /// Render the metrics panel
+    /// Render directly from an egui::Context (no parent UI needed).
+    pub fn render_with_ctx(
+        &mut self,
+        ctx: &egui::Context,
+        stats: &AppStatistics,
+        pty_count: usize,
+    ) {
+        if !self.visible {
+            return;
+        }
+        self.render_window(ctx, stats, pty_count);
+    }
+
+    /// Render the metrics panel via a parent UI.
     pub fn render(&mut self, ui: &mut Ui, stats: &AppStatistics, pty_count: usize) {
         if !self.visible {
             return;
         }
+        self.render_window(ui.ctx(), stats, pty_count);
+    }
 
-        let now = Instant::now();
-        if now.duration_since(self.last_update) < self.update_interval {
-            return;
-        }
-        self.last_update = now;
-
+    fn render_window(
+        &mut self,
+        ctx: &egui::Context,
+        stats: &AppStatistics,
+        pty_count: usize,
+    ) {
+        let mut open = self.visible;
         Window::new("⚡ Performance Metrics")
+            .open(&mut open)
             .collapsible(true)
             .resizable(true)
             .default_width(350.0)
-            .show(ui.ctx(), |ui| {
+            .show(ctx, |ui| {
                 ui.set_min_width(300.0);
 
                 // System section
@@ -197,6 +214,7 @@ impl MetricsPanel {
                     });
                 }
             });
+        self.visible = open;
     }
 }
 

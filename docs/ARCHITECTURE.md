@@ -1,7 +1,7 @@
 # MosaicTerm Architecture
 
-**Version:** 0.1.0  
-**Last Updated:** October 30, 2025
+**Version:** 0.4.0
+**Last Updated:** March 22, 2026
 
 ---
 
@@ -27,11 +27,13 @@ MosaicTerm is a modern Rust-based terminal emulator built with `egui` (for GUI) 
 
 ### Key Technologies
 
-- **GUI Framework:** `egui` + `eframe` (immediate mode GUI)
+- **GUI Framework:** `egui` + `eframe` 0.24 (immediate mode GUI)
 - **PTY Management:** `portable-pty` (cross-platform pseudoterminal)
 - **Terminal Emulation:** `vte` (ANSI escape sequence parsing)
 - **Async Runtime:** `tokio` (for async operations)
 - **Logging:** `tracing` (structured logging)
+- **macOS Native:** `cocoa` + `objc` (native menu bar, notifications)
+- **Notifications:** `osascript` / `terminal-notifier` (macOS), `notify-send` (Linux)
 
 ### Design Goals
 
@@ -47,14 +49,15 @@ MosaicTerm is a modern Rust-based terminal emulator built with `egui` (for GUI) 
 ### 1. Separation of Concerns
 
 - **Library (`src/lib.rs`):** Core functionality, models, configuration
-- **Binary (`src/main.rs`, `src/app.rs`):** GUI application and user interaction
+- **Binary (`src/main.rs`, `src/app/mod.rs`):** GUI application and user interaction
 - **Modules:** Self-contained units with clear responsibilities
 
 ### 2. Single-Threaded UI with Background I/O
 
 - **Main Thread:** `egui` UI rendering and event handling
 - **Background Threads:** PTY I/O (reader/writer threads per PTY)
-- **Communication:** Channels for async data transfer
+- **Notification Threads:** Background threads for system notifications (non-blocking)
+- **Communication:** Channels for async data transfer; `AtomicBool` flags for native menu actions
 
 ### 3. Immutable Defaults with Mutable State
 
@@ -75,7 +78,7 @@ MosaicTerm is a modern Rust-based terminal emulator built with `egui` (for GUI) 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         MosaicTerm App                          │
-│                      (src/main.rs + app.rs)                     │
+│                   (src/main.rs + src/app/mod.rs)                │
 └────────────┬────────────────────────────────────────────────────┘
              │
              │ Uses
@@ -122,10 +125,11 @@ Supporting Systems:
 │  (src/completion)│  │  (src/models/)   │  │  (src/ui/)       │
 │                  │  │                  │  │                  │
 │ - Provider       │  │ - CommandBlock   │  │ - Blocks         │
-│ - Cache          │  │ - OutputLine     │  │ - Input          │
-└──────────────────┘  │ - PtyProcess     │  │ - Viewport       │
-                      │ - Config         │  │ - Scroll         │
-                      └──────────────────┘  └──────────────────┘
+│ - fzf backend    │  │ - OutputLine     │  │ - Input          │
+│ - Ghost compl.   │  │ - PtyProcess     │  │ - TUI Overlay    │
+└──────────────────┘  │ - Config         │  │ - Metrics Panel  │
+                      └──────────────────┘  │ - Completion     │
+                                            └──────────────────┘
 ```
 
 ---
@@ -223,17 +227,27 @@ MosaicTermApp::update()
     │   ├─ Add to CommandBlock
     │   └─ Check command completion
     │
-    ├─ 4. Render UI panels
-    │   ├─ Top panel (status bar)
-    │   ├─ Central panel (command history)
-    │   └─ Bottom panel (input prompt)
+    ├─ 4. Check native menu flags (macOS AtomicBool)
+    │   ├─ NATIVE_MENU_ABOUT → show About dialog
+    │   ├─ NATIVE_MENU_DEV → toggle dev panel
+    │   └─ NATIVE_MENU_PERF → toggle metrics panel
     │
-    ├─ 5. Handle input events
+    ├─ 5. Render UI panels
+    │   ├─ Central panel (command history with hover effects)
+    │   ├─ Bottom panel (input prompt with ghost completion)
+    │   ├─ Metrics panel (if visible, via render_with_ctx)
+    │   └─ TUI overlay (if active, with grace period)
+    │
+    ├─ 6. Handle input events
     │   ├─ Key presses
-    │   ├─ Tab completion
+    │   ├─ Tab / ghost completion
     │   └─ Command submission
     │
-    └─ 6. Request repaint (conditional)
+    ├─ 7. Background notifications
+    │   ├─ Track window focus (ctx.input.focused)
+    │   └─ If command completes after ≥10s while unfocused → spawn notification thread
+    │
+    └─ 8. Request repaint (conditional)
         ├─ Immediate: if command running or output pending
         └─ Delayed (100ms): for idle polling
 ```
@@ -404,7 +418,7 @@ pty_manager.send_input(&handle, command.as_bytes()).await?;
 if let Ok(data) = pty_manager.try_read_output_now(handle) {
     terminal.process_output(&data, StreamType::Stdout).await?;
     let ready_lines = terminal.take_ready_output_lines();
-    
+
     // Add to current CommandBlock
     if let Some(last_block) = self.command_history.last_mut() {
         last_block.add_output_lines(ready_lines);
@@ -560,69 +574,77 @@ update() called (each frame)
 
 ```
 src/
-├── main.rs              # Entry point, CLI arg parsing
-├── app.rs               # Main application state and UI
+├── main.rs              # Entry point, CLI arg parsing, icon loading
 ├── lib.rs               # Library exports
-├── state.rs             # Application state enums
 ├── error.rs             # Error types and Result aliases
+├── state_manager.rs     # Global state (sessions, history, contexts)
+│
+├── app/                 # Main application
+│   ├── mod.rs          # Core app struct, update loop, rendering,
+│   │                   # native menu bar, font loading, notifications
+│   ├── input.rs        # Keyboard shortcuts, pane management
+│   ├── prompt.rs       # Prompt building (Vec<PromptSegment>)
+│   ├── context.rs      # Git status + environment context
+│   ├── commands.rs     # Command classification (cd, ssh, tui)
+│   └── pane_tree.rs    # Split pane tree data structure
 │
 ├── config/              # Configuration management
-│   ├── mod.rs          # RuntimeConfig, Config structs
-│   ├── loader.rs       # File loading logic
-│   ├── theme.rs        # ThemeManager, color schemes
-│   ├── prompt.rs       # PromptFormatter, custom prompts
-│   └── shell.rs        # Shell detection and paths
+│   ├── mod.rs          # RuntimeConfig, themes, hot-reload
+│   ├── prompt.rs       # PromptFormatter, segment rendering (6 styles)
+│   └── loader.rs       # Config file discovery and loading
 │
-├── terminal/            # Terminal emulation
-│   ├── mod.rs          # Terminal struct, session management
-│   ├── input.rs        # Input processing and validation
-│   ├── output.rs       # Output processing and segmentation
-│   ├── ansi_parser.rs  # ANSI escape code parser
-│   ├── prompt.rs       # Prompt detection and formatting
-│   └── state.rs        # Terminal state machine
+├── session/             # Session persistence
+│   ├── mod.rs          # Session module
+│   └── tmux_backend.rs # Tmux CLI integration
 │
 ├── pty/                 # PTY management
-│   ├── mod.rs          # PTY module exports
+│   ├── mod.rs          # PtyHandle, module exports
 │   ├── manager.rs      # PtyManager, lifecycle coordination
 │   ├── process.rs      # PTY process spawning
-│   ├── streams.rs      # PtyStreams, I/O abstraction
-│   └── signals.rs      # Signal handling (SIGTERM, etc.)
+│   └── streams.rs      # PtyStreams, I/O abstraction
+│
+├── terminal/            # Terminal emulation
+│   └── mod.rs          # Terminal struct, session management
 │
 ├── models/              # Data models
 │   ├── mod.rs          # Model exports
-│   ├── command_block.rs # CommandBlock (command + output)
-│   ├── output_line.rs  # OutputLine, ANSI codes
-│   ├── pty_process.rs  # PtyProcess state
-│   ├── shell_type.rs   # ShellType enum
-│   ├── config.rs       # Config structs (models)
-│   └── terminal_session.rs # TerminalSession state
+│   ├── config.rs       # Config structs (PromptStyle, PromptConfig, etc.)
+│   └── command_block.rs # CommandBlock, OutputLine, ExecutionStatus
 │
 ├── ui/                  # UI components
-│   ├── mod.rs          # UI exports
-│   ├── blocks.rs       # CommandBlock rendering
-│   ├── input.rs        # Input field component
+│   ├── mod.rs          # UiColors, theme structs
+│   ├── tui_overlay.rs  # Fullscreen TUI overlay (vim, top, etc.)
+│   ├── metrics.rs      # Performance metrics panel
+│   ├── completion_popup.rs # Tab completion popup
+│   ├── ssh_prompt_overlay.rs # SSH password/passphrase prompts
+│   ├── text.rs         # AnsiTextRenderer
+│   ├── input.rs        # InputPrompt
+│   ├── blocks.rs       # CommandBlocks component
 │   ├── viewport.rs     # Scrollable viewport
-│   ├── scroll.rs       # Scroll state management
-│   ├── text.rs         # Text rendering utilities
-│   └── completion_popup.rs # Tab completion UI
+│   └── scroll.rs       # Scroll state management
 │
-├── completion.rs        # Command completion
-├── commands.rs          # Command parsing (deprecated)
-└── execution/           # Direct command execution
-    └── mod.rs          # DirectExecutor (for tests)
+├── completion.rs        # CompletionProvider (fzf integration)
+├── context.rs           # ContextDetector (20+ environments)
+├── history.rs           # Persistent command history
+├── security_audit.rs    # Security event logging
+├── platform/            # Platform-specific utilities
+└── execution/           # DirectExecutor (for tests)
 ```
 
 ### Module Responsibilities
 
 | Module | Purpose | Key Types |
 |--------|---------|-----------|
-| `config` | Load, parse, manage configuration | `Config`, `RuntimeConfig`, `ThemeManager` |
-| `terminal` | Emulate terminal, process I/O | `Terminal`, `OutputProcessor`, `AnsiParser` |
+| `app` | Core application, UI rendering, input, menu, notifications | `MosaicTermApp`, `ToolAvailability` |
+| `config` | Load, parse, manage configuration and prompts | `Config`, `RuntimeConfig`, `PromptFormatter` |
+| `terminal` | Emulate terminal, process I/O | `Terminal`, `TerminalSession` |
 | `pty` | Manage PTY lifecycle, I/O streams | `PtyManager`, `PtyHandle`, `PtyStreams` |
-| `models` | Data structures and state | `CommandBlock`, `OutputLine`, `PtyProcess` |
-| `ui` | Render UI components | `BlockRenderer`, `InputField`, `Viewport` |
-| `completion` | Tab completion logic | `CompletionProvider`, `CompletionResult` |
-| `execution` | Direct command execution (tests) | `DirectExecutor` |
+| `models` | Data structures and state | `CommandBlock`, `OutputLine`, `PromptConfig` |
+| `ui` | Render UI components | `TuiOverlay`, `MetricsPanel`, `CompletionPopup` |
+| `completion` | Tab completion logic (fzf integration) | `CompletionProvider`, `CompletionResult` |
+| `context` | Environment context detection | `ContextDetector`, `ContextType` |
+| `session` | Tmux session persistence | `TmuxSessionManager` |
+| `history` | Persistent command history | `HistoryManager` |
 
 ---
 
@@ -637,13 +659,14 @@ src/
 - `Config`: Base configuration struct (serializable)
 - `RuntimeConfig`: Runtime wrapper with theme and prompt managers
 - `ThemeManager`: Manages color schemes and theme switching
-- `PromptFormatter`: Generates custom shell prompts
+- `PromptFormatter`: Renders prompts as `Vec<PromptSegment>` with per-segment fg/bg/bold colors
 
 **Features:**
 - TOML-based configuration files
 - Multiple search paths (`~/.config/mosaicterm/`, `~/.mosaicterm.toml`)
 - Fallback to defaults if loading fails
-- Hot-reload support (future)
+- Hot-reload support via file watcher
+- System font loading from OS directories (`find_system_font` with `fc-list` fallback)
 
 ### 2. Terminal Emulation
 
@@ -714,6 +737,8 @@ src/
 **Completion Types:**
 - **Command:** Matches against cached executables
 - **Path:** Completes file and directory names
+- **fzf backend:** If fzf is installed, used as the matching engine for tab completion and Ctrl+R history search
+- **Ghost completion:** Inline dimmed suggestion shown after cursor; accepted with Tab or Right arrow
 - **Argument:** Context-aware argument suggestions (future)
 
 ### 6. UI Rendering
@@ -727,9 +752,16 @@ src/
 - `CompletionPopup`: Displays tab completion suggestions
 
 **Layout:**
-- **Top Panel:** Status bar (working directory, shell info)
-- **Central Panel:** Scrollable command history
-- **Bottom Panel:** Pinned input prompt (always visible)
+- **Central Panel:** Scrollable command history with hover effects (shadow/elevation)
+- **Bottom Panel:** Pinned input prompt (always visible, borderless)
+- **TUI Overlay:** Fullscreen mode for interactive apps (vim, top, etc.) with 800ms grace period for stable exit detection
+- **Metrics Panel:** Live performance stats, rendered via `MetricsPanel::render_with_ctx` directly from `egui::Context`, closable window with `.open()` binding
+- **Native Menu Bar** (macOS): About dialog and Dev menu via `cocoa`/`objc` with `AtomicBool` flags polled in `update()`
+
+**Prompt Rendering:**
+- Prompts are rendered as `Vec<PromptSegment>` with per-segment colors
+- Segments without `bg` are drawn with `painter().layout_no_wrap()` + `painter().galley()` to preserve explicit colors against egui's widget styling
+- Segments with `bg` are rendered with background fill via styled labels
 
 ---
 
@@ -966,8 +998,7 @@ The combination of `egui` for UI, `portable-pty` for PTY management, and a hybri
 
 ## Additional Resources
 
-- [README.md](./README.md) - User guide and features
-- [TASKS.md](./TASKS.md) - Development task list
-- [specs/](./specs/) - Detailed specifications and contracts
-- [CODE_REVIEW_FINDINGS.md](./CODE_REVIEW_FINDINGS.md) - Known issues and improvements
-
+- [README.md](../README.md) - User guide and features
+- [CUSTOM_PROMPT.md](./CUSTOM_PROMPT.md) - Prompt customization guide
+- [claude.md](../claude.md) - AI agent reference
+- [specs/](../specs/) - Detailed specifications and contracts

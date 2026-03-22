@@ -59,7 +59,7 @@ pub struct UiConfig {
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
-            font_family: "Monaco".to_string(),
+            font_family: "JetBrains Mono".to_string(),
             font_size: 12,
             scrollback_lines: 1000,
             theme: Theme::default(),
@@ -978,7 +978,7 @@ mod tests {
     fn test_default_config() {
         let config = Config::default();
 
-        assert_eq!(config.ui.font_family, "Monaco");
+        assert_eq!(config.ui.font_family, "JetBrains Mono");
         assert_eq!(config.ui.font_size, 12);
         // Shell path should exist and be valid (detected from system)
         // On Windows, shell paths might be different (cmd.exe, powershell.exe, etc.)

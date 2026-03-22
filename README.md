@@ -14,13 +14,17 @@ A modern GUI terminal emulator written in Rust, inspired by [Warp](https://warp.
 - **Pinned Input Prompt**: Always-visible input field at the bottom for seamless command entry
 - **Configurable Prompt Styles**: Classic, Minimal, Powerline, Starship, Oh My Zsh, and fully Custom prompt styles
 - **Split Panes**: Native multi-pane support with keyboard shortcuts (Ctrl+Shift+D/E/W)
-- **TUI App Support**: Run vim, top, htop, and other interactive terminal apps in a fullscreen overlay
+- **TUI App Support**: Run vim, top, htop, and other interactive terminal apps in a fullscreen overlay with stable exit detection
 - **SSH Session Support**: Seamless SSH connections with interactive prompt overlays for passwords and passphrases
 - **Comprehensive Theming**: Full color customization via config file with hex color support (Solarized, etc.)
+- **System Font Loading**: Uses any installed system font -- searches OS font directories with `fc-list` fallback on Linux (default: JetBrains Mono)
 - **Smart Environment Detection**: Auto-detects Python venv, conda, nvm, rbenv, Go, Rust, Java, Docker, Kubernetes, AWS, Terraform, and more -- only shown when relevant to the current project directory
 - **fzf Integration**: If fzf is installed, tab completion and history search (Ctrl+R) automatically use fuzzy matching
 - **zoxide Integration**: If zoxide is installed, `z` and `zi` commands are automatically intercepted for smart directory jumping
 - **Tmux Session Persistence**: Optional tmux-backed sessions for persistence across app restarts
+- **Ghost Completion**: Inline dimmed suggestions appear as you type -- press Tab or Right arrow to accept
+- **Desktop Notifications**: Get notified when long-running commands (>10s) complete while the window is unfocused
+- **Native macOS Menu Bar**: About dialog and Dev menu (Performance Metrics, Startup Log) integrated into the native menu bar
 - **Tab Completion**: Intelligent command and path completion with popup UI (double-tab to activate)
 - **Native ANSI Support**: Full color support for `ls`, `bat`, `fzf`, and other CLI tools
 - **Zsh Integration**: Seamless support for zsh with Oh My Zsh, plugins, and completions
@@ -78,6 +82,10 @@ cargo run --release
 2. Type commands in the bottom input field
 3. Press Enter to execute - output appears in a new block above
 4. Scroll through command history while keeping the input prompt always visible
+
+**macOS**: Use the native menu bar for About MosaicTerm, Dev tools (Performance Metrics, Startup Log), and standard app controls.
+
+**All platforms**: Press `Ctrl+Shift+P` to toggle the Performance Metrics panel.
 
 ## 📋 Linux-Specific Notes
 - **Config Location**: Uses XDG Base Directory specification
@@ -143,6 +151,8 @@ src/
 ├── ui/                  # GUI components
 │   ├── tui_overlay.rs   # Fullscreen TUI app overlay
 │   ├── completion_popup.rs # Tab completion popup
+│   ├── metrics.rs       # Performance metrics panel
+│   ├── ssh_prompt_overlay.rs # SSH password/passphrase prompts
 │   └── ...              # Blocks, input, scroll, colors
 ├── completion.rs        # Command/path completion with fzf support
 ├── context.rs           # Environment context detection (20+ tools)
@@ -155,6 +165,7 @@ src/
 - **[portable-pty](https://github.com/wez/wezterm/tree/main/crates/portable-pty)**: Cross-platform PTY support
 - **[vte](https://github.com/alacritty/vte)**: Terminal emulation and ANSI parsing
 - **[tokio](https://tokio.rs/)**: Async runtime for I/O operations
+- **[cocoa](https://crates.io/crates/cocoa) / [objc](https://crates.io/crates/objc)** (macOS only): Native menu bar integration
 
 ## 🔧 Configuration
 
@@ -162,8 +173,8 @@ MosaicTerm supports TOML-based configuration. Create `~/.config/mosaicterm/confi
 
 ```toml
 [ui]
-font_family = "JetBrains Mono"
-font_size = 12
+font_family = "JetBrainsMono Nerd Font"  # Any installed system font
+font_size = 13
 theme_name = "default-dark"
 
 [terminal]
@@ -309,6 +320,8 @@ MosaicTerm supports fullscreen TUI applications via an overlay mode. When you ru
 
 **Keyboard shortcuts** work inside TUI apps: Ctrl+C, Ctrl+Z, Ctrl+D, arrow keys, function keys, and all Ctrl+letter combinations.
 
+**Stable exit detection**: An 800ms grace period after TUI launch prevents shell startup noise from accidentally closing the overlay.
+
 ### Pane Shortcuts
 
 | Shortcut | Action |
@@ -347,6 +360,14 @@ MosaicTerm automatically detects and integrates with common CLI tools when they 
 - [x] zoxide integration for smart directory jumping
 - [x] Project-aware context detection (Rust, Go, Java only in project dirs)
 - [x] Event-driven architecture for PTY output (PtyEventBus)
+- [x] Native macOS menu bar (About, Dev menu with Performance Metrics and Startup Log)
+- [x] Desktop notifications for long-running commands
+- [x] System font loading from OS font directories
+- [x] Ghost completion (inline dimmed suggestions)
+- [x] Performance metrics panel with live stats
+- [x] Stable TUI exit detection with grace period
+- [x] Comprehensive code review (50+ bug fixes)
+- [x] Security hardening (config injection prevention, input validation, password isolation)
 
 ### Future Goals
 - [ ] Full PTY resize propagation for TUI overlay

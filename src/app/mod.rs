@@ -89,6 +89,15 @@ use tracing::{debug, error, info, warn};
 const MAX_OUTPUT_LINES_PER_COMMAND: usize = 10_000;
 const MAX_LINE_LENGTH: usize = 10_000;
 
+// Atomic flags for native macOS menu bar actions
+#[cfg(target_os = "macos")]
+static NATIVE_MENU_ABOUT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(target_os = "macos")]
+static NATIVE_MENU_DEV: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(target_os = "macos")]
+static NATIVE_MENU_PERF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Async operation request sent from UI to background task
 #[derive(Debug, Clone)]
 pub(crate) enum AsyncRequest {
@@ -157,6 +166,20 @@ pub struct MosaicTermApp {
     completion_provider: CompletionProvider,
     /// History manager for persistent command history
     history_manager: mosaicterm::history::HistoryManager,
+    /// Ghost completion text (shown dimmed after cursor, accepted with Tab or Right arrow)
+    ghost_completion: Option<String>,
+    /// Cached prompt segments for colored rendering
+    prompt_segments: Vec<mosaicterm::config::prompt::PromptSegment>,
+    /// Whether custom fonts have been loaded
+    fonts_loaded: bool,
+    /// Whether to show the About dialog
+    show_about_dialog: bool,
+    /// Whether to show the Dev panel
+    show_dev_panel: bool,
+    /// Startup messages (info/warnings collected during init)
+    startup_messages: Vec<String>,
+    /// Whether the application window currently has OS focus
+    window_has_focus: bool,
     /// Flag to show history search popup
     history_search_active: bool,
     /// Current history search query
@@ -223,6 +246,429 @@ impl ToolAvailability {
             eza: command_exists("eza"),
         }
     }
+}
+
+/// Search system font directories for a font matching `family_name`.
+/// Returns the raw TTF/OTF bytes if found, None otherwise.
+fn find_system_font(family_name: &str) -> Option<Vec<u8>> {
+    let search_dirs: Vec<std::path::PathBuf> = {
+        let mut dirs = Vec::new();
+
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(home) = dirs::home_dir() {
+                dirs.push(home.join("Library/Fonts"));
+            }
+            dirs.push(std::path::PathBuf::from("/Library/Fonts"));
+            dirs.push(std::path::PathBuf::from("/System/Library/Fonts"));
+            dirs.push(std::path::PathBuf::from("/System/Library/Fonts/Supplemental"));
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(home) = dirs::home_dir() {
+                dirs.push(home.join(".local/share/fonts"));
+                dirs.push(home.join(".fonts"));
+            }
+            dirs.push(std::path::PathBuf::from("/usr/share/fonts"));
+            dirs.push(std::path::PathBuf::from("/usr/local/share/fonts"));
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(windir) = std::env::var_os("WINDIR") {
+                dirs.push(std::path::PathBuf::from(windir).join("Fonts"));
+            }
+            if let Some(local) = dirs::data_local_dir() {
+                dirs.push(local.join("Microsoft\\Windows\\Fonts"));
+            }
+        }
+
+        dirs
+    };
+
+    // Try fc-list first (Linux, some macOS with fontconfig)
+    if let Some(path) = find_font_via_fc_list(family_name) {
+        info!("Found font via fc-list: {}", path.display());
+        return std::fs::read(&path).ok();
+    }
+
+    // Normalize the family name for matching: lowercase, strip spaces/hyphens
+    let normalized = family_name.to_lowercase().replace([' ', '-'], "");
+
+    let mut best_match: Option<std::path::PathBuf> = None;
+
+    for dir in &search_dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        // Deep walk (Nix, Homebrew, etc. nest fonts deeply)
+        if let Ok(entries) = walk_font_dir(dir) {
+            for path in entries {
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                if ext != "ttf" && ext != "otf" {
+                    continue;
+                }
+
+                let stem = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .replace([' ', '-'], "");
+
+                if !stem.contains(&normalized) {
+                    continue;
+                }
+
+                let is_regular = stem.ends_with("regular")
+                    || stem == normalized
+                    || stem.ends_with("nerdfontmono")
+                    || stem.ends_with("nerdfontmonoregular")
+                    || stem.ends_with("nerdfontregular");
+                let is_bold = stem.contains("bold");
+                let is_italic = stem.contains("italic") || stem.contains("oblique");
+                let is_thin = stem.contains("thin") || stem.contains("extralight") || stem.contains("light");
+
+                if is_regular && !is_bold && !is_italic && !is_thin {
+                    best_match = Some(path);
+                    break;
+                } else if best_match.is_none() && !is_bold && !is_italic && !is_thin {
+                    best_match = Some(path);
+                }
+            }
+        }
+        if best_match.is_some() {
+            break;
+        }
+    }
+
+    if let Some(path) = &best_match {
+        info!("Found font file: {}", path.display());
+        std::fs::read(path).ok()
+    } else {
+        None
+    }
+}
+
+/// Try to find a font file path using fc-list (fontconfig)
+fn find_font_via_fc_list(family_name: &str) -> Option<std::path::PathBuf> {
+    let output = std::process::Command::new("fc-list")
+        .arg(format!("{}:style=Regular", family_name))
+        .arg("--format=%{file}")
+        .output()
+        .ok()?;
+
+    if !output.status.success() || output.stdout.is_empty() {
+        return None;
+    }
+
+    let path_str = String::from_utf8_lossy(&output.stdout);
+    let path = std::path::PathBuf::from(path_str.trim());
+    if path.is_file() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+/// Recursively walk a directory collecting font file paths
+fn walk_font_dir(dir: &std::path::Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut files = Vec::new();
+    walk_font_dir_inner(dir, 0, &mut files)?;
+    Ok(files)
+}
+
+fn walk_font_dir_inner(
+    dir: &std::path::Path,
+    depth: usize,
+    files: &mut Vec<std::path::PathBuf>,
+) -> std::io::Result<()> {
+    if depth > 10 {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            walk_font_dir_inner(&path, depth + 1, files)?;
+        } else {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Send a system notification (macOS: osascript, Linux: notify-send)
+fn send_system_notification(title: &str, message: &str) {
+    let title = title.to_string();
+    let message = message.to_string();
+
+    // Run in background thread to avoid blocking the UI
+    std::thread::spawn(move || {
+        send_system_notification_sync(&title, &message);
+    });
+}
+
+fn send_system_notification_sync(title: &str, message: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let icon_path = find_app_icon_path();
+
+        // Try terminal-notifier first (supports custom app icons)
+        if let Some(icon) = &icon_path {
+            if let Ok(status) = std::process::Command::new("terminal-notifier")
+                .arg("-title")
+                .arg(title)
+                .arg("-message")
+                .arg(message)
+                .arg("-appIcon")
+                .arg(icon)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+            {
+                if status.success() {
+                    return;
+                }
+            }
+        }
+
+        // Fallback: osascript (works on all macOS, but icon is Script Editor's)
+        let escaped_title = title.replace('\\', "\\\\").replace('"', "\\\"");
+        let escaped_msg = message.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "display notification \"{}\" with title \"{}\"",
+            escaped_msg, escaped_title
+        );
+
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let icon_path = find_app_icon_path();
+        let mut cmd = std::process::Command::new("notify-send");
+        if let Some(icon) = &icon_path {
+            cmd.arg("--icon").arg(icon);
+        }
+        let _ = cmd
+            .arg(title)
+            .arg(message)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (title, message);
+    }
+}
+
+/// Find the app's icon.png for use in notifications
+fn find_app_icon_path() -> Option<String> {
+    let candidates = [
+        "icon.png",
+        "../icon.png",
+        "bin/mosaicterm/icon.png",
+        "/usr/share/icons/hicolor/256x256/apps/mosaicterm.png",
+        "/usr/share/pixmaps/mosaicterm.png",
+    ];
+
+    // Also check relative to the executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let exe_icon = dir.join("icon.png");
+            if exe_icon.exists() {
+                return exe_icon.to_str().map(|s| s.to_string());
+            }
+            // Check one level up (e.g. target/release/../icon.png)
+            if let Some(parent) = dir.parent() {
+                let parent_icon = parent.join("icon.png");
+                if parent_icon.exists() {
+                    return parent_icon.to_str().map(|s| s.to_string());
+                }
+                // Two levels up (target/release/../../icon.png = project root)
+                if let Some(grandparent) = parent.parent() {
+                    let gp_icon = grandparent.join("icon.png");
+                    if gp_icon.exists() {
+                        return gp_icon.to_str().map(|s| s.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    for path in &candidates {
+        if std::path::Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+    }
+
+    None
+}
+
+/// Set up the native macOS menu bar with About and Dev menu items.
+/// This adds items to the existing native app menu that macOS provides.
+#[cfg(target_os = "macos")]
+pub fn setup_native_menu_bar() {
+    #[allow(unused_imports)]
+    use cocoa::appkit::{NSApp, NSMenu, NSMenuItem};
+    use cocoa::base::{nil, selector};
+    use cocoa::foundation::{NSAutoreleasePool, NSString};
+    use objc::declare::ClassDecl;
+    use objc::runtime::{Class, Object, Sel};
+    #[allow(unused_imports)]
+    use objc::{msg_send, sel, sel_impl};
+
+    unsafe {
+        let _pool = NSAutoreleasePool::new(nil);
+        let app = NSApp();
+
+        // Create our menu action handler class
+        let handler_class_name = "MosaicTermMenuHandler";
+        if Class::get(handler_class_name).is_none() {
+            let superclass = Class::get("NSObject").unwrap();
+            let mut decl = ClassDecl::new(handler_class_name, superclass).unwrap();
+
+            extern "C" fn about_action(_this: &Object, _cmd: Sel, _sender: *mut Object) {
+                NATIVE_MENU_ABOUT.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            extern "C" fn dev_action(_this: &Object, _cmd: Sel, _sender: *mut Object) {
+                NATIVE_MENU_DEV.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            extern "C" fn perf_action(_this: &Object, _cmd: Sel, _sender: *mut Object) {
+                NATIVE_MENU_PERF.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+
+            decl.add_method(
+                selector("aboutAction:"),
+                about_action as extern "C" fn(&Object, Sel, *mut Object),
+            );
+            decl.add_method(
+                selector("devAction:"),
+                dev_action as extern "C" fn(&Object, Sel, *mut Object),
+            );
+            decl.add_method(
+                selector("perfAction:"),
+                perf_action as extern "C" fn(&Object, Sel, *mut Object),
+            );
+
+            decl.register();
+        }
+
+        let handler_class = Class::get(handler_class_name).unwrap();
+        let handler: *mut Object = objc::msg_send![handler_class, new];
+        // Handler is retained by menu items via setTarget; `new` returns +1 refcount
+        // which keeps it alive for the app's lifetime.
+
+        // Get the main menu
+        let main_menu: *mut Object = objc::msg_send![app, mainMenu];
+        if main_menu.is_null() {
+            return;
+        }
+
+        // Get the app menu (first submenu = "MosaicTerm" menu)
+        let app_menu_item: *mut Object = objc::msg_send![main_menu, itemAtIndex: 0_isize];
+        if app_menu_item.is_null() {
+            return;
+        }
+        let app_menu: *mut Object = objc::msg_send![app_menu_item, submenu];
+        if app_menu.is_null() {
+            return;
+        }
+
+        // Insert "About MosaicTerm" at position 0
+        let about_title = NSString::alloc(nil).init_str("About MosaicTerm");
+        let about_key = NSString::alloc(nil).init_str("");
+        let about_item: *mut Object = objc::msg_send![
+            NSMenuItem::alloc(nil),
+            initWithTitle: about_title
+            action: selector("aboutAction:")
+            keyEquivalent: about_key
+        ];
+        let _: () = objc::msg_send![about_item, setTarget: handler];
+        let _: () = objc::msg_send![app_menu, insertItem: about_item atIndex: 0_isize];
+
+        // Insert separator after About
+        let sep: *mut Object = objc::msg_send![Class::get("NSMenuItem").unwrap(), separatorItem];
+        let _: () = objc::msg_send![app_menu, insertItem: sep atIndex: 1_isize];
+
+        // Create "Dev" menu in the main menu bar
+        let dev_menu = NSMenu::alloc(nil).initWithTitle_(NSString::alloc(nil).init_str("Dev"));
+
+        let perf_title = NSString::alloc(nil).init_str("Performance Metrics");
+        let perf_key = NSString::alloc(nil).init_str("");
+        let perf_item: *mut Object = objc::msg_send![
+            NSMenuItem::alloc(nil),
+            initWithTitle: perf_title
+            action: selector("perfAction:")
+            keyEquivalent: perf_key
+        ];
+        let _: () = objc::msg_send![perf_item, setTarget: handler];
+        let _: () = objc::msg_send![dev_menu, addItem: perf_item];
+
+        let log_title = NSString::alloc(nil).init_str("Startup Log");
+        let log_key = NSString::alloc(nil).init_str("");
+        let log_item: *mut Object = objc::msg_send![
+            NSMenuItem::alloc(nil),
+            initWithTitle: log_title
+            action: selector("devAction:")
+            keyEquivalent: log_key
+        ];
+        let _: () = objc::msg_send![log_item, setTarget: handler];
+        let _: () = objc::msg_send![dev_menu, addItem: log_item];
+
+        // Add Dev menu to main menu bar
+        let dev_menu_item: *mut Object = msg_send![NSMenuItem::alloc(nil), init];
+        let _: () = objc::msg_send![dev_menu_item, setSubmenu: dev_menu];
+        let _: () = objc::msg_send![main_menu, addItem: dev_menu_item];
+    }
+}
+
+/// Strip ANSI escape sequences from a string for plain-text analysis
+fn strip_ansi_codes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            // Skip ESC [ ... (letter) sequences
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                while let Some(&c) = chars.peek() {
+                    chars.next();
+                    if c.is_ascii_alphabetic() || c == '~' {
+                        break;
+                    }
+                }
+            } else if chars.peek() == Some(&']') {
+                // OSC sequences: ESC ] ... ST (or BEL)
+                chars.next();
+                while let Some(&c) = chars.peek() {
+                    chars.next();
+                    if c == '\x07' || c == '\\' {
+                        break;
+                    }
+                }
+            } else {
+                // Other ESC sequences: skip one more char
+                chars.next();
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
 
 fn command_exists(cmd: &str) -> bool {
@@ -397,6 +843,13 @@ impl MosaicTermApp {
                 error!("Failed to create history manager: {}", e);
                 mosaicterm::history::HistoryManager::default()
             }),
+            ghost_completion: None,
+            prompt_segments: vec![],
+            fonts_loaded: false,
+            show_about_dialog: false,
+            show_dev_panel: false,
+            startup_messages: Vec::new(),
+            window_has_focus: true,
             history_search_active: false,
             history_search_query: String::new(),
             history_search_needs_focus: false,
@@ -495,50 +948,57 @@ impl MosaicTermApp {
         // Disable terminal echo explicitly
         environment.insert("STTY".to_string(), "-echo".to_string());
 
-        // Suppress shell prompts by setting PS1 to empty for bash/zsh
-        // This prevents prompts from appearing in output at all
+        // Use xterm-256color so TUI apps work correctly; suppress shell prompts
+        // via environment variables. MosaicTerm renders its own prompt, so we need
+        // the underlying shell to be quiet.
+        environment.insert("TERM".to_string(), "xterm-256color".to_string());
+
+        // Tell MosaicTerm-aware shell init to suppress itself
+        environment.insert("MOSAICTERM".to_string(), "1".to_string());
+
         match shell_type {
-            ModelShellType::Bash | ModelShellType::Zsh => {
-                environment.insert("PS1".to_string(), "".to_string());
-                environment.insert("PS2".to_string(), "".to_string()); // Also suppress continuation prompt
-                environment.insert("PS3".to_string(), "".to_string()); // Suppress select prompt
-                environment.insert("PS4".to_string(), "".to_string()); // Suppress debug prompt
-                                                                       // Prevent shells from being 'interactive' which can trigger config loading
-                environment.insert("TERM".to_string(), "dumb".to_string());
-            }
-            ModelShellType::Fish => {
-                // For fish shell, we can disable the prompt via function
-                environment.insert("fish_prompt".to_string(), "".to_string());
-                environment.insert("TERM".to_string(), "dumb".to_string());
-            }
-            ModelShellType::Ksh => {
-                environment.insert("PS1".to_string(), "".to_string());
-                environment.insert("TERM".to_string(), "dumb".to_string());
-            }
-            ModelShellType::Csh | ModelShellType::Tcsh => {
-                environment.insert("prompt".to_string(), "".to_string());
-                environment.insert("TERM".to_string(), "dumb".to_string());
-            }
-            ModelShellType::Dash => {
-                environment.insert("PS1".to_string(), "".to_string());
-                environment.insert("TERM".to_string(), "dumb".to_string());
-            }
-            ModelShellType::PowerShell => {
-                // PowerShell doesn't have PS1, but we can set a minimal prompt
-                environment.insert("PROMPT".to_string(), "".to_string());
-                environment.insert("TERM".to_string(), "dumb".to_string());
-            }
-            ModelShellType::Cmd => {
-                // Windows CMD doesn't have environment-based prompt suppression
-                environment.insert("TERM".to_string(), "dumb".to_string());
-            }
-            ModelShellType::Other => {
-                // For unknown shells, try PS1 suppression as fallback
+            ModelShellType::Bash => {
                 environment.insert("PS1".to_string(), "".to_string());
                 environment.insert("PS2".to_string(), "".to_string());
                 environment.insert("PS3".to_string(), "".to_string());
                 environment.insert("PS4".to_string(), "".to_string());
-                environment.insert("TERM".to_string(), "dumb".to_string());
+            }
+            ModelShellType::Zsh => {
+                // For zsh: suppress precmd hooks (Oh My Zsh, Starship, p10k) and prompt
+                // ZDOTDIR override prevents .zshrc from running its prompt setup
+                // We also set a no-op precmd via ENV/ZDOTDIR
+                environment.insert("PS1".to_string(), "".to_string());
+                environment.insert("PS2".to_string(), "".to_string());
+                environment.insert("PS3".to_string(), "".to_string());
+                environment.insert("PS4".to_string(), "".to_string());
+                // Disable prompt themes in zsh
+                environment.insert("ZSH_THEME".to_string(), "".to_string());
+                // Prevent p10k instant prompt
+                environment.insert(
+                    "POWERLEVEL9K_INSTANT_PROMPT".to_string(),
+                    "off".to_string(),
+                );
+            }
+            ModelShellType::Fish => {
+                environment.insert("fish_prompt".to_string(), "".to_string());
+            }
+            ModelShellType::Ksh => {
+                environment.insert("PS1".to_string(), "".to_string());
+            }
+            ModelShellType::Csh | ModelShellType::Tcsh => {
+                environment.insert("prompt".to_string(), "".to_string());
+            }
+            ModelShellType::Dash => {
+                environment.insert("PS1".to_string(), "".to_string());
+            }
+            ModelShellType::PowerShell => {
+                environment.insert("PROMPT".to_string(), "".to_string());
+            }
+            ModelShellType::Cmd | ModelShellType::Other => {
+                environment.insert("PS1".to_string(), "".to_string());
+                environment.insert("PS2".to_string(), "".to_string());
+                environment.insert("PS3".to_string(), "".to_string());
+                environment.insert("PS4".to_string(), "".to_string());
             }
         }
 
@@ -560,21 +1020,36 @@ impl MosaicTermApp {
                 // PtyManager is already async and thread-safe, no lock needed
                 let pty_manager = &*self.pty_manager;
 
-                // Override PS1 set by rc files with a more robust approach
-                // Use PROMPT_COMMAND to ensure PS1 stays empty even if venv/conda modifies it
+                // Silently override PS1 by hiding the command output.
+                // We use `stty -echo` to suppress echoing of the typed command, then
+                // restore with `stty echo`.
                 let ps1_override = match shell_type {
                     ModelShellType::Bash => {
-                        // For bash, use PROMPT_COMMAND to override PS1 before each prompt
-                        "export PROMPT_COMMAND='PS1=\"\"; PS2=\"\"; PS3=\"\"; PS4=\"\"'\n"
+                        concat!(
+                            "stty -echo 2>/dev/null; ",
+                            "export PROMPT_COMMAND='PS1=\"\"; PS2=\"\"; PS3=\"\"; PS4=\"\"'; ",
+                            "stty echo 2>/dev/null\n"
+                        )
                     }
                     ModelShellType::Zsh => {
-                        // For zsh, use precmd hook to override PS1 before each prompt
-                        "precmd() { PS1=''; PS2=''; PS3=''; PS4=''; }\n"
+                        concat!(
+                            "stty -echo 2>/dev/null; ",
+                            "precmd() { PS1=''; PS2=''; PS3=''; PS4=''; }; ",
+                            "stty echo 2>/dev/null\n"
+                        )
                     }
-                    ModelShellType::Fish => "function fish_prompt; end\n",
-                    ModelShellType::Ksh => "export PS1=''; export PS2=''\n",
-                    ModelShellType::Csh | ModelShellType::Tcsh => "set prompt=''\n",
-                    ModelShellType::Dash => "export PS1=''\n",
+                    ModelShellType::Fish => {
+                        "stty -echo 2>/dev/null; function fish_prompt; end; stty echo 2>/dev/null\n"
+                    }
+                    ModelShellType::Ksh => {
+                        "stty -echo 2>/dev/null; export PS1=''; export PS2=''; stty echo 2>/dev/null\n"
+                    }
+                    ModelShellType::Csh | ModelShellType::Tcsh => {
+                        "stty -echo; set prompt=''; stty echo\n"
+                    }
+                    ModelShellType::Dash => {
+                        "stty -echo 2>/dev/null; export PS1=''; stty echo 2>/dev/null\n"
+                    }
                     _ => "",
                 };
 
@@ -828,7 +1303,7 @@ impl MosaicTermApp {
 
     /// Update the prompt display based on current working directory
     fn update_prompt(&mut self) {
-        let prompt_str = prompt::build_prompt(
+        self.prompt_segments = prompt::build_prompt_segments(
             self.terminal.as_ref(),
             &self.state_manager,
             &self.prompt_formatter,
@@ -836,6 +1311,11 @@ impl MosaicTermApp {
             self.ssh_remote_prompt.as_deref(),
             self.ssh_session_command.as_deref(),
         );
+        let prompt_str: String = self
+            .prompt_segments
+            .iter()
+            .map(|s| s.text.clone())
+            .collect();
         self.input_prompt.set_prompt(&prompt_str);
     }
 
@@ -1224,6 +1704,252 @@ impl MosaicTermApp {
             });
     }
 
+    fn render_about_dialog(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_about_dialog;
+        egui::Window::new("About MosaicTerm")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(380.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        egui::RichText::new("MosaicTerm")
+                            .font(egui::FontId::proportional(22.0))
+                            .color(self.ui_colors.accent)
+                            .strong(),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                            .font(egui::FontId::monospace(13.0))
+                            .color(egui::Color32::from_rgb(160, 160, 180)),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("A block-based terminal emulator")
+                            .font(egui::FontId::proportional(12.0))
+                            .color(egui::Color32::from_rgb(140, 140, 160)),
+                    );
+                });
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                // Configuration
+                let cfg = self.runtime_config.config();
+                ui.label(
+                    egui::RichText::new("Configuration")
+                        .font(egui::FontId::monospace(11.0))
+                        .color(self.ui_colors.accent)
+                        .strong(),
+                );
+                ui.add_space(2.0);
+
+                let info_color = egui::Color32::from_rgb(160, 160, 180);
+                let label_color = egui::Color32::from_rgb(120, 120, 140);
+
+                for (label, value) in [
+                    ("Font", cfg.ui.font_family.as_str()),
+                    ("Font size", &cfg.ui.font_size.to_string()),
+                    ("Prompt style", &format!("{:?}", cfg.prompt.style)),
+                    ("Shell", &cfg.terminal.shell_path.display().to_string()),
+                ] {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{:>12}:", label))
+                                .font(egui::FontId::monospace(11.0))
+                                .color(label_color),
+                        );
+                        ui.label(
+                            egui::RichText::new(value)
+                                .font(egui::FontId::monospace(11.0))
+                                .color(info_color),
+                        );
+                    });
+                }
+
+                ui.add_space(8.0);
+
+                // Tool integrations
+                ui.label(
+                    egui::RichText::new("Tool Integrations")
+                        .font(egui::FontId::monospace(11.0))
+                        .color(self.ui_colors.accent)
+                        .strong(),
+                );
+                ui.add_space(2.0);
+
+                let tools = &self.tool_availability;
+                for (name, avail) in [
+                    ("fzf", tools.fzf),
+                    ("zoxide", tools.zoxide),
+                    ("tmux", tools.tmux),
+                    ("fd", tools.fd),
+                    ("bat", tools.bat),
+                    ("eza", tools.eza),
+                ] {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{:>12}:", name))
+                                .font(egui::FontId::monospace(11.0))
+                                .color(label_color),
+                        );
+                        let (icon, color) = if avail {
+                            ("found", egui::Color32::from_rgb(100, 200, 100))
+                        } else {
+                            ("not found", egui::Color32::from_rgb(120, 120, 140))
+                        };
+                        ui.label(
+                            egui::RichText::new(icon)
+                                .font(egui::FontId::monospace(11.0))
+                                .color(color),
+                        );
+                    });
+                }
+
+                ui.add_space(8.0);
+
+                // Startup log
+                if !self.startup_messages.is_empty() {
+                    ui.label(
+                        egui::RichText::new("Startup Log")
+                            .font(egui::FontId::monospace(11.0))
+                            .color(self.ui_colors.accent)
+                            .strong(),
+                    );
+                    ui.add_space(2.0);
+                    for msg in &self.startup_messages {
+                        ui.label(
+                            egui::RichText::new(msg)
+                                .font(egui::FontId::monospace(10.0))
+                                .color(egui::Color32::from_rgb(140, 140, 160)),
+                        );
+                    }
+                }
+
+                ui.add_space(8.0);
+
+                // Platform info
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} {} | Rust {} | egui {}",
+                            std::env::consts::OS,
+                            std::env::consts::ARCH,
+                            "stable",
+                            "0.24",
+                        ))
+                        .font(egui::FontId::monospace(9.0))
+                        .color(egui::Color32::from_rgb(100, 100, 120)),
+                    );
+                });
+            });
+        self.show_about_dialog = open;
+    }
+
+    fn render_dev_panel(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_dev_panel;
+        egui::Window::new("Dev Info")
+            .open(&mut open)
+            .collapsible(true)
+            .resizable(true)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                let label_color = egui::Color32::from_rgb(120, 120, 140);
+                let info_color = egui::Color32::from_rgb(160, 160, 180);
+
+                ui.label(
+                    egui::RichText::new("Startup Messages")
+                        .font(egui::FontId::monospace(11.0))
+                        .color(self.ui_colors.accent)
+                        .strong(),
+                );
+                ui.add_space(2.0);
+                if self.startup_messages.is_empty() {
+                    ui.label(
+                        egui::RichText::new("(none)")
+                            .font(egui::FontId::monospace(10.0))
+                            .color(label_color),
+                    );
+                } else {
+                    for msg in &self.startup_messages {
+                        ui.label(
+                            egui::RichText::new(msg)
+                                .font(egui::FontId::monospace(10.0))
+                                .color(info_color),
+                        );
+                    }
+                }
+                ui.add_space(8.0);
+
+                ui.label(
+                    egui::RichText::new("Runtime State")
+                        .font(egui::FontId::monospace(11.0))
+                        .color(self.ui_colors.accent)
+                        .strong(),
+                );
+                ui.add_space(2.0);
+
+                let cmd_count = self
+                    .state_manager
+                    .command_history()
+                    .map(|h| h.len())
+                    .unwrap_or(0);
+                let working_dir = self
+                    .terminal
+                    .as_ref()
+                    .map(|t| t.get_working_directory().display().to_string())
+                    .unwrap_or_else(|| "(no terminal)".to_string());
+
+                for (k, v) in [
+                    ("Terminal ready", self.state_manager.is_terminal_ready().to_string()),
+                    ("Working dir", working_dir),
+                    ("Command count", cmd_count.to_string()),
+                    ("TUI overlay", self.tui_overlay.is_active().to_string()),
+                    ("SSH session", self.ssh_prompt_overlay.is_active().to_string()),
+                    (
+                        "Prompt style",
+                        format!("{:?}", self.runtime_config.config().prompt.style),
+                    ),
+                ] {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{:>16}:", k))
+                                .font(egui::FontId::monospace(10.0))
+                                .color(label_color),
+                        );
+                        ui.label(
+                            egui::RichText::new(&v)
+                                .font(egui::FontId::monospace(10.0))
+                                .color(info_color),
+                        );
+                    });
+                }
+
+                ui.add_space(8.0);
+
+                ui.label(
+                    egui::RichText::new("Platform")
+                        .font(egui::FontId::monospace(11.0))
+                        .color(self.ui_colors.accent)
+                        .strong(),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} {} | Rust stable | egui 0.24",
+                        std::env::consts::OS,
+                        std::env::consts::ARCH,
+                    ))
+                    .font(egui::FontId::monospace(9.0))
+                    .color(egui::Color32::from_rgb(100, 100, 120)),
+                );
+            });
+        self.show_dev_panel = open;
+    }
+
     /// Render context menu for command blocks
     fn render_context_menu(&mut self, ctx: &egui::Context) {
         // Check if we have an active context menu
@@ -1344,6 +2070,9 @@ impl MosaicTermApp {
 
 impl eframe::App for MosaicTermApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Track window focus state for background notifications
+        self.window_has_focus = ctx.input(|i| i.focused);
+
         // Handle keyboard shortcut for performance metrics (Ctrl+Shift+P)
         if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::P)) {
             self.metrics_panel.toggle();
@@ -1441,6 +2170,15 @@ impl eframe::App for MosaicTermApp {
         // Update window title with application state
         self.update_window_title(frame);
 
+        // Load custom fonts and set up native menu bar on first frame
+        if !self.fonts_loaded {
+            self.load_fonts(ctx);
+            self.fonts_loaded = true;
+
+            #[cfg(target_os = "macos")]
+            setup_native_menu_bar();
+        }
+
         // Set up visual style
         self.setup_visual_style(ctx);
 
@@ -1537,6 +2275,44 @@ impl eframe::App for MosaicTermApp {
             self.render_session_restore_dialog(ctx);
         }
 
+        // Check for native menu bar actions (set by macOS menu callbacks)
+        #[cfg(target_os = "macos")]
+        {
+            use std::sync::atomic::Ordering;
+            if NATIVE_MENU_ABOUT.load(Ordering::Relaxed) {
+                NATIVE_MENU_ABOUT.store(false, Ordering::Relaxed);
+                self.show_about_dialog = true;
+            }
+            if NATIVE_MENU_DEV.load(Ordering::Relaxed) {
+                NATIVE_MENU_DEV.store(false, Ordering::Relaxed);
+                self.show_dev_panel = !self.show_dev_panel;
+            }
+            if NATIVE_MENU_PERF.load(Ordering::Relaxed) {
+                NATIVE_MENU_PERF.store(false, Ordering::Relaxed);
+                self.metrics_panel.toggle();
+            }
+        }
+
+        // Non-macOS: provide keyboard shortcut fallbacks
+        #[cfg(not(target_os = "macos"))]
+        {
+            if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::A))
+            {
+                self.show_about_dialog = !self.show_about_dialog;
+            }
+            if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::D))
+            {
+                self.show_dev_panel = !self.show_dev_panel;
+            }
+        }
+
+        if self.show_about_dialog {
+            self.render_about_dialog(ctx);
+        }
+        if self.show_dev_panel {
+            self.render_dev_panel(ctx);
+        }
+
         // Main layout with scrollable history and pinned input
         egui::CentralPanel::default()
             .frame(
@@ -1574,16 +2350,11 @@ impl eframe::App for MosaicTermApp {
         // Render context menu if active
         self.render_context_menu(ctx);
 
-        // Render performance metrics panel if visible (Ctrl+Shift+P to toggle)
+        // Render performance metrics panel if visible
         if self.metrics_panel.is_visible() {
             let pty_count = executor::block_on(async { self.pty_manager.active_count().await });
             let stats = self.state_manager.statistics();
-            // Create a temporary UI for the window
-            egui::Area::new(egui::Id::new("metrics_area"))
-                .fixed_pos(egui::pos2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    self.metrics_panel.render(ui, stats, pty_count);
-                });
+            self.metrics_panel.render_with_ctx(ctx, stats, pty_count);
         }
 
         // Render TUI overlay if active
@@ -1816,8 +2587,79 @@ impl MosaicTermApp {
         let _ = title; // Use the variable to avoid unused warning
     }
 
+    /// Load a system font matching the configured font_family into egui.
+    /// Falls back to egui's built-in monospace if the font isn't found.
+    fn load_fonts(&mut self, ctx: &egui::Context) {
+        let font_family = self.runtime_config.config().ui.font_family.clone();
+        info!("Looking for system font: '{}'", font_family);
+
+        if let Some(font_data) = find_system_font(&font_family) {
+            let size = font_data.len();
+            self.startup_messages
+                .push(format!("Loaded font '{}' ({:.1} KB)", font_family, size as f64 / 1024.0));
+
+            let mut fonts = egui::FontDefinitions::default();
+            fonts.font_data.insert(
+                "custom_mono".to_string(),
+                egui::FontData::from_owned(font_data),
+            );
+            fonts
+                .families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .insert(0, "custom_mono".to_string());
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .push("custom_mono".to_string());
+
+            ctx.set_fonts(fonts);
+        } else {
+            let msg = format!(
+                "Font '{}' not found on system — using default monospace",
+                font_family
+            );
+            warn!("{}", msg);
+            self.startup_messages.push(msg.clone());
+            send_system_notification("MosaicTerm", &msg);
+        }
+
+        // Collect tool availability info
+        let tools = &self.tool_availability;
+        let mut found = Vec::new();
+        let mut missing = Vec::new();
+        for (name, avail) in [
+            ("fzf", tools.fzf),
+            ("zoxide", tools.zoxide),
+            ("tmux", tools.tmux),
+            ("fd", tools.fd),
+            ("bat", tools.bat),
+            ("eza", tools.eza),
+        ] {
+            if avail {
+                found.push(name);
+            } else {
+                missing.push(name);
+            }
+        }
+        if !found.is_empty() {
+            self.startup_messages
+                .push(format!("Integrations: {}", found.join(", ")));
+        }
+        if !missing.is_empty() {
+            self.startup_messages
+                .push(format!("Not found: {}", missing.join(", ")));
+        }
+
+        let style = &self.runtime_config.config().prompt.style;
+        self.startup_messages
+            .push(format!("Prompt style: {:?}", style));
+    }
+
     /// Set up visual style for the application
     fn setup_visual_style(&self, ctx: &egui::Context) {
+        let font_size = self.runtime_config.config().ui.font_size as f32;
         let mut style = (*ctx.style()).clone();
 
         style.visuals.dark_mode = true;
@@ -1835,42 +2677,72 @@ impl MosaicTermApp {
 
         style
             .text_styles
-            .insert(egui::TextStyle::Body, egui::FontId::monospace(12.0));
+            .insert(egui::TextStyle::Body, egui::FontId::monospace(font_size));
         style
             .text_styles
-            .insert(egui::TextStyle::Monospace, egui::FontId::monospace(12.0));
+            .insert(egui::TextStyle::Monospace, egui::FontId::monospace(font_size));
 
         ctx.set_style(style);
     }
 
     /// Render the fixed input area at the bottom
     fn render_fixed_input_area(&mut self, ui: &mut egui::Ui) {
-        // Thin separator line above the input area
-        let sep_rect = egui::Rect::from_min_size(
-            egui::pos2(ui.max_rect().left(), ui.cursor().top()),
-            egui::vec2(ui.available_width(), 1.0),
-        );
-        ui.painter().rect_filled(
-            sep_rect,
-            egui::Rounding::ZERO,
-            egui::Color32::from_rgb(50, 55, 70),
-        );
-        ui.add_space(1.0);
-
         let input_frame = egui::Frame::none()
-            .fill(self.ui_colors.input.background)
+            .fill(self.ui_colors.background)
             .inner_margin(egui::Margin::symmetric(10.0, 6.0))
-            .outer_margin(egui::Margin::symmetric(2.0, 1.0))
-            .rounding(egui::Rounding::same(0.0));
+            .outer_margin(egui::Margin::ZERO);
 
         let frame_response = input_frame.show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new(self.input_prompt.prompt_text())
-                        .font(egui::FontId::monospace(13.0))
-                        .color(self.ui_colors.input.prompt)
-                        .strong(),
-                );
+                // Render prompt segments with Powerline arrow separators
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let font_size = self
+                    .runtime_config
+                    .config()
+                    .ui
+                    .font_size as f32;
+                let segments = self.prompt_segments.clone();
+                let bg_color = self.ui_colors.background;
+                for (i, seg) in segments.iter().enumerate() {
+                    if let Some(seg_bg) = seg.bg {
+                        let mut text = egui::RichText::new(&seg.text)
+                            .font(egui::FontId::monospace(font_size))
+                            .color(seg.fg)
+                            .background_color(seg_bg);
+                        if seg.bold {
+                            text = text.strong();
+                        }
+                        ui.label(text);
+
+                        // Draw Powerline arrow separator between segments
+                        if let Some(sep) = seg.separator {
+                            let next_bg = segments
+                                .get(i + 1)
+                                .and_then(|s| s.bg)
+                                .unwrap_or(bg_color);
+                            let sep_text = egui::RichText::new(sep.to_string())
+                                .font(egui::FontId::monospace(font_size))
+                                .color(seg_bg)
+                                .background_color(next_bg);
+                            ui.label(sep_text);
+                        }
+                    } else {
+                        // Non-background segment: paint text directly via painter
+                        // to guarantee color isn't overridden by widget styling.
+                        let font = egui::FontId::monospace(font_size);
+                        let galley = ui.painter().layout_no_wrap(
+                            seg.text.clone(),
+                            font.clone(),
+                            seg.fg,
+                        );
+                        let (rect, _response) = ui.allocate_exact_size(
+                            galley.size(),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().galley(rect.min, galley);
+                    }
+                }
+                ui.spacing_mut().item_spacing.x = 4.0;
 
                 let old_input = self.input_prompt.current_input().to_string();
                 let mut current_input = old_input.clone();
@@ -1879,31 +2751,57 @@ impl MosaicTermApp {
                 let escape_pressed = ui.input(|i| i.key_pressed(egui::Key::Escape));
                 let up_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowUp));
                 let down_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowDown));
+                let right_pressed = ui.input(|i| i.key_pressed(egui::Key::ArrowRight));
 
-                let input_response = ui.add(
-                    egui::TextEdit::singleline(&mut current_input)
-                        .font(egui::FontId::monospace(13.0))
-                        .desired_width(f32::INFINITY)
-                        .hint_text(
-                            egui::RichText::new("Type a command...")
-                                .font(egui::FontId::monospace(13.0))
-                                .color(egui::Color32::from_rgb(80, 85, 100)),
-                        )
-                        .margin(egui::Vec2::new(6.0, 5.0))
-                        .lock_focus(true),
-                );
+                // Render the TextEdit with no visible frame/border
+                let input_response = ui.scope(|ui| {
+                    let bg = self.ui_colors.background;
+                    let vis = ui.visuals_mut();
+                    vis.extreme_bg_color = bg;
+                    vis.widgets.inactive.bg_fill = bg;
+                    vis.widgets.active.bg_fill = bg;
+                    vis.widgets.hovered.bg_fill = bg;
+                    vis.widgets.noninteractive.bg_fill = bg;
+                    vis.widgets.inactive.bg_stroke = egui::Stroke::NONE;
+                    vis.widgets.active.bg_stroke = egui::Stroke::NONE;
+                    vis.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+                    vis.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
+                    vis.selection.stroke = egui::Stroke::NONE;
 
-                if input_response.has_focus() {
-                    let glow_rect = input_response.rect.expand(1.0);
-                    ui.painter().rect_stroke(
-                        glow_rect,
-                        2.0,
-                        egui::Stroke::new(1.0, self.ui_colors.input.focused_border),
-                    );
-                }
+                    ui.add(
+                        egui::TextEdit::singleline(&mut current_input)
+                            .font(egui::FontId::monospace(font_size))
+                            .desired_width(f32::INFINITY)
+                            .frame(false)
+                            .margin(egui::Vec2::new(2.0, 3.0))
+                            .lock_focus(true),
+                    )
+                }).inner;
 
                 // Store input rect for positioning completion popup
                 let input_rect = input_response.rect;
+
+                // Render ghost completion text (dimmed, after the current input)
+                if let Some(ghost) = &self.ghost_completion {
+                    if ghost.len() > current_input.len() {
+                        let ghost_suffix = &ghost[current_input.len()..];
+                        let mono_font = egui::FontId::monospace(13.0);
+                        let input_text_width = ui.fonts(|fonts| {
+                            fonts.glyph_width(&mono_font, 'M') * current_input.len() as f32
+                        });
+                        let ghost_pos = egui::pos2(
+                            input_rect.left() + 2.0 + input_text_width,
+                            input_rect.top() + 3.0,
+                        );
+                        ui.painter().text(
+                            ghost_pos,
+                            egui::Align2::LEFT_TOP,
+                            ghost_suffix,
+                            mono_font,
+                            egui::Color32::from_rgb(80, 85, 100),
+                        );
+                    }
+                }
 
                 // Only ensure the input keeps focus if history search and SSH prompt are not active
                 // When these overlays are active, their input fields should have focus instead
@@ -1963,14 +2861,46 @@ impl MosaicTermApp {
                             }
                         }
                     } else {
-                        // Popup is closed - Tab/Tab opens it
-                        if tab_pressed {
+                        // Popup is closed
+                        // Accept ghost completion with Tab or Right arrow (only at end of input)
+                        let cursor_at_end = if let Some(state) =
+                            egui::TextEdit::load_state(ui.ctx(), input_response.id)
+                        {
+                            state
+                                .ccursor_range()
+                                .map(|r| r.primary.index >= current_input.len())
+                                .unwrap_or(true)
+                        } else {
+                            true
+                        };
+
+                        let accept_ghost = self.ghost_completion.is_some()
+                            && (tab_pressed || (right_pressed && cursor_at_end));
+
+                        if accept_ghost {
+                            if let Some(ghost) = self.ghost_completion.take() {
+                                self.input_prompt.set_input(ghost);
+                                self.state_manager.set_completion_just_applied(true);
+                            }
+                        } else if tab_pressed {
                             self.handle_tab_completion(&current_input, input_rect);
                         } else if up_pressed {
-                            // Navigate history when popup is closed
                             self.input_prompt.navigate_history_previous();
+                            self.ghost_completion = None;
                         } else if down_pressed {
                             self.input_prompt.navigate_history_next();
+                            self.ghost_completion = None;
+                        } else if escape_pressed {
+                            self.ghost_completion = None;
+                        }
+
+                        if input_changed {
+                            if current_input.is_empty() {
+                                self.ghost_completion = None;
+                            } else {
+                                self.ghost_completion =
+                                    self.compute_ghost_completion(&current_input);
+                            }
                         }
                     }
 
@@ -1993,6 +2923,7 @@ impl MosaicTermApp {
                             let command = current_input.clone();
                             self.input_prompt.add_to_history(command.clone());
                             self.input_prompt.clear_input();
+                            self.ghost_completion = None;
 
                             // Handle the command (non-blocking)
                             let _ = executor::block_on(self.handle_command_input(command));
@@ -2019,6 +2950,41 @@ impl MosaicTermApp {
         if self.history_search_active {
             self.render_history_search_popup(ui.ctx(), input_rect);
         }
+    }
+
+    /// Compute a ghost completion suggestion for the current input.
+    /// Returns the full suggested text (including what's already typed).
+    fn compute_ghost_completion(&mut self, input: &str) -> Option<String> {
+        if input.is_empty() {
+            return None;
+        }
+
+        let working_dir = self
+            .terminal
+            .as_ref()
+            .map(|t| t.get_working_directory().to_path_buf())
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"))
+            });
+
+        if let Ok(result) = self
+            .completion_provider
+            .get_completions(input, &working_dir)
+        {
+            if let Some(first) = result.suggestions.first() {
+                let parts: Vec<&str> = input.rsplitn(2, char::is_whitespace).collect();
+                if parts.len() == 2 {
+                    let prefix = parts[1];
+                    let suggested = format!("{} {}", prefix, first.text);
+                    if suggested != input && suggested.starts_with(input) {
+                        return Some(suggested);
+                    }
+                } else if first.text.starts_with(input) && first.text != input {
+                    return Some(first.text.clone());
+                }
+            }
+        }
+        None
     }
 
     /// Handle tab key press for completions
@@ -2209,10 +3175,17 @@ impl MosaicTermApp {
 
                             // Search results - use fzf if available for better fuzzy matching
                             let results = if !self.history_search_query.is_empty() {
-                                let history_entries: Vec<String> =
-                                    self.history_manager.entries().iter().rev().cloned().collect();
-                                self.completion_provider
-                                    .fzf_filter_history(&history_entries, &self.history_search_query)
+                                let history_entries: Vec<String> = self
+                                    .history_manager
+                                    .entries()
+                                    .iter()
+                                    .rev()
+                                    .cloned()
+                                    .collect();
+                                self.completion_provider.fzf_filter_history(
+                                    &history_entries,
+                                    &self.history_search_query,
+                                )
                             } else {
                                 self.history_manager.search(&self.history_search_query)
                             };
@@ -2436,32 +3409,38 @@ impl MosaicTermApp {
 
         let is_compact = block.output.is_empty();
 
-        let bg = colors.blocks.background;
+        // Base block: very subtle background lift from main bg
+        let block_bg = egui::Color32::from_rgb(
+            colors.background.r().saturating_add(4),
+            colors.background.g().saturating_add(4),
+            colors.background.b().saturating_add(5),
+        );
+
         let block_frame = egui::Frame::none()
-            .fill(bg)
+            .fill(block_bg)
             .inner_margin(if is_compact {
-                egui::Margin::symmetric(8.0, 3.0)
+                egui::Margin::symmetric(12.0, 4.0)
             } else {
-                egui::Margin::symmetric(8.0, 5.0)
+                egui::Margin::symmetric(12.0, 6.0)
             })
-            .outer_margin(egui::Margin::symmetric(0.0, 2.0))
-            .rounding(egui::Rounding::same(3.0));
+            .outer_margin(egui::Margin {
+                left: 4.0,
+                right: 4.0,
+                top: 1.0,
+                bottom: 1.0,
+            })
+            .rounding(egui::Rounding::same(4.0));
+
+        // Reserve a shape slot BEFORE the block content for hover background.
+        // This ensures the hover fill is drawn BEHIND the text.
+        let hover_bg_idx = ui.painter().add(egui::Shape::Noop);
 
         let frame_response = block_frame.show(ui, |ui| {
-            // Draw left accent stripe
-            let rect = ui.max_rect();
-            let stripe_rect = egui::Rect::from_min_max(
-                egui::pos2(rect.left() - 8.0, rect.top()),
-                egui::pos2(rect.left() - 5.0, rect.bottom()),
-            );
-            ui.painter()
-                .rect_filled(stripe_rect, egui::Rounding::same(1.5), accent_color);
-
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(&block.command)
-                            .font(egui::FontId::monospace(12.0))
+                            .font(egui::FontId::monospace(12.5))
                             .color(colors.blocks.command_text)
                             .strong(),
                     );
@@ -2493,50 +3472,69 @@ impl MosaicTermApp {
                 });
 
                 if !block.output.is_empty() {
-                    ui.add_space(2.0);
+                    ui.add_space(3.0);
 
-                    let output_frame = egui::Frame::none()
-                        .fill(colors.blocks.header_background)
-                        .inner_margin(egui::Margin::symmetric(6.0, 3.0))
-                        .rounding(egui::Rounding::same(2.0));
-
-                    output_frame.show(ui, |ui| {
-                        for line in block.output.iter() {
-                            if !line.ansi_codes.is_empty() {
-                                let mut ansi_renderer =
-                                    mosaicterm::ui::text::AnsiTextRenderer::new();
-                                if let Err(e) =
-                                    ansi_renderer.render_ansi_text(ui, &line.text, &line.ansi_codes)
-                                {
-                                    debug!(
-                                        "ANSI rendering failed: {}, falling back to plain text",
-                                        e
-                                    );
-                                    ui.label(
-                                        egui::RichText::new(&line.text)
-                                            .font(egui::FontId::monospace(12.0))
-                                            .color(colors.blocks.output_text),
-                                    );
-                                }
-                            } else {
+                    for line in block.output.iter() {
+                        if !line.ansi_codes.is_empty() {
+                            let mut ansi_renderer = mosaicterm::ui::text::AnsiTextRenderer::new();
+                            if let Err(e) =
+                                ansi_renderer.render_ansi_text(ui, &line.text, &line.ansi_codes)
+                            {
+                                debug!("ANSI rendering failed: {}, falling back to plain text", e);
                                 ui.label(
                                     egui::RichText::new(&line.text)
                                         .font(egui::FontId::monospace(12.0))
                                         .color(colors.blocks.output_text),
                                 );
                             }
+                        } else {
+                            ui.label(
+                                egui::RichText::new(&line.text)
+                                    .font(egui::FontId::monospace(12.0))
+                                    .color(colors.blocks.output_text),
+                            );
                         }
-                    });
+                    }
                 }
             });
         });
 
-        // Hover effect: lighten background
+        // Hover effect: fill the pre-reserved shape slot so the background draws BEHIND text
         if frame_response.response.hovered() {
-            let hover_rect = frame_response.response.rect;
-            let hover_color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 15);
-            ui.painter()
-                .rect_filled(hover_rect, egui::Rounding::same(3.0), hover_color);
+            let rect = frame_response.response.rect;
+
+            let hover_bg = egui::Color32::from_rgb(
+                colors.background.r().saturating_add(14),
+                colors.background.g().saturating_add(14),
+                colors.background.b().saturating_add(18),
+            );
+            ui.painter().set(
+                hover_bg_idx,
+                egui::Shape::rect_filled(rect, egui::Rounding::same(4.0), hover_bg),
+            );
+
+            // Border glow (on top is fine, these are decorative non-text shapes)
+            ui.painter().rect_stroke(
+                rect,
+                egui::Rounding::same(4.0),
+                egui::Stroke::new(0.5, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 20)),
+            );
+
+            // Accent stripe on left edge
+            let stripe = egui::Rect::from_min_max(
+                egui::pos2(rect.left(), rect.top()),
+                egui::pos2(rect.left() + 2.5, rect.bottom()),
+            );
+            ui.painter().rect_filled(
+                stripe,
+                egui::Rounding {
+                    nw: 4.0,
+                    sw: 4.0,
+                    ne: 0.0,
+                    se: 0.0,
+                },
+                accent_color,
+            );
         }
 
         // Check if mouse is over this block and right-click was pressed
@@ -2713,6 +3711,7 @@ impl MosaicTermApp {
 
     /// Handle async operations (called from update) - SIMPLIFIED VERSION
     fn handle_async_operations(&mut self, _ctx: &egui::Context) {
+        let bg_notification_threshold_ms: u128 = 10_000;
         // SIMPLIFIED: Poll PTY output and add to current command (no complex prompt detection)
         let mut should_update_contexts = false; // Track if we need to update contexts
         let mut env_query_output = None; // Track environment query output
@@ -2738,28 +3737,44 @@ impl MosaicTermApp {
                             // Send raw bytes directly to overlay - TUI apps need ANSI codes!
                             self.tui_overlay.add_raw_output(&data);
 
-                            // Check if the TUI process has exited by looking for a
-                            // shell prompt at the very end of the output. Must be strict
-                            // to avoid false positives from editor content (e.g. vim).
-                            let data_str = String::from_utf8_lossy(&data);
-                            let trimmed = data_str.trim_end();
-                            let has_prompt = trimmed.ends_with("$ ")
-                                || trimmed.ends_with("% ")
-                                || trimmed.ends_with("# ");
+                            // Track alternate screen enter (TUI app starting)
+                            let has_alt_screen_enter =
+                                data.windows(8).any(|w| w == b"\x1b[?1049h")
+                                    || data.windows(6).any(|w| w == b"\x1b[?47h");
+                            if has_alt_screen_enter {
+                                self.tui_overlay.note_alt_screen_enter();
+                            }
 
-                            if has_prompt && self.tui_overlay.has_exited() {
-                                debug!("Confirmed TUI exit with prompt in output");
-                            } else if has_prompt {
-                                // Only mark as exited if the last few chars look exactly
-                                // like a fresh shell prompt line
-                                let last_line = trimmed.lines().last().unwrap_or("");
-                                let looks_like_prompt = last_line.ends_with("$ ")
-                                    || last_line.ends_with("% ")
-                                    || last_line.ends_with("# ");
-                                let is_short_line = last_line.len() < 200;
-                                if looks_like_prompt && is_short_line {
-                                    debug!("Detected shell prompt after TUI exit: '{}'", last_line);
+                            // Only check for exit after the grace period
+                            if !self.tui_overlay.in_grace_period() {
+                                let has_alt_screen_exit =
+                                    data.windows(8).any(|w| w == b"\x1b[?1049l")
+                                        || data.windows(6).any(|w| w == b"\x1b[?47l");
+
+                                // Only treat alt screen exit as app exit if we saw the enter first
+                                if has_alt_screen_exit && self.tui_overlay.saw_alt_screen() {
+                                    debug!("Detected alternate screen exit - TUI app exited");
                                     self.tui_overlay.mark_exited();
+                                } else if !has_alt_screen_exit {
+                                    let data_str = String::from_utf8_lossy(&data);
+                                    let stripped = strip_ansi_codes(&data_str);
+                                    let trimmed = stripped.trim();
+                                    if let Some(last_line) = trimmed.lines().last() {
+                                        let line = last_line.trim();
+                                        let looks_like_prompt = line.ends_with("$ ")
+                                            || line.ends_with("% ")
+                                            || line.ends_with("# ")
+                                            || line.ends_with("$")
+                                            || line.ends_with("%")
+                                            || line.ends_with("> ");
+                                        if looks_like_prompt && line.len() < 200 {
+                                            debug!(
+                                                "Detected shell prompt after TUI exit: '{}'",
+                                                line
+                                            );
+                                            self.tui_overlay.mark_exited();
+                                        }
+                                    }
                                 }
                             }
 
@@ -2973,6 +3988,32 @@ impl MosaicTermApp {
                                                 exit_code, command_text
                                             );
                                         }
+
+                                        // Send system notification if window is not focused
+                                        // and command ran longer than threshold
+                                        if !self.window_has_focus
+                                            && elapsed_ms >= bg_notification_threshold_ms
+                                        {
+                                            let elapsed_secs = elapsed_ms / 1000;
+                                            let status_str = if exit_code == 0 {
+                                                "completed"
+                                            } else {
+                                                "failed"
+                                            };
+                                            let cmd_short = if command_text.len() > 40 {
+                                                format!("{}...", &command_text[..40])
+                                            } else {
+                                                command_text.clone()
+                                            };
+                                            send_system_notification(
+                                                "MosaicTerm",
+                                                &format!(
+                                                    "Command {} ({}s): {}",
+                                                    status_str, elapsed_secs, cmd_short
+                                                ),
+                                            );
+                                        }
+
                                         should_clear_command_time = true;
                                     }
 
@@ -3003,7 +4044,7 @@ impl MosaicTermApp {
                                         let line_text = line.text.trim();
                                         let is_first_few_lines = current_output_count + idx < 5;
 
-                                        // Skip exit code marker, env query markers, pwd marker, and the echo commands
+                                        // Skip internal markers, shell init noise, and env query echo commands
                                         if line_text.starts_with("MOSAICTERM_EXITCODE:")
                                             || line_text.contains("echo \"MOSAICTERM_EXITCODE:")
                                             || line_text == "echo \"MOSAICTERM_EXITCODE:$?\""
@@ -3028,6 +4069,14 @@ impl MosaicTermApp {
                                             || line_text.starts_with("echo \"AWS_DEFAULT_PROFILE=")
                                             || line_text.starts_with("echo \"TF_WORKSPACE=")
                                             || Self::is_env_query_output(line_text)
+                                            // Filter shell init noise (precmd, stty, PS1/PS2/PS3/PS4 overrides)
+                                            || line_text.contains("precmd()")
+                                            || line_text.starts_with("stty ")
+                                            || line_text.contains("PS1=''")
+                                            || line_text.contains("PS1=\"\"")
+                                            || line_text.contains("PROMPT_COMMAND=")
+                                            || line_text.starts_with("export PROMPT_COMMAND")
+                                            || (line_text.starts_with("precmd") && line_text.contains("PS"))
                                         {
                                             continue;
                                         }

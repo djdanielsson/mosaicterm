@@ -443,29 +443,57 @@ fn create_window_icon() -> eframe::egui::IconData {
 
 /// Try loading `icon.png` from project root or current working directory; fallback to generated icon
 fn load_or_create_window_icon() -> eframe::egui::IconData {
-    // Candidate paths: workspace root, binary crate dir, current dir
-    let candidates: [&Path; 3] = [
-        Path::new("icon.png"),
-        Path::new("bin/mosaicterm/icon.png"),
-        Path::new("../icon.png"),
+    if let Some(path) = find_icon_path() {
+        if let Ok(img) = image::open(&path) {
+            let rgba = img.to_rgba8();
+            let (width, height) = rgba.dimensions();
+            info!("Loaded window icon from {}", path.display());
+            return eframe::egui::IconData {
+                rgba: rgba.into_raw(),
+                width,
+                height,
+            };
+        }
+    }
+
+    info!("Using generated fallback window icon");
+    create_window_icon()
+}
+
+fn find_icon_path() -> Option<std::path::PathBuf> {
+    let static_candidates: &[&str] = &[
+        "icon.png",
+        "bin/mosaicterm/icon.png",
+        "../icon.png",
     ];
 
-    for path in candidates.iter() {
-        if path.exists() {
-            if let Ok(img) = image::open(path) {
-                let rgba = img.to_rgba8();
-                let (width, height) = rgba.dimensions();
-                return eframe::egui::IconData {
-                    rgba: rgba.into_raw(),
-                    width,
-                    height,
-                };
+    for c in static_candidates {
+        let p = Path::new(c);
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
+    }
+
+    // Search relative to executable location
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for depth in 0..3 {
+                let mut search = dir.to_path_buf();
+                for _ in 0..depth {
+                    search = match search.parent() {
+                        Some(p) => p.to_path_buf(),
+                        None => break,
+                    };
+                }
+                let candidate = search.join("icon.png");
+                if candidate.exists() {
+                    return Some(candidate);
+                }
             }
         }
     }
 
-    // Fallback
-    create_window_icon()
+    None
 }
 
 #[cfg(test)]

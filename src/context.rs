@@ -160,9 +160,7 @@ impl ContextDetector {
         // Go version - only show when inside a Go project
         if let Some(goversion) = env.get("GOVERSION") {
             if !goversion.is_empty() {
-                let in_go_project = working_dir
-                    .map(is_go_project_dir)
-                    .unwrap_or(true);
+                let in_go_project = working_dir.map(is_go_project_dir).unwrap_or(true);
                 if in_go_project {
                     contexts.push(EnvironmentContext {
                         context_type: ContextType::GoVersion,
@@ -175,9 +173,7 @@ impl ContextDetector {
         // Java - only show when inside a Java project
         if let Some(java_home) = env.get("JAVA_HOME") {
             if !java_home.is_empty() {
-                let in_java_project = working_dir
-                    .map(is_java_project_dir)
-                    .unwrap_or(true);
+                let in_java_project = working_dir.map(is_java_project_dir).unwrap_or(true);
                 if in_java_project {
                     let version = Path::new(java_home)
                         .file_name()
@@ -195,9 +191,7 @@ impl ContextDetector {
         // Rust toolchain - only show when inside a Rust project directory
         if let Some(toolchain) = env.get("RUSTUP_TOOLCHAIN") {
             if !toolchain.is_empty() {
-                let in_rust_project = working_dir
-                    .map(is_rust_project_dir)
-                    .unwrap_or(true); // default to showing if no dir info
+                let in_rust_project = working_dir.map(is_rust_project_dir).unwrap_or(true); // default to showing if no dir info
                 if in_rust_project {
                     contexts.push(EnvironmentContext {
                         context_type: ContextType::RustToolchain,
@@ -296,7 +290,12 @@ impl Default for ContextDetector {
 
 /// Check if the given directory (or any ancestor up to 5 levels) is a Rust project
 fn is_rust_project_dir(dir: &Path) -> bool {
-    let markers = ["Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml"];
+    let markers = [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain",
+        "rust-toolchain.toml",
+    ];
     let mut current = Some(dir);
     let mut depth = 0;
     while let Some(d) = current {
@@ -336,7 +335,12 @@ fn is_go_project_dir(dir: &Path) -> bool {
 
 /// Check if the given directory (or any ancestor up to 5 levels) is a Java project
 fn is_java_project_dir(dir: &Path) -> bool {
-    let markers = ["pom.xml", "build.gradle", "build.gradle.kts", ".java-version"];
+    let markers = [
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        ".java-version",
+    ];
     let mut current = Some(dir);
     let mut depth = 0;
     while let Some(d) = current {

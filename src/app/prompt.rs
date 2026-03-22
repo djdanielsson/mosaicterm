@@ -3,45 +3,51 @@
 //! Handles the construction and updating of the terminal prompt display,
 //! including environment contexts, git information, and SSH session state.
 
-use mosaicterm::config::prompt::{EnvPromptContext, PromptFormatter};
+use mosaicterm::config::prompt::{EnvPromptContext, PromptFormatter, PromptSegment};
 use mosaicterm::models::config::PromptStyle;
 use mosaicterm::state_manager::StateManager;
 use mosaicterm::terminal::Terminal;
 use tracing::debug;
 
-/// Build the rendered prompt string with all context information.
-/// When using styled prompts (Powerline, Starship, OhMyZsh, Custom),
-/// the segments are rendered into a flattened string representation.
-pub fn build_prompt(
+/// Build the rendered prompt as styled segments.
+/// Falls back to a single-segment string for Classic/Minimal styles.
+pub fn build_prompt_segments(
     terminal: Option<&Terminal>,
     state_manager: &StateManager,
     prompt_formatter: &PromptFormatter,
     ssh_session_active: bool,
     ssh_remote_prompt: Option<&str>,
     ssh_session_command: Option<&str>,
-) -> String {
-    // If in SSH session and we have a remote prompt, use that instead
+) -> Vec<PromptSegment> {
+    use eframe::egui;
+
     if ssh_session_active {
         if let Some(remote_prompt) = ssh_remote_prompt {
             debug!("Using remote SSH prompt: '{}'", remote_prompt);
-            return remote_prompt.to_string();
+            return vec![PromptSegment {
+                text: remote_prompt.to_string(),
+                fg: egui::Color32::from_rgb(180, 180, 200),
+                bg: None,
+                bold: false,
+                separator: None,
+            }];
         } else if let Some(cmd) = ssh_session_command {
             let host = extract_ssh_host(cmd);
-            let placeholder = format!("[{}] $ ", host);
-            debug!("Using SSH placeholder prompt: '{}'", placeholder);
-            return placeholder;
+            return vec![PromptSegment {
+                text: format!("[{}] $ ", host),
+                fg: egui::Color32::from_rgb(180, 180, 200),
+                bg: None,
+                bold: false,
+                separator: None,
+            }];
         }
     }
 
-    // Local mode: use the prompt formatter with style-aware segment rendering
     if let Some(terminal) = terminal {
         let working_dir = terminal.get_working_directory();
 
-        // Gather git and env context for segment-based rendering
         let git_status = if let Some(session) = state_manager.active_session() {
             session.git_context.as_ref().and_then(|ctx| {
-                // Parse the git context string back into GitPromptStatus
-                // The context string looks like "main +2 !3 ?1"
                 mosaicterm::config::prompt::GitPromptStatus::from_context_string(ctx)
             })
         } else {
@@ -69,8 +75,7 @@ pub fn build_prompt(
             })
             .unwrap_or_default();
 
-        // Use render_segments for styled prompts, render for basic
-        let rendered_prompt = match prompt_formatter.style() {
+        match prompt_formatter.style() {
             PromptStyle::Classic | PromptStyle::Minimal => {
                 let base_prompt = prompt_formatter.render(working_dir);
                 let mut left_context = String::new();
@@ -86,31 +91,39 @@ pub fn build_prompt(
                     }
                 }
 
-                format!("{}{}{}", left_context, base_prompt, right_context)
+                vec![PromptSegment {
+                    text: format!("{}{}{}", left_context, base_prompt, right_context),
+                    fg: egui::Color32::from_rgb(180, 180, 200),
+                    bg: None,
+                    bold: false,
+                    separator: None,
+                }]
             }
             _ => {
-                // Powerline, Starship, OhMyZsh, Custom all use segment rendering
                 let segments = prompt_formatter.render_segments(
                     working_dir,
                     git_status.as_ref(),
                     &env_contexts,
                 );
-                segments
-                    .iter()
-                    .map(|s| s.text.clone())
-                    .collect::<String>()
-            }
-        };
 
-        debug!(
-            "Built prompt: '{}' (working_dir: {:?}, style: {:?})",
-            rendered_prompt,
-            working_dir,
-            prompt_formatter.style()
-        );
-        rendered_prompt
+                let flat: String = segments.iter().map(|s| s.text.clone()).collect();
+                debug!(
+                    "Built prompt segments: '{}' (style: {:?})",
+                    flat,
+                    prompt_formatter.style()
+                );
+
+                segments
+            }
+        }
     } else {
-        "$ ".to_string()
+        vec![PromptSegment {
+            text: "$ ".to_string(),
+            fg: egui::Color32::from_rgb(180, 180, 200),
+            bg: None,
+            bold: false,
+            separator: None,
+        }]
     }
 }
 
@@ -221,15 +234,18 @@ mod tests {
         assert_eq!(extract_ssh_host("ssh -p 22 192.168.1.1"), "192.168.1.1");
     }
 
-    // ---- build_prompt tests ----
+    fn flat(segments: &[mosaicterm::config::prompt::PromptSegment]) -> String {
+        segments.iter().map(|s| s.text.clone()).collect()
+    }
 
     #[test]
     fn test_build_prompt_no_terminal() {
         let state_manager = StateManager::new();
         let prompt_formatter = PromptFormatter::default();
 
-        let result = build_prompt(None, &state_manager, &prompt_formatter, false, None, None);
-        assert_eq!(result, "$ ");
+        let segs =
+            build_prompt_segments(None, &state_manager, &prompt_formatter, false, None, None);
+        assert_eq!(flat(&segs), "$ ");
     }
 
     #[test]
@@ -238,15 +254,15 @@ mod tests {
         let prompt_formatter = PromptFormatter::default();
         let remote_prompt = "user@remote:~$ ";
 
-        let result = build_prompt(
+        let segs = build_prompt_segments(
             None,
             &state_manager,
             &prompt_formatter,
-            true, // ssh_session_active
+            true,
             Some(remote_prompt),
             Some("ssh user@remote"),
         );
-        assert_eq!(result, remote_prompt);
+        assert_eq!(flat(&segs), remote_prompt);
     }
 
     #[test]
@@ -254,15 +270,15 @@ mod tests {
         let state_manager = StateManager::new();
         let prompt_formatter = PromptFormatter::default();
 
-        let result = build_prompt(
+        let segs = build_prompt_segments(
             None,
             &state_manager,
             &prompt_formatter,
-            true, // ssh_session_active
-            None, // no remote prompt yet
+            true,
+            None,
             Some("ssh user@myserver.com"),
         );
-        assert_eq!(result, "[myserver.com] $ ");
+        assert_eq!(flat(&segs), "[myserver.com] $ ");
     }
 
     #[test]
@@ -270,7 +286,7 @@ mod tests {
         let state_manager = StateManager::new();
         let prompt_formatter = PromptFormatter::default();
 
-        let result = build_prompt(
+        let segs = build_prompt_segments(
             None,
             &state_manager,
             &prompt_formatter,
@@ -278,6 +294,6 @@ mod tests {
             None,
             Some("ssh devbox"),
         );
-        assert_eq!(result, "[devbox] $ ");
+        assert_eq!(flat(&segs), "[devbox] $ ");
     }
 }
