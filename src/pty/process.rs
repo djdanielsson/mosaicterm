@@ -381,17 +381,16 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(tarpaulin, ignore)]
     async fn test_spawn_pty_process_validation() {
-        // Test with invalid command
         let result = spawn_pty_process("/nonexistent/command", &[], &HashMap::new(), None).await;
 
         assert!(result.is_err());
     }
 
     #[tokio::test]
+    #[cfg_attr(tarpaulin, ignore)]
     async fn test_spawn_pty_process_success() {
-        // Test with valid command - this might fail in CI environments
-        // where PTY support is limited, so we'll make it non-critical
         let result = spawn_pty_process("echo", &["test".to_string()], &HashMap::new(), None).await;
 
         // In some environments (like CI), PTY spawning might fail
