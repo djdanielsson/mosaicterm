@@ -1,6 +1,6 @@
 [default]
 # Use color output
-color = "auto"
+color = "Auto"
 # Run in single-threaded mode to avoid ptrace conflicts with fork/exec in PTY tests
 test-threads = 1
 # Exclude integration/contract tests that spawn real PTY processes
