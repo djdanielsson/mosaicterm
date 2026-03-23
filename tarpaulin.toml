@@ -9,7 +9,7 @@ exclude-files = [
     "tests/contract/test_pty_lifecycle.rs",
 ]
 # Timeout per test (seconds) — PTY tests can hang under instrumentation
-timeout = 120
+timeout = "120s"
 # Skip tests that fork/exec (causes segfaults under ptrace instrumentation)
 run-types = ["Tests", "Doctests"]
 # Output format
