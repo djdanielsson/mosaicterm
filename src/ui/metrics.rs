@@ -7,34 +7,21 @@
 //! - Recent performance history
 
 use eframe::egui::{self, Align, Color32, Layout, RichText, Ui, Window};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::state_manager::AppStatistics;
 
 /// Performance metrics panel widget
+#[derive(Default)]
 pub struct MetricsPanel {
     /// Whether the panel is visible
     visible: bool,
-    /// Last update time
-    last_update: Instant,
-    /// Update interval
-    update_interval: Duration,
-}
-
-impl Default for MetricsPanel {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl MetricsPanel {
     /// Create a new metrics panel
     pub fn new() -> Self {
-        Self {
-            visible: false,
-            last_update: Instant::now(),
-            update_interval: Duration::from_millis(500),
-        }
+        Self::default()
     }
 
     /// Toggle panel visibility

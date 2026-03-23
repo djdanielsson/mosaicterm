@@ -527,21 +527,16 @@ impl Default for StatusBarColors {
 }
 
 /// Prompt style configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum PromptStyle {
     Classic,
+    #[default]
     Minimal,
     Powerline,
     Starship,
     OhMyZsh,
     Custom,
-}
-
-impl Default for PromptStyle {
-    fn default() -> Self {
-        Self::Minimal
-    }
 }
 
 /// A single prompt segment definition for Custom style
