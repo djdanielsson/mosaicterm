@@ -9,6 +9,10 @@
 //!
 //! Contract: PTY Process Lifecycle Management
 //! See: specs/001-mosaicterm-terminal-emulator/contracts/pty-lifecycle.md
+//!
+//! Note: These tests are excluded from tarpaulin coverage runs because PTY fork/exec
+//! operations hang under ptrace instrumentation.
+#![cfg(not(tarpaulin))]
 
 use mosaicterm::pty::{PtyHandle, PtyManager};
 use std::collections::HashMap;

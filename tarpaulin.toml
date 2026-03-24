@@ -3,15 +3,16 @@
 color = "Auto"
 # Run in single-threaded mode to avoid ptrace conflicts with fork/exec in PTY tests
 test-threads = 1
-# Exclude integration/contract tests that spawn real PTY processes
+# Exclude integration/contract tests that spawn real PTY processes from coverage results
 exclude-files = [
     "tests/integration/*",
     "tests/contract/test_pty_lifecycle.rs",
+    "target/*",
 ]
 # Timeout per test (seconds) — PTY tests can hang under instrumentation
 timeout = "120s"
-# Skip tests that fork/exec (causes segfaults under ptrace instrumentation)
-run-types = ["Tests", "Doctests"]
+# Only run tests (doctests require nightly toolchain via rustup)
+run-types = ["Tests"]
 # Output format
 out = ["Xml"]
 output-dir = "coverage"
