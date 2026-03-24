@@ -1,197 +1,110 @@
-# Custom Prompt Configuration
+# Custom Prompt Guide
 
-MosaicTerm allows you to fully customize your command prompt using a flexible template system with variable substitution.
+MosaicTerm supports six prompt styles with full variable substitution and custom segment definitions.
 
-## Configuration Location
+---
 
-The configuration file is located at:
-- **Linux/macOS**: `~/.config/mosaicterm/config.toml`
-- **Windows**: `%APPDATA%\mosaicterm\config.toml`
+## Prompt Styles
 
-## Prompt Format Setting
+Set the style in `~/.config/mosaicterm/config.toml`:
 
-MosaicTerm supports two configuration approaches:
+```toml
+[prompt]
+style = "minimal"  # classic | minimal | powerline | starship | ohmyzsh | custom
+show_git = true
+show_env = true
+```
 
-### Basic: Template String
+| Style | Appearance |
+|-------|-----------|
+| `classic` | `(venv:myproject) user@host:~/workspace$ [main +2 !1]` |
+| `minimal` | `(myproject) ~/workspace main +2 !1 >` (default) |
+| `powerline` | Colored segments with Powerline arrow () separators |
+| `starship` | Colored text with emoji icons per context type |
+| `ohmyzsh` | `(myproject) user@host ~/workspace (main*) >` |
+| `custom` | User-defined segments (see below) |
 
-In your `config.toml`, set `prompt_format` in the `[terminal]` section (used by Classic and Minimal styles):
+## Template Variables
+
+Available in `prompt_format` (used by classic/minimal) and custom segment `content` fields:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `$USER` | Current username | `ddaniels` |
+| `$HOSTNAME` | System hostname | `macbook-pro` |
+| `$PWD` | Current directory (with `~` for home) | `~/workspace` |
+| `$HOME` | Home directory path | `/Users/ddaniels` |
+| `$SHELL` | Current shell path | `/bin/zsh` |
+| `$GIT_BRANCH` | Git branch name | `main` |
+| `$GIT_STATUS` | Git status summary | `main +2 !3 ?1` |
+| `$VENV` | Python venv/conda name | `myproject` |
+| `$NODE_VERSION` | Node.js version (nvm) | `18.20.0` |
+| `$RUBY_VERSION` | Ruby version (rbenv/rvm) | `3.2.0` |
+| `$DOCKER` | Docker context | `default` |
+| `$KUBE` | Kubernetes context | `production` |
+
+Use `$$` to escape (e.g., `$$USER` renders as literal `$USER`).
+
+## Basic Prompt Format
+
+The `prompt_format` string is used by **Classic** and **Minimal** styles for the main prompt text:
 
 ```toml
 [terminal]
 prompt_format = "$USER@$HOSTNAME:$PWD$ "
 ```
 
-### Advanced: Prompt Style
-
-Use the `[prompt]` section for styled prompts with colored segments:
+### Examples
 
 ```toml
-[prompt]
-style = "ohmyzsh"  # classic | minimal | powerline | starship | ohmyzsh | custom
-show_git = true
-show_env = true
-```
-
-See [Built-in Styles](#built-in-styles) below for details on each style.
-
-## Supported Variables
-
-The following variables are available for use in `prompt_format` and custom segments:
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `$USER` | Current username | `ddaniels` |
-| `$HOSTNAME` | System hostname | `macbook-pro` |
-| `$PWD` | Current working directory (with `~` for home) | `~/workspace` or `/usr/local` |
-| `$HOME` | Home directory path | `/Users/ddaniels` |
-| `$SHELL` | Current shell path | `/bin/zsh` |
-| `$GIT_BRANCH` | Current git branch name | `main` |
-| `$GIT_STATUS` | Git status indicators | `+2 !3 ?1` |
-| `$VENV` | Active Python virtual environment | `myproject` |
-| `$NODE_VERSION` | Active Node.js version (via nvm) | `18.20.0` |
-| `$RUBY_VERSION` | Active Ruby version (via rbenv/rvm) | `3.2.0` |
-| `$DOCKER` | Docker context (if active) | `default` |
-| `$KUBE` | Kubernetes context (if active) | `production` |
-
-## Example Configurations
-
-### 1. Standard Unix Prompt
-```toml
+# Standard Unix
 prompt_format = "$USER@$HOSTNAME:$PWD$ "
-```
-**Output**: `ddaniels@macbook-pro:~/workspace$ `
+# Output: ddaniels@macbook-pro:~/workspace$
 
-### 2. Minimalist
-```toml
+# Minimalist
 prompt_format = "$PWD > "
-```
-**Output**: `~/workspace > `
+# Output: ~/workspace >
 
-### 3. Bracketed User with Path
-```toml
-prompt_format = "[$USER] $PWD > "
-```
-**Output**: `[ddaniels] ~/workspace > `
-
-### 4. Multi-line Prompt
-```toml
+# Multi-line
 prompt_format = "$USER@$HOSTNAME [$PWD]\n$ "
-```
-**Output**:
-```
-ddaniels@macbook-pro [~/workspace]
-$
-```
+# Output:
+# ddaniels@macbook-pro [~/workspace]
+# $
 
-### 5. With Emojis 🎨
-```toml
+# With emoji
 prompt_format = "🚀 $PWD ▸ "
-```
-**Output**: `🚀 ~/workspace ▸ `
+# Output: 🚀 ~/workspace ▸
 
-### 6. Git-style with Arrow
-```toml
-prompt_format = "$USER@$HOSTNAME [$PWD]\n❯ "
-```
-**Output**:
-```
-ddaniels@macbook-pro [~/workspace]
-❯
-```
-
-### 7. Simple Dollar Sign
-```toml
+# Simple dollar sign
 prompt_format = "$ "
-```
-**Output**: `$ `
-
-### 8. Powerline-inspired
-```toml
-prompt_format = " $USER  $PWD  "
-```
-**Output**: ` ddaniels  ~/workspace  `
-
-## Escaping Variables
-
-If you want to display a literal `$VAR` in your prompt, use double dollar signs:
-
-```toml
-prompt_format = "Price: $$100 | User: $USER$ "
-```
-**Output**: `Price: $100 | User: ddaniels$ `
-
-## Tips and Best Practices
-
-1. **Keep it Readable**: Your prompt should be easy to read at a glance. Don't overcomplicate it.
-
-2. **End with a Space**: Most prompts should end with a space to separate the prompt from your command input:
-   ```toml
-   prompt_format = "$PWD$ "  # Note the space after $
-   ```
-
-3. **Test Your Prompt**: After changing your prompt, restart MosaicTerm to see the changes.
-
-4. **Path Abbreviation**: The `$PWD` variable automatically abbreviates your home directory as `~`:
-   - `/Users/ddaniels/workspace` becomes `~/workspace`
-   - `/Users/ddaniels` becomes `~`
-
-5. **Unicode Support**: MosaicTerm supports Unicode characters and emojis in prompts:
-   - Arrows: `→`, `⇒`, `▸`, `❯`, `►`
-   - Symbols: `⚡`, `🚀`, `⭐`, `✓`, `◆`
-   - Brackets: `【`, `】`, `「`, `」`, `『`, `』`
-
-## Dynamic Updates
-
-The prompt automatically updates when you:
-- Change directories with `cd`, `pushd`, or `popd`
-- Start a new terminal session
-
-## Troubleshooting
-
-### Prompt Not Updating?
-1. Check that your `config.toml` is in the correct location
-2. Ensure the TOML syntax is valid (no missing quotes or brackets)
-3. Restart MosaicTerm after making changes
-
-### Variables Not Expanding?
-- Make sure you're using `$` before the variable name (e.g., `$USER`, not `USER`)
-- Check for typos in variable names (they are case-sensitive)
-
-### Characters Not Displaying?
-- Ensure your terminal font supports the characters you're using
-- Try a font like "JetBrains Mono", "Fira Code", or "Cascadia Code" for best Unicode support
-
-## Default Prompt
-
-If no custom prompt is configured, MosaicTerm uses the **Minimal** style:
-```
-~/workspace >
+# Output: $
 ```
 
-This corresponds to `style = "minimal"` and `format = "$PWD > "`.
+## Custom Segments
 
-## Built-in Styles
+For full control, use `style = "custom"` with segment definitions. Each segment has:
 
-| Style | Appearance |
-|-------|-----------|
-| `classic` | `user@host:~/workspace$` |
-| `minimal` | `~/workspace >` (default) |
-| `powerline` | Colored segments with arrow separators: ` user  ~/workspace  main ` |
-| `starship` | Colored text segments with icons |
-| `ohmyzsh` | `user@host ~/workspace (main*) > ` |
-| `custom` | User-defined segments (see README) |
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | string | Text with variable substitution |
+| `fg` | string (optional) | Foreground color as `"#RRGGBB"` |
+| `bg` | string (optional) | Background color as `"#RRGGBB"` |
+| `bold` | bool (optional) | Bold text, default `false` |
+| `condition` | string (optional) | Only show when condition is met |
 
-The **ohmyzsh** style renders: `user@host` (cyan), space, `pwd` (blue), git branch with `*` for dirty repos, and `> ` as the prompt character.
+### Conditions
 
-## Reloading Configuration
+| Condition | Shown when |
+|-----------|------------|
+| `"git"` | Inside a git repository |
+| `"venv"` | Python venv is active |
+| `"conda"` | Conda env is active |
+| `"node"` | nvm Node.js is active |
+| `"docker"` | Docker context is set |
 
-Currently, you need to restart MosaicTerm to apply prompt changes. Live configuration reloading is planned for a future release.
+If a segment has no condition, it always shows.
 
-## Advanced Examples
-
-### Context-Aware Prompt
-
-Git and environment variables are already supported. Example with git context:
+### Example: Developer Prompt
 
 ```toml
 [prompt]
@@ -203,7 +116,7 @@ fg = "#00D2D2"
 bold = true
 
 [[prompt.segments]]
-content = " $PWD "
+content = "$PWD"
 fg = "#50B4FF"
 bold = true
 
@@ -213,14 +126,137 @@ fg = "#C8C8FF"
 condition = "git"
 
 [[prompt.segments]]
-content = " > "
+content = "($VENV)"
+fg = "#FFC864"
+condition = "venv"
+
+[[prompt.segments]]
+content = "> "
+fg = "#64DC64"
+bold = true
+```
+
+### Example: Minimal Git-Aware
+
+```toml
+[prompt]
+style = "custom"
+
+[[prompt.segments]]
+content = "$PWD"
+fg = "#50B4FF"
+bold = true
+
+[[prompt.segments]]
+content = "$GIT_BRANCH"
+fg = "#96DC96"
+condition = "git"
+
+[[prompt.segments]]
+content = "❯ "
 fg = "#64DC64"
 ```
 
-Future additions planned: `$EXIT_CODE`, `$TIME`.
+### Example: Powerline-Style Custom
+
+```toml
+[prompt]
+style = "custom"
+
+[[prompt.segments]]
+content = " $USER "
+fg = "#FFFFFF"
+bg = "#3C3C64"
+bold = true
+
+[[prompt.segments]]
+content = " $PWD "
+fg = "#FFFFFF"
+bg = "#2472C8"
+bold = true
+
+[[prompt.segments]]
+content = " $GIT_BRANCH "
+fg = "#FFFFFF"
+bg = "#288C3C"
+condition = "git"
+
+[[prompt.segments]]
+content = " "
+fg = "#B4B4C8"
+```
+
+## Style Details
+
+### Classic
+
+Renders: `(envs) user@host:path$ [git]`
+
+- Environment contexts shown in yellow `(name:value)` before the main prompt
+- Main prompt in green, bold
+- Git status in light purple brackets after
+
+### Minimal
+
+Renders: `(envs) path git >`
+
+- Environment contexts shown in yellow `(value)`
+- Path in blue, bold
+- Git in green
+- Trailing `>` in gray
+
+### Powerline
+
+Renders: ` env ` ` path ` ` git `
+
+- Colored background segments with Powerline arrow () separators
+- White text on colored backgrounds
+- Git segment: green background for clean, orange for dirty
+- Requires a Nerd Font for arrow glyphs
+
+### Starship
+
+Renders: `path git  env1  env2 ❯`
+
+- Path in blue, bold
+- Git in green (clean) or red (dirty)
+- Environment contexts with emoji icons (🐍 Python, 🦀 Rust, 🐳 Docker, etc.)
+- Trailing `❯` in green
+
+### OhMyZsh
+
+Renders: `(envs) user@host path (branch*) >`
+
+- Environments in yellow
+- User@host in cyan, bold
+- Path in blue, bold
+- Git branch with `*` for dirty repos
+- Trailing `>` in green, bold
+
+## Font Recommendations
+
+For the best experience with all prompt styles:
+
+- **JetBrains Mono** (default) -- excellent monospace font
+- **JetBrainsMono Nerd Font** -- includes Powerline arrows and icons
+- **Fira Code** -- ligature support
+- **Cascadia Code** -- modern Microsoft font
+
+Powerline styles require a font with the Powerline arrow glyph (). Install any [Nerd Font](https://www.nerdfonts.com/) and set it in your config:
+
+```toml
+[ui]
+font_family = "JetBrainsMono Nerd Font"
+```
+
+## Dynamic Updates
+
+The prompt automatically updates when you:
+- Change directories (`cd`, `pushd`, `popd`, `z`)
+- Activate/deactivate environments
+- Switch git branches
 
 ## Related Documentation
 
-- [Configuration Guide](../README.md#configuration)
-- [Key Bindings](./KEY_BINDINGS.md)
-- [Themes](./THEMES.md)
+- [Configuration Reference](CONFIGURATION.md) -- all config options
+- [Theming Guide](THEMING.md) -- color customization

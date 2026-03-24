@@ -128,14 +128,20 @@ Config file: `~/.config/mosaicterm/config.toml` (or `$XDG_CONFIG_HOME/mosaicterm
 
 ```toml
 [ui]
-theme = "dark"
+font_family = "JetBrains Mono"
+font_size = 12
+theme_name = "default-dark"  # default-dark | default-light | high-contrast
 
 [terminal]
-shell = "/bin/zsh"
+shell_type = "Zsh"         # Bash | Zsh | Fish | PowerShell | Cmd
+shell_path = "/bin/zsh"
 prompt_format = "$USER@$HOSTNAME:$PWD$ "
 
+[pty]
+buffer_size = 262144       # 256KB
+
 [prompt]
-style = "ohmyzsh"  # classic | minimal | powerline | starship | ohmyzsh | custom
+style = "minimal"          # classic | minimal | powerline | starship | ohmyzsh | custom
 show_git = true
 show_env = true
 
@@ -145,6 +151,8 @@ auto_restore = false
 ```
 
 Env vars: `MOSAICTERM_CONFIG` (config path override), `MOSAICTERM_LOG` (log level).
+
+See `docs/CONFIGURATION.md` for the complete reference with all options.
 
 ## Build & Test
 
@@ -222,16 +230,27 @@ tests/
 2. Wire to app state in `MosaicTermApp`
 3. Update README keyboard shortcuts table
 
+## Two Config Systems
+
+MosaicTerm has two separate `Config` structs that serve different purposes:
+
+1. **`src/models/config.rs`** — Serde model for the user-facing config file. Contains `Config` with `UiConfig`, `TerminalConfig`, `PromptConfig`, `SessionConfig`, `KeyBindingsConfig`, and full `Theme` struct with `AnsiColors`, `BlockColors`, `InputColors`, `StatusBarColors`. Colors support hex strings (`"#RRGGBB"`) or `{r, g, b, a}` structs.
+
+2. **`src/config/mod.rs`** — Runtime config loaded by the app. Contains its own `Config` with `UiConfig` (has `theme_name` for preset selection AND nested `models::Theme` for overrides), `TerminalConfig`, `PtyConfig`, `KeyBindings`, `TuiAppConfig`, plus `PromptConfig`/`SessionConfig` imported from models. `RuntimeConfig` wraps this with `ThemeManager` and `ShellManager`.
+
+When adding config options, both may need updating. The runtime config (`config/mod.rs`) is what the app actually uses.
+
+## Theme System
+
+Three built-in themes in `ThemeManager` (`src/config/theme.rs`): `default-dark`, `default-light`, `high-contrast`. Five ANSI color scheme presets: `monokai`, `solarized_dark`, `solarized_light`, `dracula`, `nord`. Themes have: `ColorPalette` (background, text, accent, status, ANSI), `Typography` (fonts, sizes, line height), `UiStyles` (border radius, padding, spacing, shadow). Themes can be exported/imported as JSON.
+
 ## File References
 
 | Document | Path |
 |----------|------|
 | Architecture | `docs/ARCHITECTURE.md` |
 | Custom Prompts | `docs/CUSTOM_PROMPT.md` |
-| Feature Spec | `specs/001-mosaicterm-terminal-emulator/spec.md` |
-| Implementation Plan | `specs/001-mosaicterm-terminal-emulator/plan.md` |
-| Task List | `specs/001-mosaicterm-terminal-emulator/tasks.md` |
-| Research | `specs/001-mosaicterm-terminal-emulator/research.md` |
-| Quickstart/MVP | `specs/001-mosaicterm-terminal-emulator/quickstart.md` |
-| Data Model | `specs/001-mosaicterm-terminal-emulator/data-model.md` |
-| Contracts | `specs/001-mosaicterm-terminal-emulator/contracts/` |
+| Theming Guide | `docs/THEMING.md` |
+| Configuration Reference | `docs/CONFIGURATION.md` |
+| Roadmap | `docs/ROADMAP.md` |
+| Quick Start | `docs/QUICKSTART.md` |

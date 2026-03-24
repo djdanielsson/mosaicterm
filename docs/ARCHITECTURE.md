@@ -1,255 +1,154 @@
 # MosaicTerm Architecture
 
 **Version:** 0.4.0
-**Last Updated:** March 22, 2026
-
----
-
-## Table of Contents
-
-1. [Overview](#overview)
-2. [Architecture Principles](#architecture-principles)
-3. [Component Diagram](#component-diagram)
-4. [Data Flow](#data-flow)
-5. [Threading Model](#threading-model)
-6. [PTY Lifecycle](#pty-lifecycle)
-7. [UI Update Cycle](#ui-update-cycle)
-8. [Module Structure](#module-structure)
-9. [Key Subsystems](#key-subsystems)
-10. [Design Patterns](#design-patterns)
-11. [Performance Considerations](#performance-considerations)
+**Last Updated:** March 24, 2026
 
 ---
 
 ## Overview
 
-MosaicTerm is a modern Rust-based terminal emulator built with `egui` (for GUI) and `portable-pty` (for cross-platform PTY support). It provides a block-based command history interface similar to Warp, with a permanently pinned input prompt at the bottom.
+MosaicTerm is a Rust-based GUI terminal emulator that groups commands and their outputs into discrete, scrollable "blocks" with a permanently pinned input prompt. It runs your shell (zsh, bash, fish) inside a PTY and renders the UI with egui/eframe.
 
 ### Key Technologies
 
-- **GUI Framework:** `egui` + `eframe` 0.24 (immediate mode GUI)
-- **PTY Management:** `portable-pty` (cross-platform pseudoterminal)
-- **Terminal Emulation:** `vte` (ANSI escape sequence parsing)
-- **Async Runtime:** `tokio` (for async operations)
-- **Logging:** `tracing` (structured logging)
-- **macOS Native:** `cocoa` + `objc` (native menu bar, notifications)
-- **Notifications:** `osascript` / `terminal-notifier` (macOS), `notify-send` (Linux)
+| Crate | Purpose |
+|-------|---------|
+| `eframe` 0.24 | GUI framework (re-exports `egui`, immediate mode) |
+| `portable-pty` 0.9 | Cross-platform pseudoterminal |
+| `vte` 0.15 | ANSI escape sequence parsing |
+| `tokio` 1.49 | Async runtime |
+| `serde` + `toml` | Configuration (TOML format) |
+| `git2` 0.20 | Git status detection |
+| `cocoa` 0.24 / `objc` 0.2 | macOS native menu bar (macOS only) |
+| `tracing` | Structured logging |
 
 ### Design Goals
 
-1. **Simplicity:** Clean, understandable codebase
-2. **Performance:** Efficient rendering and output processing
-3. **Reliability:** Graceful error handling, no panics
-4. **Extensibility:** Modular design for future enhancements
+1. **Simplicity** -- Clean, understandable codebase
+2. **Performance** -- <16ms frames, <100ms command latency, <200MB memory
+3. **Reliability** -- Graceful error handling, no panics in production
+4. **Extensibility** -- Modular design for future enhancements
 
 ---
 
-## Architecture Principles
-
-### 1. Separation of Concerns
-
-- **Library (`src/lib.rs`):** Core functionality, models, configuration
-- **Binary (`src/main.rs`, `src/app/mod.rs`):** GUI application and user interaction
-- **Modules:** Self-contained units with clear responsibilities
-
-### 2. Single-Threaded UI with Background I/O
-
-- **Main Thread:** `egui` UI rendering and event handling
-- **Background Threads:** PTY I/O (reader/writer threads per PTY)
-- **Notification Threads:** Background threads for system notifications (non-blocking)
-- **Communication:** Channels for async data transfer; `AtomicBool` flags for native menu actions
-
-### 3. Immutable Defaults with Mutable State
-
-- Configuration is loaded once and rarely changes
-- Application state is mutable but carefully controlled
-- PTY processes have explicit lifecycle management
-
-### 4. Fail-Safe Defaults
-
-- Graceful degradation when config loading fails
-- Fallback to minimal configuration
-- Output size limits prevent memory exhaustion
-
----
-
-## Component Diagram
+## Module Structure
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         MosaicTerm App                          │
-│                   (src/main.rs + src/app/mod.rs)                │
-└────────────┬────────────────────────────────────────────────────┘
-             │
-             │ Uses
-             ├─────────────────────────────────┐
-             │                                 │
-             ▼                                 ▼
-┌────────────────────────┐         ┌──────────────────────────┐
-│   Configuration        │         │   Terminal Session       │
-│   (src/config/)        │         │   (src/terminal/)        │
-│                        │         │                          │
-│ - Config               │         │ - Terminal               │
-│ - RuntimeConfig        │         │ - TerminalSession        │
-│ - ThemeManager         │         │ - CommandInputProcessor  │
-│ - PromptFormatter      │         │ - OutputProcessor        │
-└────────────────────────┘         │ - AnsiParser             │
-                                   └──────┬───────────────────┘
-                                          │
-                                          │ Uses
-                                          ▼
-                         ┌────────────────────────────────────┐
-                         │   PTY Management                   │
-                         │   (src/pty/)                       │
-                         │                                    │
-                         │ - PtyManager                       │
-                         │ - PtyProcess                       │
-                         │ - PtyStreams                       │
-                         │ - SignalHandler                    │
-                         └────────────────────────────────────┘
-                                          │
-                                          │ Uses
-                                          ▼
-                         ┌────────────────────────────────────┐
-                         │   portable-pty                     │
-                         │   (External Crate)                 │
-                         │                                    │
-                         │ - Native PTY system                │
-                         │ - Cross-platform abstraction       │
-                         └────────────────────────────────────┘
-
-Supporting Systems:
-
-┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│  Completion      │  │  Models          │  │  UI Components   │
-│  (src/completion)│  │  (src/models/)   │  │  (src/ui/)       │
-│                  │  │                  │  │                  │
-│ - Provider       │  │ - CommandBlock   │  │ - Blocks         │
-│ - fzf backend    │  │ - OutputLine     │  │ - Input          │
-│ - Ghost compl.   │  │ - PtyProcess     │  │ - TUI Overlay    │
-└──────────────────┘  │ - Config         │  │ - Metrics Panel  │
-                      └──────────────────┘  │ - Completion     │
-                                            └──────────────────┘
+src/
+├── main.rs              # Entry point, CLI args, icon loading
+├── lib.rs               # Library exports, module declarations
+├── error.rs             # Error types and Result aliases
+├── state_manager.rs     # Global state (sessions, history, contexts)
+│
+├── app/                 # Main application
+│   ├── mod.rs           # Core app struct, update loop, rendering,
+│   │                    # native menu bar, font loading, notifications
+│   ├── input.rs         # Keyboard shortcuts, pane management
+│   ├── prompt.rs        # Prompt building (Vec<PromptSegment>)
+│   ├── context.rs       # Git status + environment context
+│   ├── commands.rs      # Command classification (cd, ssh, tui)
+│   └── pane_tree.rs     # Split pane tree data structure
+│
+├── config/              # Configuration management
+│   ├── mod.rs           # RuntimeConfig, Config struct, merging
+│   ├── prompt.rs        # PromptFormatter, 6 render styles
+│   ├── theme.rs         # ThemeManager, 3 built-in themes, 5 color presets
+│   ├── shell.rs         # Shell detection and configuration
+│   ├── loader.rs        # Config file discovery and loading
+│   └── watcher.rs       # Config file watching for hot-reload
+│
+├── session/             # Session persistence
+│   ├── mod.rs           # Session module
+│   └── tmux_backend.rs  # Tmux CLI integration
+│
+├── pty/                 # PTY management
+│   ├── mod.rs           # PtyHandle, module exports
+│   ├── manager.rs       # PtyManager, lifecycle coordination
+│   ├── process.rs       # PTY process spawning
+│   └── streams.rs       # PtyStreams, async I/O abstraction
+│
+├── terminal/            # Terminal emulation
+│   └── mod.rs           # Terminal struct, session, working dir
+│
+├── models/              # Data models
+│   ├── mod.rs           # Model exports
+│   ├── config.rs        # Serde config structs (Theme, PromptConfig, etc.)
+│   └── command_block.rs # CommandBlock, OutputLine, ExecutionStatus
+│
+├── ui/                  # UI components
+│   ├── mod.rs           # LayoutManager, breakpoints
+│   ├── colors.rs        # UiColors (egui color provider from theme)
+│   ├── text.rs          # AnsiTextRenderer, ColorScheme
+│   ├── input.rs         # InputPrompt widget
+│   ├── command_block.rs # CommandBlocks rendering
+│   ├── completion_popup.rs # Tab completion popup
+│   ├── scrollable_history.rs # Scrollable history
+│   ├── metrics.rs       # Performance metrics panel
+│   ├── ssh_prompt_overlay.rs # SSH password/passphrase prompts
+│   └── tui_overlay.rs   # Fullscreen TUI overlay (vim, top, etc.)
+│
+├── completion.rs        # CompletionProvider (fzf integration)
+├── context.rs           # ContextDetector (20+ environments)
+├── history.rs           # Persistent command history
+├── security_audit.rs    # Security event logging
+├── platform/            # Platform-specific utilities
+├── ansi/                # ANSI escape code types
+├── commands/            # Command parsing utilities
+└── execution/           # DirectExecutor (for tests)
 ```
 
 ---
 
 ## Data Flow
 
-### Command Execution Flow
+### Command Execution
 
 ```
-User Input
+User types in pinned input → Enter
     │
-    │ 1. Keyboard event
     ▼
-egui UI (app.rs)
+MosaicTermApp::update() handles Enter key
     │
-    │ 2. Process input
     ▼
-CommandInputProcessor
+PtyManager::send_input() → writer thread → PTY master → shell
     │
-    │ 3. Validate & prepare
-    ├─── Tab completion
-    ├─── History expansion
-    └─── Security validation
-    │
-    │ 4. Send to PTY
     ▼
-PtyManager
+Shell executes command, produces output
     │
-    │ 5. Write to PTY master
     ▼
-PTY Process (shell)
+PTY master → reader thread → tokio channel → main thread polls
     │
-    │ 6. Execute command
     ▼
-Output Data
+Terminal::process_output() → ANSI parsing → OutputLines
     │
-    │ 7. Read from PTY master (background thread)
     ▼
-PtyStreams (async channel)
+CommandBlock updated with output lines
     │
-    │ 8. Batch read in update loop
     ▼
-Terminal::process_output()
+egui renders block in scrollable history
     │
-    │ 9. Parse ANSI codes
     ▼
-OutputProcessor + AnsiParser
-    │
-    │ 10. Convert to OutputLines
-    ▼
-CommandBlock (in command_history)
-    │
-    │ 11. Render in UI
-    ▼
-egui UI Display
+Prompt updated with new working directory and context
 ```
 
-### Configuration Loading Flow
+### Configuration Loading
 
 ```
-main()
+main() → parse CLI args
     │
-    ├─ Parse CLI args
+    ├─ Search config paths:
+    │   $MOSAICTERM_CONFIG → ~/.config/mosaicterm/config.toml → ./mosaicterm.toml
     │
-    ├─ Load config file
-    │   ├─ ~/.config/mosaicterm/config.toml
-    │   ├─ ~/.mosaicterm.toml
-    │   └─ ./mosaicterm.toml
-    │
-    ├─ Create RuntimeConfig
-    │   ├─ Load base Config
-    │   ├─ Initialize ThemeManager
-    │   └─ Create PromptFormatter
+    ├─ Create RuntimeConfig:
+    │   ├─ Load Config (TOML/JSON)
+    │   ├─ Initialize ThemeManager (3 built-in themes)
+    │   ├─ Initialize ShellManager (detect current shell)
+    │   └─ Apply theme_name preset
     │
     └─ Pass to MosaicTermApp::with_config()
-```
-
-### UI Update Cycle
-
-```
-eframe::run_native()
-    │
-    │ 60 FPS (or on-demand)
-    │
-    ▼
-MosaicTermApp::update()
-    │
-    ├─ 1. Auto-refresh completion cache (every 5 min)
-    │
-    ├─ 2. Initialize terminal (first frame only)
-    │
-    ├─ 3. Handle async operations
-    │   ├─ Read PTY output (batched)
-    │   ├─ Process ANSI codes
-    │   ├─ Add to CommandBlock
-    │   └─ Check command completion
-    │
-    ├─ 4. Check native menu flags (macOS AtomicBool)
-    │   ├─ NATIVE_MENU_ABOUT → show About dialog
-    │   ├─ NATIVE_MENU_DEV → toggle dev panel
-    │   └─ NATIVE_MENU_PERF → toggle metrics panel
-    │
-    ├─ 5. Render UI panels
-    │   ├─ Central panel (command history with hover effects)
-    │   ├─ Bottom panel (input prompt with ghost completion)
-    │   ├─ Metrics panel (if visible, via render_with_ctx)
-    │   └─ TUI overlay (if active, with grace period)
-    │
-    ├─ 6. Handle input events
-    │   ├─ Key presses
-    │   ├─ Tab / ghost completion
-    │   └─ Command submission
-    │
-    ├─ 7. Background notifications
-    │   ├─ Track window focus (ctx.input.focused)
-    │   └─ If command completes after ≥10s while unfocused → spawn notification thread
-    │
-    └─ 8. Request repaint (conditional)
-        ├─ Immediate: if command running or output pending
-        └─ Delayed (100ms): for idle polling
+        ├─ Build PromptFormatter from prompt config
+        ├─ Build UiColors from theme
+        └─ Apply font settings
 ```
 
 ---
@@ -258,747 +157,227 @@ MosaicTermApp::update()
 
 MosaicTerm uses a **hybrid threading model**:
 
-### Main Thread (UI Thread)
-
-- **Responsibility:** Run `egui` event loop and render UI
-- **Framework:** `eframe::App::update()` callback
-- **Frequency:** ~60 FPS or on-demand
-- **Constraints:** Must complete quickly (<16ms) to maintain smooth UI
-
-### PTY Reader Threads (per PTY)
-
-- **Responsibility:** Read output from PTY master file descriptor
-- **Type:** Blocking I/O in dedicated thread
-- **Communication:** Send data via `tokio::sync::mpsc::unbounded_channel`
-- **Lifecycle:** Lives as long as PTY process
-
-```rust
-// Simplified reader thread structure
-thread::spawn(move || {
-    let mut buf = [0u8; 4096];
-    loop {
-        match master_reader.read(&mut buf) {
-            Ok(0) => break, // EOF
-            Ok(n) => {
-                let _ = tx_async_out.send(buf[..n].to_vec());
-            }
-            Err(_) => break,
-        }
-    }
-});
+```
+┌──────────────────────────────────────────────────┐
+│                  Main Thread                      │
+│  egui UI loop (~60 FPS)                          │
+│  - Render UI                                     │
+│  - Handle keyboard/mouse events                  │
+│  - Poll PTY channels (non-blocking try_recv)     │
+│  - Process ANSI output                           │
+│  - Poll AtomicBool flags for native menu actions │
+│  - Request repaints (immediate or 100ms delayed) │
+└──────────────┬───────────────────────────────────┘
+               │ tokio channels
+    ┌──────────┴──────────┐
+    │                     │
+    ▼                     ▼
+┌──────────────┐  ┌──────────────┐
+│ PTY Reader   │  │ PTY Writer   │
+│ Thread       │  │ Thread       │
+│              │  │              │
+│ Blocking     │  │ Blocking     │
+│ read() loop  │  │ recv() +     │
+│ → send to    │  │ write() loop │
+│   channel    │  │              │
+└──────┬───────┘  └──────┬───────┘
+       │                 │
+       └────────┬────────┘
+                │ OS file descriptors
+                ▼
+       ┌─────────────────┐
+       │   PTY Master    │
+       │   (OS Resource) │
+       └────────┬────────┘
+                │
+                ▼
+       ┌─────────────────┐
+       │   PTY Slave     │
+       │   (Shell/CMD)   │
+       └─────────────────┘
 ```
 
-### PTY Writer Threads (per PTY)
-
-- **Responsibility:** Write user input to PTY master
-- **Type:** Blocking I/O in dedicated thread
-- **Communication:** Receive data via `std::sync::mpsc::channel`
-- **Buffering:** 8KB write buffer
-
-```rust
-// Simplified writer thread structure
-thread::spawn(move || {
-    while let Ok(data) = rx_stdin.recv() {
-        let _ = master_writer.write_all(&data);
-        let _ = master_writer.flush();
-    }
-});
-```
-
-### Threading Diagram
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                     Main Thread                         │
-│                                                         │
-│  ┌─────────────────────────────────────────────────┐  │
-│  │  egui UI Loop (60 FPS)                          │  │
-│  │                                                 │  │
-│  │  - Render UI                                    │  │
-│  │  - Handle events                                │  │
-│  │  - Read from PTY channels (non-blocking)        │  │
-│  │  - Process output                               │  │
-│  └─────────────────────────────────────────────────┘  │
-│                         │                               │
-│                         │ Channels                      │
-│                         │                               │
-└─────────────────────────┼───────────────────────────────┘
-                          │
-         ┌────────────────┴────────────────┐
-         │                                  │
-         ▼                                  ▼
-┌──────────────────────┐         ┌──────────────────────┐
-│  PTY Reader Thread   │         │  PTY Writer Thread   │
-│                      │         │                      │
-│  - Blocking read()   │         │  - Blocking write()  │
-│  - Send to channel   │         │  - Recv from channel │
-└──────────────────────┘         └──────────────────────┘
-         │                                  │
-         │ OS File Descriptors              │
-         │                                  │
-         └────────────────┬─────────────────┘
-                          │
-                          ▼
-                 ┌─────────────────┐
-                 │   PTY Master    │
-                 │  (OS Resource)  │
-                 └─────────────────┘
-                          │
-                          ▼
-                 ┌─────────────────┐
-                 │   PTY Slave     │
-                 │   (Shell/CMD)   │
-                 └─────────────────┘
-```
+Additional threads:
+- **Notification threads**: Background threads for desktop notifications (spawned per event, non-blocking)
+- **Background tasks**: Environment queries, `zoxide add`, tmux operations
 
 ### Synchronization
 
-- **PtyManager:** Protected by `Arc<Mutex<PtyManager>>` for safe shared access
-- **Retry Logic:** 3 attempts with 100μs sleep to handle lock contention
-- **Channels:** Unbounded for PTY output (bounded would risk data loss)
-
----
-
-## PTY Lifecycle
-
-### 1. Creation
-
-```rust
-// In MosaicTermApp::initialize_terminal()
-let mut handle = PtyHandle::new();  // Generate UUID
-let (process, streams) = spawn_pty_process(
-    shell_path,
-    &[],
-    &env_vars,
-    Some(&working_dir)
-)?;
-handle.set_pid(process.pid);
-pty_manager.register(handle, process, streams);
-```
-
-**Steps:**
-1. Generate unique PTY handle (UUID)
-2. Create PTY pair (master/slave) via `portable-pty`
-3. Spawn shell process on PTY slave
-4. Clone master file descriptors for I/O
-5. Start reader and writer background threads
-6. Register in `PtyManager`
-
-### 2. Active State
-
-```
-PTY Master (managed by MosaicTerm)
-    ↕ File Descriptors
-PTY Slave (attached to shell process)
-    ↕ STDIN/STDOUT/STDERR
-Shell Process (bash/zsh/fish)
-    ↕ Executes commands
-Child Processes (commands)
-```
-
-**Operations:**
-- **Input:** User types → app.rs → PtyManager → Writer thread → PTY master → Shell
-- **Output:** Command output → PTY master → Reader thread → Channel → app.rs → UI
-
-### 3. Command Execution
-
-```rust
-// When user presses Enter
-let command = "ls -la\n";
-pty_manager.send_input(&handle, command.as_bytes()).await?;
-
-// Shell executes command
-// Output flows back through PTY
-```
-
-### 4. Output Processing
-
-```rust
-// In handle_async_operations()
-if let Ok(data) = pty_manager.try_read_output_now(handle) {
-    terminal.process_output(&data, StreamType::Stdout).await?;
-    let ready_lines = terminal.take_ready_output_lines();
-
-    // Add to current CommandBlock
-    if let Some(last_block) = self.command_history.last_mut() {
-        last_block.add_output_lines(ready_lines);
-    }
-}
-```
-
-### 5. Termination
-
-**Graceful:**
-```rust
-// User exits shell (e.g., types "exit")
-// Shell process terminates
-// Reader thread detects EOF
-// PTY is marked as terminated
-```
-
-**Forced:**
-```rust
-// App shutdown or user closes window
-pty_manager.terminate_pty(&handle).await?;
-// Sends SIGTERM to shell
-// Waits for graceful exit (future: with timeout)
-// Falls back to SIGKILL if needed (future)
-```
-
-### State Diagram
-
-```
-┌───────────────┐
-│  Uninitialized│
-└───────┬───────┘
-        │ create_pty()
-        ▼
-┌───────────────┐
-│  Initializing │
-└───────┬───────┘
-        │ spawn_command()
-        ▼
-┌───────────────┐
-│    Running    │◄──────┐
-└───────┬───────┘       │
-        │               │ send_input()
-        │ Shell exits   │ read_output()
-        ▼               │
-┌───────────────┐       │
-│  Terminated   │       │
-└───────────────┘       │
-                        │
-┌───────────────┐       │
-│     Error     │───────┘
-└───────────────┘
-   (retry or fail)
-```
+- `PtyManager` protected by `Arc<Mutex<>>` with 3-retry lock acquisition (100µs sleep between)
+- Unbounded tokio channels for PTY output (bounded would risk data loss)
+- `AtomicBool` flags for native macOS menu actions (polled in `update()`)
 
 ---
 
 ## UI Update Cycle
 
-### Frame Timing
-
-MosaicTerm uses **on-demand rendering** with intelligent repaint requests:
+MosaicTerm uses **on-demand rendering**:
 
 ```rust
-// In MosaicTermApp::update()
 if has_running_command || has_pending_output || completion_popup_visible {
-    ctx.request_repaint(); // Immediate (next frame)
+    ctx.request_repaint();                                    // Immediate (next frame)
 } else {
-    ctx.request_repaint_after(Duration::from_millis(100)); // Delayed polling
+    ctx.request_repaint_after(Duration::from_millis(100));    // Delayed polling
 }
 ```
 
-**Benefits:**
-- Low CPU usage when idle (1% CPU)
-- Responsive during command execution (60 FPS)
-- Balanced power consumption
+This achieves ~1% CPU when idle, full 60 FPS when commands are running.
 
-### Layout Structure
+### Layout
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Top Panel (Status Bar)                                 │
-│  - Current working directory                            │
-│  - Shell type indicator                                 │
-│  - Active process status                                │
-└─────────────────────────────────────────────────────────┘
-┌─────────────────────────────────────────────────────────┐
-│                                                         │
-│  Central Panel (Command History)                        │
-│  ┌─────────────────────────────────────────────────┐  │
-│  │ CommandBlock 1                                  │  │
-│  │ $ echo "hello"                                  │  │
-│  │ hello                                           │  │
-│  │ [✓ Completed in 50ms]                          │  │
-│  └─────────────────────────────────────────────────┘  │
-│  ┌─────────────────────────────────────────────────┐  │
-│  │ CommandBlock 2                                  │  │
-│  │ $ ls -la                                        │  │
-│  │ [... output lines ...]                          │  │
-│  │ [⏱ Running for 2.3s...]                        │  │
-│  └─────────────────────────────────────────────────┘  │
-│                                                         │
-│  (Scrollable viewport)                                  │
-└─────────────────────────────────────────────────────────┘
-┌─────────────────────────────────────────────────────────┐
-│  Bottom Panel (Input Prompt) - ALWAYS VISIBLE          │
-│  ~/project $                                            │
-│  █                                                      │
-│  (Tab completion popup appears above if triggered)      │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│  Central Panel (Scrollable Command History)      │
+│  ┌────────────────────────────────────────────┐ │
+│  │ CommandBlock 1                             │ │
+│  │ $ echo "hello"                             │ │
+│  │ hello                                      │ │
+│  │ [✓ Completed in 50ms]                      │ │
+│  └────────────────────────────────────────────┘ │
+│  ┌────────────────────────────────────────────┐ │
+│  │ CommandBlock 2                             │ │
+│  │ $ ls -la                                   │ │
+│  │ [... output ...]                           │ │
+│  │ [⏱ Running for 2.3s...]                    │ │
+│  └────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│  Bottom Panel (Pinned Input) - ALWAYS VISIBLE   │
+│  ~/project > █                                   │
+│  (Tab completion popup appears above if active)  │
+└─────────────────────────────────────────────────┘
 ```
-
-### Rendering Pipeline
-
-```
-update() called (each frame)
-    │
-    ├─ 1. Update state
-    │   ├─ Process PTY output
-    │   ├─ Update command blocks
-    │   └─ Check timeouts
-    │
-    ├─ 2. Layout pass
-    │   ├─ Calculate available space
-    │   ├─ Measure text
-    │   └─ Determine scroll position
-    │
-    ├─ 3. Paint pass
-    │   ├─ Draw top panel
-    │   ├─ Draw command blocks (with clipping)
-    │   ├─ Draw bottom input
-    │   └─ Draw completion popup
-    │
-    └─ 4. Input handling
-        ├─ Keyboard events
-        ├─ Mouse events
-        └─ Focus management
-```
-
-### Performance Optimizations
-
-1. **Output Batching:** Process all lines at once, single UI update
-2. **Viewport Culling:** Only render visible command blocks
-3. **Size Limits:** Max 50K lines per command, 10K chars per line
-4. **Lazy Parsing:** ANSI codes parsed on-demand during rendering
-5. **Conditional Repaints:** Only repaint when necessary
-
----
-
-## Module Structure
-
-### Core Modules
-
-```
-src/
-├── main.rs              # Entry point, CLI arg parsing, icon loading
-├── lib.rs               # Library exports
-├── error.rs             # Error types and Result aliases
-├── state_manager.rs     # Global state (sessions, history, contexts)
-│
-├── app/                 # Main application
-│   ├── mod.rs          # Core app struct, update loop, rendering,
-│   │                   # native menu bar, font loading, notifications
-│   ├── input.rs        # Keyboard shortcuts, pane management
-│   ├── prompt.rs       # Prompt building (Vec<PromptSegment>)
-│   ├── context.rs      # Git status + environment context
-│   ├── commands.rs     # Command classification (cd, ssh, tui)
-│   └── pane_tree.rs    # Split pane tree data structure
-│
-├── config/              # Configuration management
-│   ├── mod.rs          # RuntimeConfig, themes, hot-reload
-│   ├── prompt.rs       # PromptFormatter, segment rendering (6 styles)
-│   └── loader.rs       # Config file discovery and loading
-│
-├── session/             # Session persistence
-│   ├── mod.rs          # Session module
-│   └── tmux_backend.rs # Tmux CLI integration
-│
-├── pty/                 # PTY management
-│   ├── mod.rs          # PtyHandle, module exports
-│   ├── manager.rs      # PtyManager, lifecycle coordination
-│   ├── process.rs      # PTY process spawning
-│   └── streams.rs      # PtyStreams, I/O abstraction
-│
-├── terminal/            # Terminal emulation
-│   └── mod.rs          # Terminal struct, session management
-│
-├── models/              # Data models
-│   ├── mod.rs          # Model exports
-│   ├── config.rs       # Config structs (PromptStyle, PromptConfig, etc.)
-│   └── command_block.rs # CommandBlock, OutputLine, ExecutionStatus
-│
-├── ui/                  # UI components
-│   ├── mod.rs          # UiColors, theme structs
-│   ├── tui_overlay.rs  # Fullscreen TUI overlay (vim, top, etc.)
-│   ├── metrics.rs      # Performance metrics panel
-│   ├── completion_popup.rs # Tab completion popup
-│   ├── ssh_prompt_overlay.rs # SSH password/passphrase prompts
-│   ├── text.rs         # AnsiTextRenderer
-│   ├── input.rs        # InputPrompt
-│   ├── blocks.rs       # CommandBlocks component
-│   ├── viewport.rs     # Scrollable viewport
-│   └── scroll.rs       # Scroll state management
-│
-├── completion.rs        # CompletionProvider (fzf integration)
-├── context.rs           # ContextDetector (20+ environments)
-├── history.rs           # Persistent command history
-├── security_audit.rs    # Security event logging
-├── platform/            # Platform-specific utilities
-└── execution/           # DirectExecutor (for tests)
-```
-
-### Module Responsibilities
-
-| Module | Purpose | Key Types |
-|--------|---------|-----------|
-| `app` | Core application, UI rendering, input, menu, notifications | `MosaicTermApp`, `ToolAvailability` |
-| `config` | Load, parse, manage configuration and prompts | `Config`, `RuntimeConfig`, `PromptFormatter` |
-| `terminal` | Emulate terminal, process I/O | `Terminal`, `TerminalSession` |
-| `pty` | Manage PTY lifecycle, I/O streams | `PtyManager`, `PtyHandle`, `PtyStreams` |
-| `models` | Data structures and state | `CommandBlock`, `OutputLine`, `PromptConfig` |
-| `ui` | Render UI components | `TuiOverlay`, `MetricsPanel`, `CompletionPopup` |
-| `completion` | Tab completion logic (fzf integration) | `CompletionProvider`, `CompletionResult` |
-| `context` | Environment context detection | `ContextDetector`, `ContextType` |
-| `session` | Tmux session persistence | `TmuxSessionManager` |
-| `history` | Persistent command history | `HistoryManager` |
 
 ---
 
 ## Key Subsystems
 
-### 1. Configuration System
+### Command Blocks
 
-**Purpose:** Load, validate, and provide access to user and runtime configuration.
+Each command execution creates a `CommandBlock`:
+- Command text
+- Output lines (with ANSI codes preserved)
+- Timestamp
+- Status: `Pending` → `Running` → `Completed` / `Failed` / `Timedout`
+- Working directory
+- Exit code
 
-**Components:**
-- `ConfigLoader`: Searches standard paths for config files
-- `Config`: Base configuration struct (serializable)
-- `RuntimeConfig`: Runtime wrapper with theme and prompt managers
-- `ThemeManager`: Manages color schemes and theme switching
-- `PromptFormatter`: Renders prompts as `Vec<PromptSegment>` with per-segment fg/bg/bold colors
+Limits: 50K lines per block, 10K chars per line (truncation with user notice).
 
-**Features:**
-- TOML-based configuration files
-- Multiple search paths (`~/.config/mosaicterm/`, `~/.mosaicterm.toml`)
-- Fallback to defaults if loading fails
-- Hot-reload support via file watcher
-- System font loading from OS directories (`find_system_font` with `fc-list` fallback)
+### PTY Management
 
-### 2. Terminal Emulation
+`PtyManager` coordinates PTY lifecycle:
+1. **Create**: Spawn shell in PTY via `portable-pty`, start reader/writer threads
+2. **Communicate**: `send_input()` / `try_read_output_now()` via channels
+3. **Monitor**: `is_alive()`, process info
+4. **Terminate**: Graceful SIGTERM, fallback to SIGKILL
 
-**Purpose:** Process terminal I/O, parse ANSI codes, manage terminal state.
+### Prompt System
 
-**Components:**
-- `Terminal`: High-level terminal session management
-- `TerminalSession`: Tracks shell state, working directory, history
-- `OutputProcessor`: Buffers and segments raw output into lines
-- `AnsiParser`: Parses ANSI escape sequences (colors, cursor movement)
-- `CommandInputProcessor`: Validates, prepares, and enhances user input
+Six styles rendered by `PromptFormatter::render_segments()` → `Vec<PromptSegment>`. Each segment has fg/bg colors and bold flag. Entry point: `build_prompt_segments()` in `app/prompt.rs`. Variable substitution: `$USER`, `$HOSTNAME`, `$PWD`, `$GIT_BRANCH`, `$GIT_STATUS`, `$VENV`, `$NODE_VERSION`, `$RUBY_VERSION`, `$DOCKER`, `$KUBE`.
 
-**Capabilities:**
-- ANSI color support (16 colors, 256 colors, RGB)
-- Bold, italic, underline formatting
-- Cursor movement and positioning
-- Command history with configurable size (default: 1000)
-- Tilde expansion (`~` → `/home/user`)
-- History expansion (`!!` → last command)
-- Multi-line command detection (backslash continuation)
+### Theme System
 
-### 3. PTY Management
+`ThemeManager` in `config/theme.rs`:
+- 3 built-in themes: `default-dark`, `default-light`, `high-contrast`
+- 5 ANSI color presets: Monokai, Solarized Dark/Light, Dracula, Nord
+- Custom themes: JSON import/export
+- Each theme defines: `ColorPalette`, `Typography`, `UiStyles`
 
-**Purpose:** Create, manage, and communicate with pseudoterminal processes.
+`UiColors` in `ui/colors.rs` converts theme colors to `egui::Color32` for rendering.
 
-**Components:**
-- `PtyManager`: Central coordinator for all PTY operations
-- `PtyHandle`: Unique identifier for PTY instances
-- `PtyProcess`: Tracks process state (running, completed, failed)
-- `PtyStreams`: Abstracts I/O operations over channels
-- `SignalHandler`: Handles process signals (SIGTERM, SIGKILL)
+### Completion System
 
-**Lifecycle:**
-1. **Create:** `PtyManager::create_pty()` → spawn shell in PTY
-2. **Communicate:** `send_input()` / `read_output()` via channels
-3. **Monitor:** Check `is_alive()`, get process info
-4. **Terminate:** `terminate_pty()` → graceful or forced shutdown
+`CompletionProvider` provides tab completion:
+- Command completion (scans `$PATH`, refreshes every 5 minutes)
+- File/directory completion
+- **fzf backend**: If installed, used for fuzzy matching and Ctrl+R history search
+- **Ghost completion**: Inline dimmed suggestions, accepted with Tab or Right arrow
 
-### 4. Command History
+### TUI Overlay
 
-**Purpose:** Store, display, and manage block-based command history.
+Interactive apps (vim, top, htop, etc.) detected by `TuiAppConfig::fullscreen_commands` run in a fullscreen overlay with VTE-based screen buffer. Features:
+- Alternate screen buffer tracking
+- 800ms grace period to prevent false exits
+- All Ctrl key combinations forwarded
+- Double-Escape to close
 
-**Components:**
-- `CommandBlock`: Represents a single command execution
-  - Command string
-  - Output lines (with ANSI codes)
-  - Status (running, success, failed)
-  - Timing information
-  - Exit code
+### Environment Context Detection
 
-**Features:**
-- Per-command output limits (50K lines, 10K chars/line)
-- Truncation notices when limits exceeded
-- Execution timing (start → completion)
-- Status indicators (✓ success, ✗ failed, ⏱ running)
-- Timeout detection (configurable: 30s regular, 5min interactive)
+`ContextDetector` identifies 20+ development environments:
+- Python venv/conda, Node.js nvm, Ruby rbenv/rvm
+- Rust, Go, Java (project-aware: only shown near `Cargo.toml`/`go.mod`/`pom.xml`)
+- Docker, Kubernetes, AWS, Terraform, mise/asdf
 
-### 5. Completion System
+### Split Panes
 
-**Purpose:** Provide intelligent tab completion for commands, files, and arguments.
+`PaneTree` with `PaneNode` (Leaf/Branch) for native multi-pane support:
+- `Ctrl+Shift+D`: Split right
+- `Ctrl+Shift+E`: Split down
+- `Ctrl+Shift+W`: Close pane
+- `Ctrl+Shift+Arrows`: Navigate
 
-**Components:**
-- `CompletionProvider`: Central completion logic
-- Command cache (scans `$PATH`, refreshes every 5 minutes)
-- File/directory completion (current working directory)
-- Common command suggestions
+### Desktop Notifications
 
-**Completion Types:**
-- **Command:** Matches against cached executables
-- **Path:** Completes file and directory names
-- **fzf backend:** If fzf is installed, used as the matching engine for tab completion and Ctrl+R history search
-- **Ghost completion:** Inline dimmed suggestion shown after cursor; accepted with Tab or Right arrow
-- **Argument:** Context-aware argument suggestions (future)
+`send_system_notification` spawns background threads. On macOS: tries `terminal-notifier` first, falls back to `osascript`. On Linux: `notify-send`. Sent when long-running commands (≥10s) complete while window is unfocused.
 
-### 6. UI Rendering
+### Native macOS Menu Bar
 
-**Purpose:** Render terminal UI using `egui` immediate mode GUI.
-
-**Components:**
-- `BlockRenderer`: Renders command blocks with ANSI formatting
-- `InputField`: Custom input widget with cursor and selection
-- `Viewport`: Manages scrollable command history
-- `CompletionPopup`: Displays tab completion suggestions
-
-**Layout:**
-- **Central Panel:** Scrollable command history with hover effects (shadow/elevation)
-- **Bottom Panel:** Pinned input prompt (always visible, borderless)
-- **TUI Overlay:** Fullscreen mode for interactive apps (vim, top, etc.) with 800ms grace period for stable exit detection
-- **Metrics Panel:** Live performance stats, rendered via `MetricsPanel::render_with_ctx` directly from `egui::Context`, closable window with `.open()` binding
-- **Native Menu Bar** (macOS): About dialog and Dev menu via `cocoa`/`objc` with `AtomicBool` flags polled in `update()`
-
-**Prompt Rendering:**
-- Prompts are rendered as `Vec<PromptSegment>` with per-segment colors
-- Segments without `bg` are drawn with `painter().layout_no_wrap()` + `painter().galley()` to preserve explicit colors against egui's widget styling
-- Segments with `bg` are rendered with background fill via styled labels
+`setup_native_menu_bar()` uses `cocoa`/`objc` FFI. Menu actions set `AtomicBool` flags polled by the main thread in `update()`, avoiding cross-thread UI mutation. Includes About dialog and Dev menu (Performance Metrics, Startup Log).
 
 ---
 
-## Design Patterns
+## Performance
 
-### 1. Builder Pattern
+### Targets
 
-Used for complex configuration and process creation:
+| Metric | Target |
+|--------|--------|
+| Frame time | <16ms (60 FPS) |
+| Command latency | <100ms input to display |
+| Memory | <200MB typical usage |
+| Startup | <2s to first prompt |
 
-```rust
-impl PtyManager {
-    pub async fn create_pty(
-        &mut self,
-        command: &str,
-        args: &[String],
-        env: &HashMap<String, String>,
-        working_directory: Option<&Path>,
-    ) -> Result<PtyHandle> {
-        // ...
-    }
-}
-```
+### Optimizations
 
-### 2. State Machine Pattern
-
-PTY processes and terminal state follow explicit state machines:
-
-```rust
-pub enum ExecutionStatus {
-    Pending,      // Not yet started
-    Running,      // Currently executing
-    Success,      // Completed successfully
-    Failed,       // Failed with error
-    Timedout,     // Exceeded timeout
-}
-```
-
-### 3. Strategy Pattern
-
-Different shell types have different command processing:
-
-```rust
-impl CommandProcessor {
-    fn process_shell_specific(&self, command: &str) -> Result<String> {
-        match self.shell_type {
-            ShellType::Bash | ShellType::Zsh => self.process_bash_zsh_command(command),
-            ShellType::Fish => self.process_fish_command(command),
-            _ => Ok(command.to_string()),
-        }
-    }
-}
-```
-
-### 4. Observer Pattern
-
-Event-driven updates via channels (PTY I/O):
-
-```rust
-// Reader thread observes PTY output
-let (tx_output, rx_output) = unbounded_channel();
-thread::spawn(move || {
-    while let Ok(data) = read_pty() {
-        tx_output.send(data);
-    }
-});
-
-// UI thread observes channel
-if let Ok(data) = rx_output.try_recv() {
-    process_output(data);
-}
-```
-
-### 5. Command Pattern
-
-User actions encapsulated as operations:
-
-```rust
-pub enum InputResult {
-    NoOp,                    // No action needed
-    CommandReady(String),    // Execute command
-    CompletionRequested,     // Show completions
-    HistoryNavigation(isize),// Navigate history
-}
-```
+- **Output batching**: All lines processed in batch, single UI update
+- **Viewport culling**: Only render visible command blocks
+- **Conditional repaints**: Immediate when active, 100ms polling when idle
+- **Size limits**: 50K lines/block, 10K chars/line
+- **Lazy ANSI parsing**: Parsed on-demand during rendering
+- **Completion cache**: Refreshed every 5 minutes, not every frame
+- **Buffered I/O**: 128KB read, 8KB write buffers
 
 ---
 
-## Performance Considerations
+## Design Decisions
 
-### Memory Management
-
-1. **Output Limits:**
-   - Max 50,000 lines per command block
-   - Max 10,000 characters per line
-   - Truncation with clear user feedback
-
-2. **Buffer Sizes:**
-   - PTY config buffer: 256KB (down from 1MB)
-   - Terminal output max: 10MB (down from 100MB)
-   - PTY read buffer: 128KB (down from 1MB)
-   - PTY write buffer: 8KB (up from 4KB)
-
-3. **History Management:**
-   - Configurable max history size (default: 1000 commands)
-   - Old commands automatically pruned
-   - Per-session history (not persistent yet)
-
-### CPU Optimization
-
-1. **Conditional Repaints:**
-   - Immediate repaint only when output pending or command running
-   - 100ms delayed repaint for idle polling
-   - Reduces CPU from 100% to 1% when idle
-
-2. **Output Batching:**
-   - All output lines processed in batch
-   - Single UI update instead of per-line updates
-   - Pre-allocated vectors for known sizes
-
-3. **Lazy Operations:**
-   - ANSI parsing only when rendering
-   - Completion cache refreshed every 5 minutes (not every frame)
-   - Viewport culling (only render visible blocks)
-
-### I/O Efficiency
-
-1. **Buffered I/O:**
-   - 128KB read buffer reduces syscall overhead
-   - 8KB write buffer optimizes small writes
-   - Flushing only after complete writes
-
-2. **Non-Blocking Reads:**
-   - `try_read()` instead of blocking read in UI thread
-   - Retry logic (3 attempts) for lock contention
-   - Background threads handle blocking I/O
-
-3. **Channel Capacity:**
-   - Unbounded channels for PTY output (prevents data loss)
-   - Bounded channels for control messages (backpressure)
+| Decision | Rationale |
+|----------|-----------|
+| egui immediate mode | No retained widget state; re-render every frame. Simple and fast. |
+| `block_on` for async in UI | Acceptable because PTY reads are non-blocking `try_read` |
+| Two Config structs | `models/config.rs` (serde) and `config/mod.rs` (runtime). Both must stay in sync. |
+| Unbounded output channels | Prevents data loss; bounded would require backpressure. |
+| `AtomicBool` for menu actions | Avoids cross-thread UI mutation on macOS. |
+| `portable-pty` | Cross-platform PTY abstraction; platform code in `src/platform/`. |
+| System font search | Recursive OS directory search + `fc-list` fallback on Linux. Default: JetBrains Mono. |
 
 ---
 
-## Error Handling Strategy
+## Error Handling
 
-### Principle: No Panics in Production
+All fallible operations return `Result<T, Error>`. No panics in production.
 
-- All fallible operations return `Result<T, Error>`
-- `panic!` only in tests or truly unrecoverable situations
-- Graceful degradation when possible
-
-### Error Types
-
-```rust
-pub enum Error {
-    Io(std::io::Error),           // I/O errors
-    Config(String),                // Configuration errors
-    Pty(String),                   // PTY-related errors
-    Terminal(String),              // Terminal emulation errors
-    Parse(String),                 // Parsing errors
-    Other(String),                 // Generic errors
-}
-```
-
-### Error Handling Patterns
-
-1. **Fallback to Defaults:**
-   ```rust
-   let config = Config::load().unwrap_or_default();
-   ```
-
-2. **Log and Continue:**
-   ```rust
-   if let Err(e) = self.completion_provider.refresh_cache() {
-       debug!("Failed to refresh cache: {}", e);
-       // Continue without crashing
-   }
-   ```
-
-3. **User Feedback:**
-   ```rust
-   if let Err(e) = pty_manager.create_pty(...) {
-       self.state.status_message = Some(format!("Failed to start: {}", e));
-   }
-   ```
+Patterns:
+- **Fallback to defaults**: `Config::load().unwrap_or_default()`
+- **Log and continue**: Debug log failures, don't crash
+- **User feedback**: Status messages for visible errors
 
 ---
 
-## Future Architecture Considerations
+## Related Documentation
 
-### Planned Improvements
-
-1. **Async Refactor (TASK-007):**
-   - Move from blocking I/O threads to full async/await
-   - Use `tokio::io::AsyncRead/AsyncWrite` for PTY
-   - Eliminate lock contention in PtyManager
-
-2. **Multi-Terminal Support:**
-   - Multiple PTY sessions in tabs
-   - Switch between sessions
-   - Independent state per terminal
-
-3. **Persistent History:**
-   - Save command history to disk
-   - History search and replay
-   - Cross-session history
-
-4. **Plugin System:**
-   - External plugins for custom commands
-   - Themeable UI components
-   - Extensible completion providers
-
-### Scalability
-
-Current architecture supports:
-- **Single terminal:** ✅ Optimized
-- **Multiple terminals:** 🚧 Requires refactoring
-- **Large output (GB):** ✅ Truncation limits prevent OOM
-- **Long-running commands:** ✅ Timeout detection implemented
-- **High command throughput:** ✅ Batching improves performance
-
----
-
-## Conclusion
-
-MosaicTerm's architecture prioritizes:
-- **Simplicity:** Easy to understand and modify
-- **Reliability:** Graceful error handling, no crashes
-- **Performance:** Efficient rendering and I/O
-- **Extensibility:** Modular design for future features
-
-The combination of `egui` for UI, `portable-pty` for PTY management, and a hybrid threading model provides a solid foundation for a modern terminal emulator.
-
----
-
-## Additional Resources
-
-- [README.md](../README.md) - User guide and features
-- [CUSTOM_PROMPT.md](./CUSTOM_PROMPT.md) - Prompt customization guide
-- [claude.md](../claude.md) - AI agent reference
-- [specs/](../specs/) - Detailed specifications and contracts
+- [Quick Start](QUICKSTART.md)
+- [Configuration Reference](CONFIGURATION.md)
+- [Custom Prompt Guide](CUSTOM_PROMPT.md)
+- [Theming Guide](THEMING.md)
