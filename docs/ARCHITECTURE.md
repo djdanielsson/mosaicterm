@@ -1,6 +1,6 @@
 # MosaicTerm Architecture
 
-**Version:** 0.4.0
+**Version:** 0.4.1
 **Last Updated:** March 24, 2026
 
 ---
@@ -16,10 +16,10 @@ MosaicTerm is a Rust-based GUI terminal emulator that groups commands and their 
 | `eframe` 0.24 | GUI framework (re-exports `egui`, immediate mode) |
 | `portable-pty` 0.9 | Cross-platform pseudoterminal |
 | `vte` 0.15 | ANSI escape sequence parsing |
-| `tokio` 1.49 | Async runtime |
+| `tokio` 1.50 | Async runtime |
 | `serde` + `toml` | Configuration (TOML format) |
 | `git2` 0.20 | Git status detection |
-| `cocoa` 0.24 / `objc` 0.2 | macOS native menu bar (macOS only) |
+| `cocoa` 0.26 / `objc` 0.2 | macOS native menu bar (macOS only) |
 | `tracing` | Structured logging |
 
 ### Design Goals
@@ -47,7 +47,9 @@ src/
 │   ├── prompt.rs        # Prompt building (Vec<PromptSegment>)
 │   ├── context.rs       # Git status + environment context
 │   ├── commands.rs      # Command classification (cd, ssh, tui)
-│   └── pane_tree.rs     # Split pane tree data structure
+│   ├── pane_tree.rs     # Split pane tree data structure
+│   ├── ssh.rs           # SSH session handling
+│   └── async_ops.rs     # Async operation helpers
 │
 ├── config/              # Configuration management
 │   ├── mod.rs           # RuntimeConfig, Config struct, merging
@@ -65,36 +67,70 @@ src/
 │   ├── mod.rs           # PtyHandle, module exports
 │   ├── manager.rs       # PtyManager, lifecycle coordination
 │   ├── process.rs       # PTY process spawning
-│   └── streams.rs       # PtyStreams, async I/O abstraction
+│   ├── streams.rs       # PtyStreams, async I/O abstraction
+│   ├── events.rs        # PTY event types
+│   ├── operations.rs    # PTY operations
+│   ├── process_tree.rs  # Process tree management
+│   └── signals.rs       # Signal handling
 │
 ├── terminal/            # Terminal emulation
-│   └── mod.rs           # Terminal struct, session, working dir
+│   ├── mod.rs           # Terminal struct, session, working dir
+│   ├── ansi_parser.rs   # ANSI escape code parser
+│   ├── input.rs         # Terminal input handling
+│   ├── output.rs        # Terminal output processing
+│   ├── prompt.rs        # Terminal prompt detection
+│   └── state.rs         # Terminal state management
 │
 ├── models/              # Data models
 │   ├── mod.rs           # Model exports
 │   ├── config.rs        # Serde config structs (Theme, PromptConfig, etc.)
-│   └── command_block.rs # CommandBlock, OutputLine, ExecutionStatus
+│   ├── command_block.rs # CommandBlock, ExecutionStatus
+│   ├── output_line.rs   # OutputLine struct
+│   ├── pty_process.rs   # PTY process model
+│   ├── shell_type.rs    # Shell type enum
+│   └── terminal_session.rs # TerminalSession model
 │
 ├── ui/                  # UI components
 │   ├── mod.rs           # LayoutManager, breakpoints
 │   ├── colors.rs        # UiColors (egui color provider from theme)
 │   ├── text.rs          # AnsiTextRenderer, ColorScheme
-│   ├── input.rs         # InputPrompt widget
-│   ├── command_block.rs # CommandBlocks rendering
+│   ├── input.rs         # InputPrompt widget, InputConfig
+│   ├── blocks.rs        # CommandBlocks rendering
 │   ├── completion_popup.rs # Tab completion popup
-│   ├── scrollable_history.rs # Scrollable history
+│   ├── scroll.rs        # Scrollable history
 │   ├── metrics.rs       # Performance metrics panel
 │   ├── ssh_prompt_overlay.rs # SSH password/passphrase prompts
-│   └── tui_overlay.rs   # Fullscreen TUI overlay (vim, top, etc.)
+│   ├── tui_overlay.rs   # Fullscreen TUI overlay (vim, top, etc.)
+│   └── viewport.rs      # Viewport management
 │
+├── ansi.rs              # ANSI escape code types
+├── commands.rs          # Command parsing utilities
 ├── completion.rs        # CompletionProvider (fzf integration)
 ├── context.rs           # ContextDetector (20+ environments)
 ├── history.rs           # Persistent command history
 ├── security_audit.rs    # Security event logging
-├── platform/            # Platform-specific utilities
-├── ansi/                # ANSI escape code types
-├── commands/            # Command parsing utilities
-└── execution/           # DirectExecutor (for tests)
+├── execution/           # DirectExecutor (for tests)
+│   └── mod.rs
+│
+└── platform/            # Platform-specific utilities
+    ├── mod.rs           # Platform trait exports
+    ├── traits.rs        # Cross-platform trait definitions
+    ├── unix/            # Unix/macOS implementations
+    │   ├── mod.rs
+    │   ├── filesystem.rs
+    │   ├── memory.rs
+    │   ├── paths.rs
+    │   ├── process.rs
+    │   ├── shell.rs
+    │   └── signals.rs
+    └── windows/         # Windows implementations
+        ├── mod.rs
+        ├── filesystem.rs
+        ├── memory.rs
+        ├── paths.rs
+        ├── process.rs
+        ├── shell.rs
+        └── signals.rs
 ```
 
 ---

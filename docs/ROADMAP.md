@@ -1,6 +1,6 @@
 # MosaicTerm Roadmap
 
-Current version: **0.4.0**
+Current version: **0.4.1**
 
 ---
 
@@ -55,7 +55,19 @@ The initial release establishing the core terminal emulator.
 - 50+ bug fixes across all modules
 - Comprehensive code review
 
-### v0.4.0 — Features & Stability (Current)
+### v0.4.1 — Code Quality & Maintenance (Current)
+
+- **Code review fixes**: Three rounds of comprehensive code review addressing correctness, performance, and stability issues across 15+ source files
+- **Security hardening**: Improved input validation, safer error handling, and tighter security audit logging
+- **Configurable input history**: `max_history` now user-configurable via `InputConfig`
+- **Dependency updates**: `cocoa` 0.24 → 0.26, tokio and other crate bumps via Dependabot
+- **CI/CD improvements**: Added pre-commit hooks (formatting, linting, secret scanning via gitleaks), Dependabot for Cargo and pre-commit
+- **Documentation overhaul**: Rewrote and restructured all docs (README, Architecture, Configuration, Quick Start, Theming, Custom Prompts, Roadmap) for clarity and accuracy
+- **Doc linting**: Added markdownlint-cli2 to pre-commit for consistent documentation quality
+- **Removed stale specs**: Cleaned up obsolete specification and contract documents
+- **Bug fixes**: Addressed issues in PTY stream handling, ANSI text rendering, SSH overlay, completion provider, history management, and platform-specific path handling
+
+### v0.4.0 — Features & Stability
 
 - **6 prompt styles**: Classic, Minimal, Powerline, Starship, OhMyZsh, Custom
 - **Split panes**: `Ctrl+Shift+D/E/W` with keyboard navigation

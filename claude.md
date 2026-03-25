@@ -5,7 +5,7 @@
 MosaicTerm is a Rust GUI terminal emulator inspired by Warp. Commands and their outputs are grouped into discrete, scrollable "blocks" with a permanently pinned input prompt at the bottom. It runs zsh (with Oh My Zsh, plugins, themes, completions, fzf, etc.) inside a PTY and renders the UI with egui/eframe.
 
 - **Language**: Rust (stable, 1.90+)
-- **Version**: 0.4.0
+- **Version**: 0.4.1
 - **License**: MIT
 - **Platforms**: macOS (primary), Linux, Windows
 
@@ -28,44 +28,72 @@ src/
 │   ├── prompt.rs     # Prompt building (segments with colors)
 │   ├── context.rs    # Git status + environment context detection
 │   ├── commands.rs   # Command classification (cd, ssh, tui, etc.)
-│   └── pane_tree.rs  # Split pane tree data structure
+│   ├── pane_tree.rs  # Split pane tree data structure
+│   ├── ssh.rs        # SSH session handling
+│   └── async_ops.rs  # Async operation helpers
 ├── config/
 │   ├── mod.rs        # Runtime Config struct, loading, merging, themes
-│   └── prompt.rs     # PromptFormatter, segment rendering, style dispatch
+│   ├── prompt.rs     # PromptFormatter, segment rendering, style dispatch
+│   ├── theme.rs      # ThemeManager, built-in themes, color presets
+│   ├── shell.rs      # Shell detection and configuration
+│   ├── loader.rs     # Config file discovery and loading
+│   └── watcher.rs    # Config file watching for hot-reload
 ├── session/
 │   ├── mod.rs        # Session module entry
 │   └── tmux_backend.rs  # TmuxSessionManager (CLI interaction)
 ├── pty/
 │   ├── mod.rs        # PTY module, PtyHandle
-│   └── manager.rs    # PtyManager (async read/write, lifecycle)
+│   ├── manager.rs    # PtyManager (async read/write, lifecycle)
+│   ├── process.rs    # PTY process spawning
+│   ├── streams.rs    # PtyStreams, async I/O abstraction
+│   ├── events.rs     # PTY event types
+│   ├── operations.rs # PTY operations
+│   ├── process_tree.rs # Process tree management
+│   └── signals.rs    # Signal handling
 ├── terminal/
-│   └── mod.rs        # Terminal struct (state, working dir, PTY handle)
+│   ├── mod.rs        # Terminal struct (state, working dir, PTY handle)
+│   ├── ansi_parser.rs # ANSI escape code parser
+│   ├── input.rs      # Terminal input handling
+│   ├── output.rs     # Terminal output processing
+│   ├── prompt.rs     # Terminal prompt detection
+│   └── state.rs      # Terminal state management
 ├── ui/
-│   ├── mod.rs        # UiColors, theme structs
+│   ├── mod.rs        # LayoutManager, breakpoints
+│   ├── colors.rs     # UiColors (egui color provider from theme)
 │   ├── text.rs       # AnsiTextRenderer
-│   ├── input.rs      # InputPrompt
-│   ├── command_block.rs    # CommandBlocks component
+│   ├── input.rs      # InputPrompt, InputConfig
+│   ├── blocks.rs     # CommandBlocks component
 │   ├── completion_popup.rs # Tab completion popup
-│   ├── scrollable_history.rs
-│   ├── metrics.rs         # Performance metrics (render_with_ctx)
+│   ├── scroll.rs     # Scrollable history
+│   ├── metrics.rs    # Performance metrics (render_with_ctx)
 │   ├── ssh_prompt_overlay.rs
-│   └── tui_overlay.rs     # Fullscreen TUI overlay (grace period, alt screen tracking)
-├── completion.rs     # CompletionProvider (fzf integration)
-├── context.rs        # ContextDetector (env detection: venv, nvm, rust, etc.)
+│   ├── tui_overlay.rs   # Fullscreen TUI overlay (grace period, alt screen tracking)
+│   └── viewport.rs   # Viewport management
 ├── models/
 │   ├── mod.rs
 │   ├── config.rs     # Serde config structs (PromptStyle, PromptConfig, etc.)
-│   └── command_block.rs  # CommandBlock, OutputLine, ExecutionStatus
+│   ├── command_block.rs  # CommandBlock, ExecutionStatus
+│   ├── output_line.rs    # OutputLine struct
+│   ├── pty_process.rs    # PTY process model
+│   ├── shell_type.rs     # Shell type enum
+│   └── terminal_session.rs # TerminalSession model
+├── ansi.rs           # ANSI escape code types
+├── commands.rs       # Command parsing utilities
+├── completion.rs     # CompletionProvider (fzf integration)
+├── context.rs        # ContextDetector (env detection: venv, nvm, rust, etc.)
 ├── lib.rs            # Public API, module declarations, init functions
 ├── main.rs           # Entry point
 ├── error.rs          # Error types
 ├── state_manager.rs  # Global state (sessions, history, contexts)
-├── commands/         # Command parsing utilities
 ├── execution/        # DirectExecutor
+│   └── mod.rs
 ├── history.rs        # Persistent command history
 ├── security_audit.rs # Security event logging
-├── ansi/             # ANSI escape code types
 └── platform/         # Platform-specific utilities
+    ├── mod.rs
+    ├── traits.rs     # Cross-platform trait definitions
+    ├── unix/         # Unix/macOS implementations
+    └── windows/      # Windows implementations
 ```
 
 ## Core Dependencies
@@ -75,14 +103,14 @@ src/
 | `eframe` 0.24 | GUI framework (re-exports `egui`) |
 | `portable-pty` 0.9 | Cross-platform PTY |
 | `vte` 0.15 | Terminal escape code parsing |
-| `tokio` 1.49 | Async runtime |
+| `tokio` 1.50 | Async runtime |
 | `serde` + `toml` | Configuration (TOML format) |
 | `git2` 0.20 | Git status detection |
 | `chrono` | Timestamps |
 | `tracing` | Structured logging |
 | `arboard` | Clipboard |
 | `notify` | File watching |
-| `cocoa` 0.24 | macOS native menu bar (macOS only) |
+| `cocoa` 0.26 | macOS native menu bar (macOS only) |
 | `objc` 0.2 | Objective-C FFI for macOS APIs (macOS only) |
 
 ## Key Concepts

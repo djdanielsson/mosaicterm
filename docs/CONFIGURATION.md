@@ -167,6 +167,12 @@ show_env = true
 # fg = "#64DC64"
 # bold = true
 
+# ─── Input Settings ──────────────────────────────────────────
+
+[input]
+# Maximum number of commands kept in the input history (navigable with up/down arrows)
+max_history = 100
+
 # ─── Session Persistence ────────────────────────────────────
 
 [session]
