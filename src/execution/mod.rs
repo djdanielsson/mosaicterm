@@ -160,15 +160,16 @@ impl DirectExecutor {
                     }
                 }
 
-                // Mark as completed with exit code
-                let duration = Duration::from_millis(100); // Small duration for direct commands
-                command_block.mark_completed(duration);
+                let duration = Duration::from_millis(100);
 
                 if exit_code != 0 {
                     command_block.add_output_line(OutputLine::new(format!(
                         "Command exited with code: {}",
                         exit_code
                     )));
+                    command_block.mark_failed(duration, exit_code);
+                } else {
+                    command_block.mark_completed(duration);
                 }
             }
             Ok(Err(e)) => {

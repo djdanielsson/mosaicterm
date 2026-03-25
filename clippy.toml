@@ -1,5 +1,5 @@
 # Clippy configuration for MosaicTerm
-msrv = "1.70.0"
+msrv = "1.90.0"
 
 # Documentation
 doc-valid-idents = ["MosaicTerm", "PTY", "ANSI"]

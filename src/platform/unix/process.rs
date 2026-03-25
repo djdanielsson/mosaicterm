@@ -95,18 +95,10 @@ impl UnixProcessTree {
         let output = Command::new("ps")
             .args(["-eo", "pid,ppid"])
             .output()
-            .map_err(|e| {
-                Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to run ps: {}", e),
-                ))
-            })?;
+            .map_err(|e| Error::Io(std::io::Error::other(format!("Failed to run ps: {}", e))))?;
 
         if !output.status.success() {
-            return Err(Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "ps command failed",
-            )));
+            return Err(Error::Io(std::io::Error::other("ps command failed")));
         }
 
         let output_str = String::from_utf8_lossy(&output.stdout);

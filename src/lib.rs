@@ -264,7 +264,7 @@ fn initialize_core_components(config: &Config) -> Result<()> {
                 config.ui.theme_name, e
             );
             // Try to set default theme
-            if let Err(e2) = theme_manager.set_theme("dark") {
+            if let Err(e2) = theme_manager.set_theme("default-dark") {
                 warn!("Failed to set default theme: {}", e2);
             }
         }

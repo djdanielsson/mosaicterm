@@ -410,6 +410,7 @@ impl ShellManager {
                         environment.insert(var_name.to_string(), value.to_string());
                     }
                 }
+                continue;
             }
 
             // Parse simple variable assignments

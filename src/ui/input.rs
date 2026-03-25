@@ -88,7 +88,7 @@ impl InputPrompt {
     }
 
     /// Create with custom configuration
-    pub fn with_config(config: InputConfig) -> Self {
+    pub fn with_config(_config: InputConfig) -> Self {
         Self {
             current_input: String::new(),
             history: VecDeque::new(),
@@ -96,7 +96,7 @@ impl InputPrompt {
             cursor_position: 0,
             focused: true,
             prompt_text: "$ ".to_string(),
-            max_history: config.max_length,
+            max_history: 100,
             request_focus: false,
         }
     }
@@ -249,7 +249,6 @@ impl InputPrompt {
 
             self.history.push_back(command.clone());
             debug!("History size after add: {}", self.history.len());
-            debug!("History contents: {:?}", self.history);
 
             // Maintain history size limit
             while self.history.len() > self.max_history {
@@ -273,7 +272,6 @@ impl InputPrompt {
             self.history.len(),
             self.history_position
         );
-        debug!("History contents: {:?}", self.history);
 
         let position = match self.history_position {
             None => self.history.len().saturating_sub(1),

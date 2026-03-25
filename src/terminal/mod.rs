@@ -235,8 +235,8 @@ impl Terminal {
         // Validate command
         input::validation::validate_command(command)?;
 
-        // Create command block
-        let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+        // Create command block using the session's working directory, not the process cwd
+        let working_dir = self.state.session.working_directory.clone();
         let command_block = self
             .input_processor
             .create_command_block(command, &working_dir);

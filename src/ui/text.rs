@@ -287,11 +287,12 @@ impl AnsiTextRenderer {
         current_bg_color: &mut egui::Color32,
         current_font: &mut egui::FontId,
     ) {
-        // Parse ANSI codes properly using regex to extract color codes
-        use regex::Regex;
+        use std::sync::LazyLock;
 
-        // Extract numeric codes from the ANSI sequence like \x1b[31m or \x1b[1;32m
-        let code_regex = Regex::new(r"\x1b\[([0-9;]+)m").unwrap();
+        static ANSI_CODE_REGEX: LazyLock<regex::Regex> =
+            LazyLock::new(|| regex::Regex::new(r"\x1b\[([0-9;]+)m").unwrap());
+
+        let code_regex = &*ANSI_CODE_REGEX;
 
         if let Some(captures) = code_regex.captures(&ansi_code.code) {
             if let Some(codes_str) = captures.get(1) {
@@ -636,6 +637,7 @@ impl AnsiTextRenderer {
         self.color_scheme
             .custom_colors
             .insert(name.to_string(), color);
+        self.clear_cache();
     }
 
     /// Get current font configuration
@@ -745,15 +747,18 @@ pub mod utils {
 
     /// Strip ANSI codes from text for plain rendering
     pub fn strip_ansi_codes(text: &str) -> String {
-        // Simple ANSI stripping - in practice you'd want more robust parsing
-        let ansi_regex = regex::Regex::new(r"\x1b\[[0-9;]*[mG]").unwrap();
-        ansi_regex.replace_all(text, "").to_string()
+        use std::sync::LazyLock;
+        static ANSI_STRIP_REGEX: LazyLock<regex::Regex> =
+            LazyLock::new(|| regex::Regex::new(r"\x1b\[[0-9;]*[mG]").unwrap());
+        ANSI_STRIP_REGEX.replace_all(text, "").to_string()
     }
 
     /// Count ANSI codes in text
     pub fn count_ansi_codes(text: &str) -> usize {
-        let ansi_regex = regex::Regex::new(r"\x1b\[[0-9;]*[mG]").unwrap();
-        ansi_regex.find_iter(text).count()
+        use std::sync::LazyLock;
+        static ANSI_COUNT_REGEX: LazyLock<regex::Regex> =
+            LazyLock::new(|| regex::Regex::new(r"\x1b\[[0-9;]*[mG]").unwrap());
+        ANSI_COUNT_REGEX.find_iter(text).count()
     }
 
     /// Check if text contains ANSI formatting
