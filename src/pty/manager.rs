@@ -181,11 +181,23 @@ impl PtyManager {
         // Remove from active processes
         let mut terminals = self.terminals.write().await;
         if let Some(entry_lock) = terminals.remove(&process_id) {
-            // Get write access to terminate
             let mut entry = entry_lock.write().await;
+            // Kill the OS child process if we have a PID
+            if let Some(pid) = entry.process.pid {
+                #[cfg(unix)]
+                {
+                    use nix::sys::signal::{kill, Signal};
+                    use nix::unistd::Pid;
+                    if let Err(e) = kill(Pid::from_raw(pid as i32), Signal::SIGTERM) {
+                        tracing::warn!("Failed to SIGTERM PID {}: {}", pid, e);
+                    }
+                }
+            }
             if entry.process.is_running() {
                 entry.process.mark_terminated(0);
             }
+            // Dropping `entry` closes the streams, which will cause the
+            // reader/writer threads to exit when their channels disconnect.
         }
 
         // Publish termination event
@@ -313,24 +325,33 @@ impl PtyManager {
     }
 
     /// Clean up terminated processes
+    ///
+    /// Checks both the process state flag and the output stream.
+    /// A disconnected output channel (reader EOF) indicates the process
+    /// has exited even if mark_terminated was never called.
     pub async fn cleanup_terminated(&self) -> usize {
         let terminals = self.terminals.read().await;
 
-        // Find terminated processes
         let mut terminated = Vec::new();
         for (id, entry_lock) in terminals.iter() {
-            let entry = entry_lock.read().await;
-            if !entry.process.is_running() {
+            let mut entry = entry_lock.write().await;
+            // Probe the output channel: a Disconnected error means the
+            // reader thread has exited (process died).
+            let stream_dead = matches!(
+                entry.streams.try_read_now(),
+                Err(crate::error::Error::PtyStreamDisconnected)
+            );
+            if !entry.process.is_running() || stream_dead {
+                if stream_dead && entry.process.is_running() {
+                    entry.process.mark_terminated(0);
+                }
                 terminated.push(id.clone());
             }
         }
 
         let count = terminated.len();
-
-        // Drop read lock before acquiring write lock
         drop(terminals);
 
-        // Remove terminated processes
         if !terminated.is_empty() {
             let mut terminals = self.terminals.write().await;
             for id in terminated {

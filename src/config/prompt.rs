@@ -46,8 +46,10 @@ impl GitPromptStatus {
                 status.modified = n.parse().unwrap_or(0);
             } else if let Some(n) = part.strip_prefix('?') {
                 status.untracked = n.parse().unwrap_or(0);
-            } else if part.contains('\u{2191}') || part.contains('\u{2193}') {
-                // ahead/behind arrows
+            } else if let Some(rest) = part.strip_prefix('\u{2191}') {
+                status.ahead = rest.parse().unwrap_or(0);
+            } else if let Some(rest) = part.strip_prefix('\u{2193}') {
+                status.behind = rest.parse().unwrap_or(0);
             } else if *part == "*" {
                 status.modified = 1;
             }
@@ -600,6 +602,11 @@ fn format_pwd(working_dir: &Path) -> String {
     let home = env::var("HOME")
         .or_else(|_| env::var("USERPROFILE"))
         .unwrap_or_else(|_| "/".to_string());
+
+    // Don't substitute ~ when HOME is root
+    if home == "/" || home.is_empty() {
+        return working_dir.display().to_string();
+    }
 
     if working_dir == Path::new(&home) {
         return "~".to_string();

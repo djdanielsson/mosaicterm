@@ -19,6 +19,13 @@
 
 use tracing::{info, warn};
 
+fn sanitize_metadata(meta: &str) -> String {
+    meta.chars()
+        .filter(|c| !c.is_control())
+        .take(500)
+        .collect()
+}
+
 /// Security audit event types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecurityEvent {
@@ -83,7 +90,11 @@ pub fn log_security_event(event: SecurityEvent, metadata: Option<&str>) {
     let event_desc = event.description();
 
     let log_message = if let Some(meta) = metadata {
-        format!("🔒 SECURITY AUDIT: {} | {}", event_desc, meta)
+        format!(
+            "🔒 SECURITY AUDIT: {} | {}",
+            event_desc,
+            sanitize_metadata(meta)
+        )
     } else {
         format!("🔒 SECURITY AUDIT: {}", event_desc)
     };

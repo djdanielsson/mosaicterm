@@ -217,7 +217,9 @@ impl ContextDetector {
         // Kubernetes
         if let Some(kube) = env.get("KUBECONFIG") {
             if !kube.is_empty() {
-                let ctx_name = Path::new(kube)
+                // KUBECONFIG can be colon-separated; use first path
+                let first_path = kube.split(':').next().unwrap_or(kube);
+                let ctx_name = Path::new(first_path)
                     .file_stem()
                     .and_then(|n| n.to_str())
                     .unwrap_or("active")

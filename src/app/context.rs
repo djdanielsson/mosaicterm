@@ -146,10 +146,10 @@ fn parse_env_output(output: &str) -> HashMap<String, String> {
         if let Some((key, value)) = line.split_once('=') {
             // Only add non-empty values
             if !value.is_empty() {
-                info!("Found env var: {}={}", key, value);
+                debug!("Found env var: {}", key);
                 env.insert(key.to_string(), value.to_string());
             } else {
-                info!("Skipping empty env var: {}", key);
+                debug!("Skipping empty env var: {}", key);
             }
         }
     }

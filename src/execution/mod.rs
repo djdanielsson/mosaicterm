@@ -39,7 +39,6 @@ pub const DEFAULT_DIRECT_EXECUTION_COMMANDS: &[&str] = &[
     "basename",
     "dirname",
     "realpath",
-    "env",
     "printenv",
     "hostname",
     "id",

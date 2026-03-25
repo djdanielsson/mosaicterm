@@ -90,7 +90,12 @@ impl SshPromptOverlay {
     pub fn show(&mut self, prompt_type: SshPromptType, message: String) {
         self.active = true;
         self.prompt_type = prompt_type;
-        self.prompt_message = message;
+        // Sanitize remote-controlled message: strip control chars, limit length
+        self.prompt_message = message
+            .chars()
+            .filter(|c| !c.is_control() || *c == '\n')
+            .take(500)
+            .collect();
         // Securely clear and zero previous input from memory
         self.input_buffer.zeroize();
         self.input_buffer.clear();
@@ -126,9 +131,10 @@ impl SshPromptOverlay {
     pub fn take_input(&mut self) -> Option<String> {
         if self.should_submit {
             self.should_submit = false;
-            // Take ownership of input, then zero the original buffer
+            // Move input to caller. Note: zeroize of the moved allocation
+            // is the caller's responsibility. We clear our local buffer.
             let input = std::mem::take(&mut self.input_buffer);
-            self.input_buffer.zeroize(); // Zero the memory where the password was
+            self.input_buffer.zeroize();
             Some(input)
         } else {
             None
@@ -187,7 +193,11 @@ impl SshPromptOverlay {
                     ui.label(egui::RichText::new("🔐").size(24.0));
 
                     ui.vertical(|ui| {
-                        // Prompt message - wrap long text
+                        ui.label(
+                            egui::RichText::new("Remote server message:")
+                                .color(egui::Color32::from_rgb(150, 150, 170))
+                                .small(),
+                        );
                         let message = self.prompt_message.trim();
                         ui.add(
                             egui::Label::new(

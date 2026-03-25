@@ -32,6 +32,9 @@ pub enum Error {
     /// Failed to read from PTY
     PtyReadFailed { reason: String },
 
+    /// PTY output stream disconnected (sender closed)
+    PtyStreamDisconnected,
+
     /// PTY streams not found
     PtyStreamsNotFound { handle_id: String },
 
@@ -165,6 +168,9 @@ impl fmt::Display for Error {
             }
             Error::PtyReadFailed { reason } => {
                 write!(f, "Failed to read from PTY: {}", reason)
+            }
+            Error::PtyStreamDisconnected => {
+                write!(f, "PTY output stream disconnected")
             }
             Error::PtyStreamsNotFound { handle_id } => {
                 write!(f, "PTY streams for '{}' not found", handle_id)

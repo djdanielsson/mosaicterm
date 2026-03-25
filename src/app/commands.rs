@@ -11,8 +11,14 @@ use mosaicterm::config::Config;
 /// Extract the command name from a command line
 ///
 /// Returns the first word of the command, which is typically the program name.
+/// Strips shell prefix builtins like `builtin` and `command`.
 pub fn get_command_name(command: &str) -> String {
-    command.split_whitespace().next().unwrap_or("").to_string()
+    let mut parts = command.split_whitespace();
+    match parts.next() {
+        Some("builtin" | "command") => parts.next().unwrap_or("").to_string(),
+        Some(cmd) => cmd.to_string(),
+        None => String::new(),
+    }
 }
 
 /// Check if a command is a TUI app that should open in fullscreen overlay
@@ -95,7 +101,14 @@ mod tests {
 
     #[test]
     fn test_get_command_name_with_env_var() {
-        assert_eq!(get_command_name("VAR=value command"), "VAR=value");
+        assert_eq!(get_command_name("VAR=value mycommand"), "VAR=value");
+    }
+
+    #[test]
+    fn test_get_command_name_strips_builtin_prefix() {
+        assert_eq!(get_command_name("builtin cd /home"), "cd");
+        assert_eq!(get_command_name("command ls -la"), "ls");
+        assert_eq!(get_command_name("builtin"), "");
     }
 
     // ---- is_cd_command tests ----

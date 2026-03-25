@@ -9,7 +9,6 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::mpsc::channel;
 use std::thread;
-use tokio::sync::mpsc::unbounded_channel;
 
 use super::streams::PtyStreams;
 use crate::error::{Error, Result};
@@ -62,7 +61,7 @@ pub async fn spawn_pty_process(
         })?;
 
     // Get the PID
-    let pid = child.process_id().unwrap_or(1);
+    let pid = child.process_id();
 
     // Create PTY process model with working directory
     let mut pty_process = if let Some(dir) = working_directory {
@@ -70,7 +69,9 @@ pub async fn spawn_pty_process(
     } else {
         PtyProcess::new(command.to_string(), args.to_vec())
     };
-    pty_process.mark_started(pid);
+    if let Some(p) = pid {
+        pty_process.mark_started(p);
+    }
 
     // Create streams wrapper
     let streams = create_pty_streams(pair)?;
@@ -95,7 +96,7 @@ fn create_pty_streams(pair: PtyPair) -> Result<PtyStreams> {
         })?;
 
     // Channel: PTY output -> async consumer
-    let (tx_async_out, rx_async_out) = unbounded_channel::<Vec<u8>>();
+    let (tx_async_out, rx_async_out) = tokio::sync::mpsc::channel::<Vec<u8>>(65536);
     // Channel: async producer (stdin) -> PTY writer thread
     let (tx_stdin, rx_stdin) = channel::<Vec<u8>>();
 
@@ -116,7 +117,7 @@ fn create_pty_streams(pair: PtyPair) -> Result<PtyStreams> {
                     consecutive_errors = 0; // Reset error counter on success
 
                     // Send data to async channel
-                    if tx_async_out.send(buf[..n].to_vec()).is_err() {
+                    if tx_async_out.blocking_send(buf[..n].to_vec()).is_err() {
                         debug!("PTY read: receiver dropped, stopping reader thread");
                         break;
                     }

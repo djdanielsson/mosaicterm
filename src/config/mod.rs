@@ -415,12 +415,14 @@ impl RuntimeConfig {
             tracing::warn!("Failed to apply theme '{}': {}", config.ui.theme_name, e);
         }
 
-        Ok(Self {
+        let runtime_config = Self {
             config,
             theme_manager,
             shell_manager,
             config_path: Some(path.to_path_buf()),
-        })
+        };
+        runtime_config.validate()?;
+        Ok(runtime_config)
     }
 
     /// Save current configuration
@@ -514,6 +516,16 @@ impl RuntimeConfig {
             if binding.key.trim().is_empty() {
                 return Err(format!("Empty key binding for action: {}", action).into());
             }
+        }
+
+        if self.config.ui.scrollback_lines > 10_000_000 {
+            return Err(
+                format!(
+                    "scrollback_lines {} exceeds maximum (10000000)",
+                    self.config.ui.scrollback_lines
+                )
+                .into(),
+            );
         }
 
         Ok(())

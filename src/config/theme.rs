@@ -641,7 +641,7 @@ impl ThemeManager {
 
     /// Remove a theme
     pub fn remove_theme(&mut self, theme_name: &str) -> Result<()> {
-        if theme_name.starts_with("default-") {
+        if theme_name.starts_with("default-") || theme_name == "high-contrast" {
             return Err(Error::CannotRemoveBuiltInTheme {
                 theme_name: theme_name.to_string(),
             });
@@ -725,7 +725,10 @@ impl ThemeManager {
         let mut style = (*ctx.style()).clone();
 
         // Set overall theme mode
-        style.visuals.dark_mode = matches!(theme.name.as_str(), "default-dark" | "high-contrast");
+        style.visuals.dark_mode = matches!(
+            theme.name.as_str(),
+            "Default Dark" | "High Contrast" | "default-dark" | "high-contrast"
+        );
 
         // Apply background colors
         style.visuals.window_fill = theme.colors.background.primary.to_egui();

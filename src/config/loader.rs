@@ -303,6 +303,16 @@ impl ConfigLoader {
             });
         }
 
+        if config.ui.scrollback_lines > 10_000_000 {
+            return Err(Error::ConfigValidationFailed {
+                field: "ui.scrollback_lines".to_string(),
+                reason: format!(
+                    "scrollback_lines {} exceeds maximum (10000000)",
+                    config.ui.scrollback_lines
+                ),
+            });
+        }
+
         // Terminal validation
         if config.terminal.shell_path.as_os_str().is_empty() {
             return Err(Error::ConfigValidationFailed {
