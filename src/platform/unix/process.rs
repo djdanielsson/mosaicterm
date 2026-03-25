@@ -36,16 +36,17 @@ impl ProcessTreeOps for UnixProcessTree {
     }
 
     fn kill_process_tree(&self, root_pid: u32) -> Result<()> {
-        // Get all descendants recursively
         let descendants = self.get_all_descendant_pids(root_pid)?;
 
-        // Kill all descendants first (children before parents)
         for pid in descendants.iter().rev() {
-            let _ = kill(Pid::from_raw(*pid as i32), NixSignal::SIGTERM);
+            if let Err(e) = kill(Pid::from_raw(*pid as i32), NixSignal::SIGTERM) {
+                tracing::warn!("Failed to kill descendant PID {}: {}", pid, e);
+            }
         }
 
-        // Finally kill the root process
-        let _ = kill(Pid::from_raw(root_pid as i32), NixSignal::SIGTERM);
+        if let Err(e) = kill(Pid::from_raw(root_pid as i32), NixSignal::SIGTERM) {
+            tracing::warn!("Failed to kill root PID {}: {}", root_pid, e);
+        }
 
         Ok(())
     }

@@ -16,6 +16,19 @@ pub struct TmuxSessionManager {
 }
 
 impl TmuxSessionManager {
+    fn validate_session_name(name: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+        {
+            return Err("Invalid tmux session name: contains disallowed characters".into());
+        }
+        if name.len() > 128 {
+            return Err("Tmux session name too long".into());
+        }
+        Ok(())
+    }
+
     pub fn new() -> Self {
         Self {
             session_prefix: "mosaicterm-".to_string(),
@@ -92,6 +105,7 @@ impl TmuxSessionManager {
     }
 
     pub fn kill_session(&self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+        Self::validate_session_name(name)?;
         let output = Command::new("tmux")
             .args(["kill-session", "-t", name])
             .output()?;
@@ -117,6 +131,7 @@ impl TmuxSessionManager {
     }
 
     pub fn send_keys(&self, session: &str, keys: &str) -> Result<(), Box<dyn std::error::Error>> {
+        Self::validate_session_name(session)?;
         let output = Command::new("tmux")
             .args(["send-keys", "-t", session, keys, "Enter"])
             .output()?;
@@ -129,6 +144,7 @@ impl TmuxSessionManager {
     }
 
     pub fn capture_pane(&self, session: &str) -> Result<String, Box<dyn std::error::Error>> {
+        Self::validate_session_name(session)?;
         let output = Command::new("tmux")
             .args(["capture-pane", "-p", "-S", "-", "-t", session])
             .output()?;
@@ -146,6 +162,7 @@ impl TmuxSessionManager {
         session: &str,
         limit: usize,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        Self::validate_session_name(session)?;
         let output = Command::new("tmux")
             .args([
                 "set-option",
@@ -168,6 +185,7 @@ impl TmuxSessionManager {
         session: &str,
         vertical: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        Self::validate_session_name(session)?;
         let mut args = vec!["split-window", "-t", session];
         if vertical {
             args.push("-v");
@@ -185,6 +203,7 @@ impl TmuxSessionManager {
     }
 
     pub fn save_layout(&self, session: &str) -> Result<String, Box<dyn std::error::Error>> {
+        Self::validate_session_name(session)?;
         let output = Command::new("tmux")
             .args(["display-message", "-t", session, "-p", "#{window_layout}"])
             .output()?;
@@ -202,6 +221,7 @@ impl TmuxSessionManager {
         session: &str,
         layout: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        Self::validate_session_name(session)?;
         let output = Command::new("tmux")
             .args(["select-layout", "-t", session, layout])
             .output()?;

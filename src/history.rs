@@ -92,6 +92,7 @@ impl HistoryManager {
         for entry in &self.history {
             writeln!(file, "{}", entry)?;
         }
+        Self::set_secure_permissions(&self.history_file)?;
         Ok(())
     }
 
@@ -118,6 +119,8 @@ impl HistoryManager {
             .append(true)
             .open(&self.history_file)?;
         writeln!(file, "{}", command)?;
+
+        Self::set_secure_permissions(&self.history_file)?;
 
         Ok(())
     }
@@ -198,6 +201,7 @@ impl HistoryManager {
     pub fn clear(&mut self) -> Result<()> {
         self.history.clear();
         File::create(&self.history_file)?;
+        Self::set_secure_permissions(&self.history_file)?;
         Ok(())
     }
 
@@ -229,7 +233,7 @@ impl HistoryManager {
 impl Default for HistoryManager {
     fn default() -> Self {
         Self::new().unwrap_or_else(|_| Self {
-            history_file: PathBuf::from(".mosaicterm_history"),
+            history_file: PathBuf::from("/dev/null"),
             history: VecDeque::new(),
             max_size: MAX_HISTORY_ENTRIES,
         })

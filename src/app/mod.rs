@@ -523,6 +523,7 @@ fn find_app_icon_path() -> Option<String> {
 /// Set up the native macOS menu bar with About and Dev menu items.
 /// This adds items to the existing native app menu that macOS provides.
 #[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
 pub fn setup_native_menu_bar() {
     #[allow(unused_imports)]
     use cocoa::appkit::{NSApp, NSMenu, NSMenuItem};
@@ -1553,7 +1554,9 @@ impl MosaicTermApp {
             Error::PtyReaderCloneFailed { .. } | Error::PtyWriterTakeFailed { .. } => {
                 "Terminal I/O setup failed. Try restarting the application.".to_string()
             }
-            Error::PtyInputSendFailed { .. } | Error::PtyReadFailed { .. } => {
+            Error::PtyInputSendFailed { .. }
+            | Error::PtyReadFailed { .. }
+            | Error::PtyStreamDisconnected => {
                 "Failed to communicate with terminal. Try restarting.".to_string()
             }
 
@@ -2056,9 +2059,10 @@ impl MosaicTermApp {
                     // Close menu on any click outside
                     if ctx.input(|i| i.pointer.any_click()) {
                         if let Some(mouse_pos) = ctx.input(|i| i.pointer.hover_pos()) {
-                            // Check if click is outside the menu area (rough approximation)
+                            // Use a generous rect that covers the menu including padding/shadow.
+                            // The menu has 5-6 buttons with separators; 220x250 is a safe upper bound.
                             let menu_rect =
-                                egui::Rect::from_min_size(menu_pos, egui::vec2(150.0, 120.0));
+                                egui::Rect::from_min_size(menu_pos, egui::vec2(220.0, 250.0));
                             if !menu_rect.contains(mouse_pos) {
                                 self.command_blocks
                                     .interaction_state_mut()
@@ -2925,7 +2929,10 @@ impl MosaicTermApp {
                             self.ghost_completion = None;
 
                             // Handle the command (non-blocking)
-                            let _ = executor::block_on(self.handle_command_input(command));
+                            if let Err(e) = executor::block_on(self.handle_command_input(command)) {
+                                error!("Command execution failed: {}", e);
+                                self.set_status_message(Some(format!("Error: {}", e)));
+                            }
                         }
                     }
                 }

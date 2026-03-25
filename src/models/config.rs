@@ -701,10 +701,10 @@ impl<'de> Deserialize<'de> for Color {
                 }
 
                 Ok(Color {
-                    r: r.unwrap_or(0.5),
-                    g: g.unwrap_or(0.5),
-                    b: b.unwrap_or(0.5),
-                    a: a.unwrap_or(1.0),
+                    r: r.unwrap_or(0.5).clamp(0.0, 1.0),
+                    g: g.unwrap_or(0.5).clamp(0.0, 1.0),
+                    b: b.unwrap_or(0.5).clamp(0.0, 1.0),
+                    a: a.unwrap_or(1.0).clamp(0.0, 1.0),
                 })
             }
         }

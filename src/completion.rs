@@ -352,7 +352,13 @@ impl CompletionProvider {
         // Handle tilde expansion
         let expanded_path = if prefix.starts_with('~') {
             if let Some(home) = env::var_os("HOME") {
-                PathBuf::from(home).join(&prefix[2..])
+                if prefix == "~" {
+                    PathBuf::from(home)
+                } else if let Some(rest) = prefix.strip_prefix("~/") {
+                    PathBuf::from(home).join(rest)
+                } else {
+                    path.to_path_buf()
+                }
             } else {
                 path.to_path_buf()
             }
