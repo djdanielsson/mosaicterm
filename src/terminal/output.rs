@@ -210,12 +210,8 @@ impl OutputProcessor {
 
     /// Process complete ANSI sequence
     fn process_ansi_sequence(&mut self) -> Result<()> {
-        if let Some(code) = self
-            .ansi_parser
-            .parse(&self.current_line)?
-            .ansi_codes
-            .first()
-        {
+        let parsed = self.ansi_parser.parse(&self.current_line)?;
+        for code in &parsed.ansi_codes {
             self.current_ansi_codes.push(code.clone());
         }
 

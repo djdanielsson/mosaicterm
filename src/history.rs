@@ -4,7 +4,7 @@
 //! and provides search functionality (fuzzy or regex-based).
 
 use std::collections::VecDeque;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
@@ -113,14 +113,8 @@ impl HistoryManager {
             self.history.pop_front();
         }
 
-        // Append to file (for persistence across sessions)
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.history_file)?;
-        writeln!(file, "{}", command)?;
-
-        Self::set_secure_permissions(&self.history_file)?;
+        // Rewrite the full deduplicated history to keep file and memory in sync
+        self.save()?;
 
         Ok(())
     }
@@ -232,10 +226,17 @@ impl HistoryManager {
 
 impl Default for HistoryManager {
     fn default() -> Self {
-        Self::new().unwrap_or_else(|_| Self {
-            history_file: PathBuf::from("/dev/null"),
-            history: VecDeque::new(),
-            max_size: MAX_HISTORY_ENTRIES,
+        Self::new().unwrap_or_else(|_| {
+            let fallback_path = if cfg!(windows) {
+                PathBuf::from("NUL")
+            } else {
+                PathBuf::from("/dev/null")
+            };
+            Self {
+                history_file: fallback_path,
+                history: VecDeque::new(),
+                max_size: MAX_HISTORY_ENTRIES,
+            }
         })
     }
 }

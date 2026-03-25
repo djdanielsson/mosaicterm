@@ -171,19 +171,7 @@ pub fn init() -> Result<RuntimeConfig> {
     // Step 1: Validate system requirements
     validate_system_requirements()?;
 
-    // Step 2: Load configuration with fallback
-    let config = match ConfigLoader::load() {
-        Ok(config) => {
-            info!("✅ Configuration loaded from default location");
-            config
-        }
-        Err(e) => {
-            warn!("Failed to load configuration: {}. Using defaults", e);
-            Config::default()
-        }
-    };
-
-    // Step 3: Create runtime configuration
+    // Step 2: Create runtime configuration (loads config internally)
     let runtime_config = match RuntimeConfig::new() {
         Ok(config) => {
             info!("✅ Runtime configuration created");
@@ -198,8 +186,8 @@ pub fn init() -> Result<RuntimeConfig> {
         }
     };
 
-    // Step 4: Initialize core components
-    initialize_core_components(&config)?;
+    // Step 3: Initialize core components using the loaded config
+    initialize_core_components(runtime_config.config())?;
 
     info!("🎨 {} initialization complete", NAME);
     Ok(runtime_config)

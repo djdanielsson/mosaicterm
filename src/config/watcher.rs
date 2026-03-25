@@ -170,16 +170,29 @@ impl ConfigWatcher {
         };
 
         // Validate before accepting
-        let loader = crate::config::loader::ConfigLoader::new();
-        // Basic validation: font_size > 0, shell_path non-empty, etc.
-        // (ConfigLoader::validate_config is private, so replicate key checks)
         if new_config.ui.font_size == 0 || new_config.ui.font_size > 72 {
             return Err(crate::Error::ConfigValidationFailed {
                 field: "ui.font_size".to_string(),
                 reason: "Font size must be between 1 and 72".to_string(),
             });
         }
-        drop(loader);
+        if !new_config.terminal.shell_path.as_os_str().is_empty()
+            && !new_config.terminal.shell_path.exists()
+        {
+            return Err(crate::Error::ConfigValidationFailed {
+                field: "terminal.shell_path".to_string(),
+                reason: format!(
+                    "Shell path does not exist: {}",
+                    new_config.terminal.shell_path.display()
+                ),
+            });
+        }
+        if new_config.pty.buffer_size == 0 {
+            return Err(crate::Error::ConfigValidationFailed {
+                field: "pty.buffer_size".to_string(),
+                reason: "PTY buffer size must be greater than 0".to_string(),
+            });
+        }
 
         if let Ok(mut current) = self.current_config.lock() {
             *current = new_config.clone();

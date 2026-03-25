@@ -109,13 +109,14 @@ impl PtyEventBus {
     /// Subscribe to PTY events
     pub async fn subscribe(&self) -> PtyEventSubscription {
         let receiver = self.sender.subscribe();
+        let subscribers = Arc::clone(&self.active_subscribers);
         {
-            let mut count = self.active_subscribers.write().await;
+            let mut count = subscribers.write().await;
             *count += 1;
         }
         PtyEventSubscription {
             receiver,
-            active_subscribers: Arc::clone(&self.active_subscribers),
+            active_subscribers: subscribers,
         }
     }
 

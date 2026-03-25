@@ -413,7 +413,7 @@ impl ShellManager {
                 continue;
             }
 
-            // Parse simple variable assignments
+            // Parse simple variable assignments (only for non-export lines)
             if let Some(eq_pos) = line.find('=') {
                 let var_name = line[..eq_pos].trim();
                 let value_part = &line[eq_pos + 1..];
