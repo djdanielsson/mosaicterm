@@ -20,10 +20,7 @@ impl MemoryOps for UnixMemory {
                 .args(["-o", "rss=", "-p", &std::process::id().to_string()])
                 .output()
                 .map_err(|e| {
-                    Error::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Failed to run ps: {}", e),
-                    ))
+                    Error::Io(std::io::Error::other(format!("Failed to run ps: {}", e)))
                 })?;
 
             let memory_str = String::from_utf8(output.stdout).map_err(|e| {

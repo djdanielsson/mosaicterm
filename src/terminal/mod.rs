@@ -235,7 +235,7 @@ impl Terminal {
         // Validate command
         input::validation::validate_command(command)?;
 
-        // Use the session's tracked working directory instead of the process-global cwd
+        // Create command block using the session's working directory, not the process cwd
         let working_dir = self.state.session.working_directory.clone();
         let command_block = self
             .input_processor

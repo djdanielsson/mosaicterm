@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -172,7 +173,7 @@ jobs:
           cache-all-crates: true
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
   # Test coverage reporting
   coverage:

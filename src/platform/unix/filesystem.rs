@@ -35,12 +35,7 @@ impl FilesystemOps for UnixFilesystem {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .output()
-            .map_err(|e| {
-                Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to run which: {}", e),
-                ))
-            })?;
+            .map_err(|e| Error::Io(std::io::Error::other(format!("Failed to run which: {}", e))))?;
 
         if output.status.success() {
             let path_str = String::from_utf8(output.stdout).map_err(|e| {

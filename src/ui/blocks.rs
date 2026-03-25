@@ -334,7 +334,7 @@ impl CommandBlocks {
         if self
             .rendered_blocks
             .get(&block.id)
-            .map_or(true, |cached| cached.cache_key != cache_key)
+            .is_none_or(|cached| cached.cache_key != cache_key)
         {
             let mut rendered = self.render_command_block(block)?;
             rendered.cache_key = cache_key;
