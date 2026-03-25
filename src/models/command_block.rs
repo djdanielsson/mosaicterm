@@ -92,11 +92,20 @@ impl CommandBlock {
         self.status = ExecutionStatus::Running;
     }
 
-    /// Mark the command as completed successfully
+    /// Mark the command as completed successfully with exit code 0
     pub fn mark_completed(&mut self, execution_time: Duration) {
-        self.status = ExecutionStatus::Completed;
+        self.mark_completed_with_code(execution_time, 0);
+    }
+
+    /// Mark the command as completed with a specific exit code
+    pub fn mark_completed_with_code(&mut self, execution_time: Duration, exit_code: i32) {
+        self.status = if exit_code == 0 {
+            ExecutionStatus::Completed
+        } else {
+            ExecutionStatus::Failed
+        };
         self.execution_time = Some(execution_time);
-        self.exit_code = Some(0);
+        self.exit_code = Some(exit_code);
     }
 
     /// Mark the command as failed

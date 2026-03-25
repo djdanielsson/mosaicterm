@@ -441,6 +441,9 @@ impl ScrollableHistory {
 
     /// Scroll by a delta amount
     pub fn scroll_by(&mut self, delta: f32) {
+        if self.total_height <= 0.0 {
+            return;
+        }
         if self.smooth_scrolling {
             let target_pos = (self.scroll_position + delta / self.total_height).clamp(0.0, 1.0);
             self.animate_to_position(target_pos);

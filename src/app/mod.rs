@@ -247,6 +247,12 @@ impl ToolAvailability {
     }
 }
 
+/// Shell-quote a string using single quotes to prevent injection.
+/// Any embedded single quotes are escaped as `'\''`.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Search system font directories for a font matching `family_name`.
 /// Returns the raw TTF/OTF bytes if found, None otherwise.
 fn find_system_font(family_name: &str) -> Option<Vec<u8>> {
@@ -1098,7 +1104,9 @@ impl MosaicTermApp {
                         let query = parts[1..].join(" ");
                         if let Some(resolved) = Self::zoxide_query(&query) {
                             info!("zoxide resolved '{} {}' -> 'cd {}'", cmd, query, resolved);
-                            format!("cd {}", resolved)
+                            // Shell-quote the resolved path to prevent injection
+                            let quoted = shell_quote(&resolved);
+                            format!("cd {}", quoted)
                         } else {
                             warn!("zoxide found no match for '{}', passing through", query);
                             command

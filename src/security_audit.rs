@@ -131,7 +131,7 @@ pub fn log_ssh_session_end(duration_secs: u64) {
 pub fn log_auth_prompt(prompt_type: &str) {
     log_security_event(
         SecurityEvent::SshAuthPrompt,
-        Some(&format!("type={}", prompt_type)),
+        Some(&format!("type={}", sanitize_metadata(prompt_type))),
     );
 }
 

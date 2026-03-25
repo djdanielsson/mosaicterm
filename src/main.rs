@@ -213,15 +213,6 @@ fn main() -> Result<()> {
 
     // Run the application
     info!("🎨 Initializing GUI...");
-    println!("🚀 MOSAIC TERM GUI WINDOW SHOULD OPEN NOW!");
-    println!("   LOOK FOR A WINDOW TITLED 'MosaicTerm'");
-    println!("   You should see BRIGHT COLORED AREAS:");
-    println!("   - BLUE status bar at the top");
-    println!("   - GREEN command history area in the middle");
-    println!("   - RED command input area at the bottom");
-    println!("   - Large welcome message in the center");
-    println!("   - Bright colored rectangles around everything");
-    println!("   If you don't see these, the GUI window might be hidden!");
 
     if let Err(e) = eframe::run_native("MosaicTerm", native_options, Box::new(|_cc| Box::new(app)))
     {
