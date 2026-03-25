@@ -33,3 +33,8 @@ repos:
     rev: v1.44.0
     hooks:
       - id: typos
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.2
+    hooks:
+      - id: gitleaks

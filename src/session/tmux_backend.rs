@@ -46,6 +46,7 @@ impl TmuxSessionManager {
     }
 
     pub fn create_session(&self, name: &str) -> Result<String, Box<dyn std::error::Error>> {
+        Self::validate_session_name(name)?;
         let session_name = format!("{}{}", self.session_prefix, name);
         let output = Command::new("tmux")
             .args(["new-session", "-d", "-s", &session_name])

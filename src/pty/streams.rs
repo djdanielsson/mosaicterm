@@ -34,21 +34,23 @@ impl PtyStreams {
         Ok(())
     }
 
-    /// Read available data from PTY stdout/stderr
+    /// Read available data from PTY stdout/stderr.
+    /// Returns `Err(PtyStreamDisconnected)` when the channel is closed (EOF).
     pub async fn read(&mut self) -> Result<Vec<u8>> {
         match self.output_rx.recv().await {
             Some(bytes) => Ok(bytes),
-            None => Ok(Vec::new()),
+            None => Err(Error::PtyStreamDisconnected),
         }
     }
 
-    /// Read data with timeout
+    /// Read data with timeout.
+    /// Returns `Ok(Vec::new())` on timeout, propagates errors from `read()`.
     pub async fn read_with_timeout(&mut self, timeout_ms: u64) -> Result<Vec<u8>> {
         use tokio::time::{timeout, Duration};
         let duration = Duration::from_millis(timeout_ms);
         match timeout(duration, self.read()).await {
             Ok(result) => result,
-            Err(_) => Ok(Vec::new()), // Timeout
+            Err(_) => Ok(Vec::new()),
         }
     }
 

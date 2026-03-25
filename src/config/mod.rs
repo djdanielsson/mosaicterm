@@ -139,8 +139,8 @@ pub struct TerminalConfig {
 impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
-            shell_type: crate::models::ShellType::Bash,
-            shell_path: PathBuf::from("/bin/bash"),
+            shell_type: crate::models::ShellType::Zsh,
+            shell_path: PathBuf::from("/bin/zsh"),
             shell_args: vec!["--login".to_string(), "-i".to_string()],
             working_directory: None,
             dimensions: (120, 30),
@@ -706,7 +706,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.ui.font_family, "JetBrains Mono");
         assert_eq!(config.ui.font_size, 12);
-        assert_eq!(config.terminal.shell_type, crate::TerminalShellType::Bash);
+        assert_eq!(config.terminal.shell_type, crate::TerminalShellType::Zsh);
     }
 
     #[test]
