@@ -52,7 +52,7 @@ zeroize = "1.8"
 
 # macOS-specific dependencies (for native menu bar)
 [target.'cfg(target_os = "macos")'.dependencies]
-cocoa = "0.24"
+cocoa = "0.26"
 objc = "0.2"
 
 # Windows-specific dependencies
