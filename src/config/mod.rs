@@ -519,13 +519,11 @@ impl RuntimeConfig {
         }
 
         if self.config.ui.scrollback_lines > 10_000_000 {
-            return Err(
-                format!(
-                    "scrollback_lines {} exceeds maximum (10000000)",
-                    self.config.ui.scrollback_lines
-                )
-                .into(),
-            );
+            return Err(format!(
+                "scrollback_lines {} exceeds maximum (10000000)",
+                self.config.ui.scrollback_lines
+            )
+            .into());
         }
 
         Ok(())

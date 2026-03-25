@@ -17,10 +17,7 @@ pub struct PtyStreams {
 
 impl PtyStreams {
     /// Create new PTY streams from channels
-    pub fn from_channels(
-        output_rx: Receiver<Vec<u8>>,
-        input_tx: StdSender<Vec<u8>>,
-    ) -> Self {
+    pub fn from_channels(output_rx: Receiver<Vec<u8>>, input_tx: StdSender<Vec<u8>>) -> Self {
         Self {
             output_rx,
             input_tx,

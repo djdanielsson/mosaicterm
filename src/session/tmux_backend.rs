@@ -21,7 +21,7 @@ impl TmuxSessionManager {
             .chars()
             .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
         {
-            return Err(format!("Invalid tmux session name: contains disallowed characters").into());
+            return Err("Invalid tmux session name: contains disallowed characters".into());
         }
         if name.len() > 128 {
             return Err("Tmux session name too long".into());

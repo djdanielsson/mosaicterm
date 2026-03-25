@@ -523,6 +523,7 @@ fn find_app_icon_path() -> Option<String> {
 /// Set up the native macOS menu bar with About and Dev menu items.
 /// This adds items to the existing native app menu that macOS provides.
 #[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
 pub fn setup_native_menu_bar() {
     #[allow(unused_imports)]
     use cocoa::appkit::{NSApp, NSMenu, NSMenuItem};

@@ -20,10 +20,7 @@
 use tracing::{info, warn};
 
 fn sanitize_metadata(meta: &str) -> String {
-    meta.chars()
-        .filter(|c| !c.is_control())
-        .take(500)
-        .collect()
+    meta.chars().filter(|c| !c.is_control()).take(500).collect()
 }
 
 /// Security audit event types

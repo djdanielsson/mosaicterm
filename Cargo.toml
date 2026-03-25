@@ -150,6 +150,9 @@ path = "tests/proptest/test_command_validation_props.rs"
 name = "test_output_processing_props"
 path = "tests/proptest/test_output_processing_props.rs"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
+
 [profile.dev]
 opt-level = 1
 debug = true

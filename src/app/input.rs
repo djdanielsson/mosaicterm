@@ -354,7 +354,10 @@ impl MosaicTermApp {
         let msg = if let Some(tree) = &mut self.pane_tree {
             let active_id = tree.active_id().to_string();
             if let Some(new_id) = tree.split(&active_id, axis, None) {
-                info!("Split pane: {} -> new pane {} (terminal will be initialized asynchronously)", active_id, new_id);
+                info!(
+                    "Split pane: {} -> new pane {} (terminal will be initialized asynchronously)",
+                    active_id, new_id
+                );
 
                 // TODO(#split-pane-terminal): New pane needs its own Terminal + PTY.
                 // Currently the pane is created without a Terminal instance.
