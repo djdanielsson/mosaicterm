@@ -257,4 +257,16 @@ mod tests {
 
         assert_eq!(processor.expand_tilde("~"), "/home/tester");
     }
+
+    #[test]
+    fn test_tilde_edge_cases_preserved() {
+        let mut processor = CommandProcessor::new(ShellType::Bash);
+        processor
+            .environment
+            .insert("HOME".to_string(), "/home/tester".to_string());
+
+        assert_eq!(processor.expand_tilde("~\t"), "~\t");
+        assert_eq!(processor.expand_tilde("~~/"), "~~/");
+        assert_eq!(processor.expand_tilde("abc~def"), "abc~def");
+    }
 }
