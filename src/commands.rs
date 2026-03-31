@@ -117,9 +117,7 @@ impl CommandProcessor {
 
         // Handle tilde expansion
         if command.starts_with('~') {
-            if let Some(home) = self.environment.get("HOME") {
-                processed = command.replacen('~', home, 1);
-            }
+            processed = self.expand_tilde(command);
         }
 
         Ok(processed)
@@ -157,6 +155,10 @@ impl CommandProcessor {
     /// Expand tilde in path
     pub fn expand_tilde(&self, path: &str) -> String {
         if path.starts_with('~') {
+            // Keep "~user" style paths untouched; only expand bare "~" and "~/".
+            if path.len() > 1 && !path.starts_with("~/") {
+                return path.to_string();
+            }
             if let Some(home) = self.environment.get("HOME") {
                 return path.replacen('~', home, 1);
             }
@@ -234,5 +236,37 @@ mod tests {
             // Just verify it doesn't crash
             assert!(!expanded.is_empty());
         }
+    }
+
+    #[test]
+    fn test_tilde_user_not_expanded() {
+        let mut processor = CommandProcessor::new(ShellType::Bash);
+        processor
+            .environment
+            .insert("HOME".to_string(), "/home/tester".to_string());
+
+        assert_eq!(processor.expand_tilde("~root/docs"), "~root/docs");
+    }
+
+    #[test]
+    fn test_bare_tilde_expands_with_home() {
+        let mut processor = CommandProcessor::new(ShellType::Bash);
+        processor
+            .environment
+            .insert("HOME".to_string(), "/home/tester".to_string());
+
+        assert_eq!(processor.expand_tilde("~"), "/home/tester");
+    }
+
+    #[test]
+    fn test_tilde_edge_cases_preserved() {
+        let mut processor = CommandProcessor::new(ShellType::Bash);
+        processor
+            .environment
+            .insert("HOME".to_string(), "/home/tester".to_string());
+
+        assert_eq!(processor.expand_tilde("~\t"), "~\t");
+        assert_eq!(processor.expand_tilde("~~/"), "~~/");
+        assert_eq!(processor.expand_tilde("abc~def"), "abc~def");
     }
 }
