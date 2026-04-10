@@ -10,6 +10,21 @@ use crate::terminal::ansi_parser::{AnsiParser, ParsedText};
 use chrono::{DateTime, Utc};
 use std::collections::VecDeque;
 
+/// Tracks what kind of escape sequence we are accumulating.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum EscapeState {
+    /// Not inside any escape sequence.
+    None,
+    /// Saw ESC, waiting for the next byte to determine sequence type.
+    Escape,
+    /// Inside a CSI sequence: ESC [ ... (terminated by an ASCII letter).
+    Csi,
+    /// Inside an OSC sequence: ESC ] ... (terminated by BEL or ST).
+    Osc,
+    /// Saw ESC inside an OSC sequence (possible ST = ESC \).
+    OscEscapeSeen,
+}
+
 /// Output processor for terminal streams
 #[derive(Debug)]
 pub struct OutputProcessor {
@@ -25,8 +40,11 @@ pub struct OutputProcessor {
     current_ansi_codes: Vec<AnsiCode>,
     /// Line number counter
     line_counter: usize,
-    /// Whether we're in the middle of processing ANSI sequences
-    in_ansi_sequence: bool,
+    /// State machine for escape sequence parsing
+    escape_state: EscapeState,
+    /// Buffer for the escape sequence currently being accumulated (so it can
+    /// be discarded or handed to the ANSI parser once complete).
+    escape_buf: String,
     /// Maximum buffer size
     max_buffer_size: usize,
 }
@@ -61,8 +79,9 @@ impl OutputProcessor {
             current_line: String::new(),
             current_ansi_codes: Vec::new(),
             line_counter: 0,
-            in_ansi_sequence: false,
-            max_buffer_size: 10 * 1024 * 1024, // 10MB - prevents excessive memory use
+            escape_state: EscapeState::None,
+            escape_buf: String::new(),
+            max_buffer_size: 10 * 1024 * 1024, // 10MB
         }
     }
 }
@@ -76,10 +95,9 @@ impl Default for OutputProcessor {
 impl OutputProcessor {
     /// Create with custom buffer size
     pub fn with_buffer_size(max_buffer_size: usize) -> Self {
-        Self {
-            max_buffer_size,
-            ..Self::new()
-        }
+        let mut p = Self::new();
+        p.max_buffer_size = max_buffer_size;
+        p
     }
 
     /// Drain and return only the fully processed lines accumulated so far,
@@ -115,160 +133,184 @@ impl OutputProcessor {
         }
     }
 
-    /// Process raw data bytes
+    /// Process raw data bytes using a state machine that handles CSI, OSC,
+    /// and other escape sequence families.
     fn process_data(
         &mut self,
         data: &[u8],
         timestamp: DateTime<Utc>,
         stream_type: StreamType,
     ) -> Result<()> {
-        // Convert bytes to string, handling encoding errors
         let text = String::from_utf8_lossy(data);
 
         let chars: Vec<char> = text.chars().collect();
-        for (i, ch) in chars.iter().enumerate() {
-            match ch {
-                '\n' => self.process_newline(timestamp, stream_type)?,
-                '\r' => {
-                    // Only process carriage return if it's NOT followed by \n (i.e., not part of \r\n)
-                    let next_is_newline = i + 1 < chars.len() && chars[i + 1] == '\n';
-                    if !next_is_newline {
-                        self.process_carriage_return()?;
-                    }
-                    // If it's \r\n, just skip the \r and let \n be processed
-                }
-                '\x1b' => {
-                    self.in_ansi_sequence = true;
-                    self.current_line.push(*ch);
-                }
-                ch if self.in_ansi_sequence => {
-                    self.current_line.push(*ch);
-                    if self.is_ansi_sequence_complete(&self.current_line) {
-                        self.process_ansi_sequence()?;
-                    }
-                }
-                ch => {
-                    self.current_line.push(*ch);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Process newline character
-    fn process_newline(
-        &mut self,
-        timestamp: DateTime<Utc>,
-        _stream_type: StreamType,
-    ) -> Result<()> {
-        if !self.current_line.is_empty() {
-            // Parse ANSI codes if present
-            let parsed = self.ansi_parser.parse(&self.current_line)?;
-
-            let mut output_line = OutputLine::with_ansi_codes(
-                parsed.clean_text,
-                parsed.ansi_codes,
-                self.line_counter,
-            );
-            // Override timestamp with the one passed in
-            output_line.timestamp = timestamp;
-
-            self.processed_lines.push_back(output_line);
-            self.line_counter += 1;
-        }
-
-        // Start new line
-        self.current_line.clear();
-        self.current_ansi_codes.clear();
-        self.in_ansi_sequence = false;
-
-        Ok(())
-    }
-
-    /// Process carriage return
-    fn process_carriage_return(&mut self) -> Result<()> {
-        // For now, treat CR as line clear (could be enhanced)
-        self.current_line.clear();
-        self.current_ansi_codes.clear();
-        self.in_ansi_sequence = false;
-        Ok(())
-    }
-
-    /// Check if ANSI sequence is complete
-    fn is_ansi_sequence_complete(&self, sequence: &str) -> bool {
-        if !sequence.starts_with('\x1b') {
-            return false;
-        }
-
-        // Check for various ANSI sequence terminators
-        sequence
-            .chars()
-            .last()
-            .is_some_and(|c| matches!(c, 'm' | 'G' | 'H' | 'J' | 'K' | 'A' | 'B' | 'C' | 'D'))
-    }
-
-    /// Process complete ANSI sequence
-    fn process_ansi_sequence(&mut self) -> Result<()> {
-        let parsed = self.ansi_parser.parse(&self.current_line)?;
-        for code in &parsed.ansi_codes {
-            self.current_ansi_codes.push(code.clone());
-        }
-
-        // Remove the ANSI sequence from current line
-        if let Some(end_pos) = self.find_ansi_sequence_end(&self.current_line) {
-            self.current_line = self.current_line[end_pos..].to_string();
-        }
-
-        self.in_ansi_sequence = false;
-        Ok(())
-    }
-
-    /// Find the end position of ANSI sequence
-    fn find_ansi_sequence_end(&self, text: &str) -> Option<usize> {
-        let bytes = text.as_bytes();
+        let len = chars.len();
         let mut i = 0;
 
-        while i < bytes.len() {
-            if bytes[i] == b'\x1b' {
-                // Found escape sequence start
-                i += 1;
-                if i < bytes.len() && bytes[i] == b'[' {
-                    // CSI sequence
-                    i += 1;
-                    while i < bytes.len() {
-                        let ch = bytes[i];
-                        if ch.is_ascii_uppercase() || ch.is_ascii_lowercase() {
-                            return Some(i + 1);
+        while i < len {
+            let ch = chars[i];
+
+            match self.escape_state {
+                // ----- Normal text -----
+                EscapeState::None => match ch {
+                    '\x1b' => {
+                        self.escape_state = EscapeState::Escape;
+                        self.escape_buf.clear();
+                        self.escape_buf.push(ch);
+                    }
+                    '\n' => self.emit_line(timestamp, stream_type)?,
+                    '\r' => {
+                        let next_is_newline = i + 1 < len && chars[i + 1] == '\n';
+                        if !next_is_newline {
+                            self.current_line.clear();
+                            self.current_ansi_codes.clear();
                         }
-                        i += 1;
+                    }
+                    '\x07' => {} // BEL outside of escape — ignore
+                    _ => self.current_line.push(ch),
+                },
+
+                // ----- Saw ESC, decide which family -----
+                EscapeState::Escape => {
+                    self.escape_buf.push(ch);
+                    match ch {
+                        '[' => self.escape_state = EscapeState::Csi,
+                        ']' => self.escape_state = EscapeState::Osc,
+                        // Two-character sequences: ESC ( ESC ) ESC = ESC > ESC M etc.
+                        '(' | ')' | '*' | '+' | '=' | '>' | 'M' | '7' | '8' | 'c' | 'D' | 'E'
+                        | 'H' | 'N' | 'O' => {
+                            // Discard the sequence
+                            self.escape_state = EscapeState::None;
+                            self.escape_buf.clear();
+                        }
+                        _ => {
+                            // Unknown single-char escape — discard
+                            self.escape_state = EscapeState::None;
+                            self.escape_buf.clear();
+                        }
                     }
                 }
+
+                // ----- CSI sequence: ESC [ params letter -----
+                EscapeState::Csi => {
+                    self.escape_buf.push(ch);
+                    if ch.is_ascii_alphabetic() || ch == '@' || ch == '`' {
+                        let seq = std::mem::take(&mut self.escape_buf);
+                        let text_pos = self.current_line.len();
+                        if let Ok(parsed) = self.ansi_parser.parse(&seq) {
+                            for code in &parsed.ansi_codes {
+                                let mut c = code.clone();
+                                c.position = text_pos;
+                                self.current_ansi_codes.push(c);
+                            }
+                        }
+                        self.escape_state = EscapeState::None;
+                    }
+                }
+
+                // ----- OSC sequence: ESC ] ... BEL  or  ESC ] ... ESC \ -----
+                EscapeState::Osc => match ch {
+                    '\x07' => {
+                        // BEL terminates OSC — discard entire sequence
+                        self.escape_buf.clear();
+                        self.escape_state = EscapeState::None;
+                    }
+                    '\x1b' => {
+                        // Might be the start of ST (ESC \)
+                        self.escape_state = EscapeState::OscEscapeSeen;
+                    }
+                    '\n' => {
+                        // Newline inside an OSC is unusual; abort the sequence
+                        // and emit the line (the OSC content is discarded).
+                        self.escape_buf.clear();
+                        self.escape_state = EscapeState::None;
+                        self.emit_line(timestamp, stream_type)?;
+                    }
+                    _ => {
+                        self.escape_buf.push(ch);
+                        // Safety valve: if the OSC sequence is absurdly long,
+                        // discard it to avoid unbounded memory growth.
+                        if self.escape_buf.len() > 4096 {
+                            self.escape_buf.clear();
+                            self.escape_state = EscapeState::None;
+                        }
+                    }
+                },
+
+                // ----- Inside OSC, saw ESC — check for backslash (ST) -----
+                EscapeState::OscEscapeSeen => {
+                    if ch == '\\' {
+                        // ST received — discard the OSC sequence
+                        self.escape_buf.clear();
+                        self.escape_state = EscapeState::None;
+                    } else {
+                        // Was not ST; the ESC starts a new sequence
+                        self.escape_buf.clear();
+                        self.escape_state = EscapeState::Escape;
+                        self.escape_buf.push('\x1b');
+                        // Re-process this character in the Escape state
+                        // (don't increment i)
+                        continue;
+                    }
+                }
+            }
+
+            i += 1;
+        }
+
+        Ok(())
+    }
+
+    /// Finish the current line and push it into `processed_lines`.
+    ///
+    /// Any residual CSI sequences that were not fully consumed by the state
+    /// machine (e.g. embedded in the text) are re-parsed here; the codes
+    /// already tracked in `current_ansi_codes` are merged in.
+    fn emit_line(&mut self, timestamp: DateTime<Utc>, _stream_type: StreamType) -> Result<()> {
+        if !self.current_line.is_empty() || !self.current_ansi_codes.is_empty() {
+            let parsed = self.ansi_parser.parse(&self.current_line)?;
+
+            let mut codes = std::mem::take(&mut self.current_ansi_codes);
+            codes.extend(parsed.ansi_codes);
+
+            let text = if parsed.clean_text.is_empty() && self.current_line.is_empty() {
+                String::new()
             } else {
-                i += 1;
+                parsed.clean_text
+            };
+
+            if !text.is_empty() || !codes.is_empty() {
+                let mut output_line = OutputLine::with_ansi_codes(text, codes, self.line_counter);
+                output_line.timestamp = timestamp;
+                self.processed_lines.push_back(output_line);
+                self.line_counter += 1;
             }
         }
 
-        None
+        self.current_line.clear();
+        self.current_ansi_codes.clear();
+
+        Ok(())
     }
 
     /// Flush all pending lines
     pub fn flush_lines(&mut self) -> Vec<OutputLine> {
         let mut result = Vec::new();
 
+        // Discard any in-progress escape sequence
+        self.escape_state = EscapeState::None;
+        self.escape_buf.clear();
+
         // Add any remaining content as a line
         if !self.current_line.is_empty() {
             let parsed = self
                 .ansi_parser
                 .parse(&self.current_line)
-                .unwrap_or_else(|_| {
-                    // Fallback if parsing fails
-                    ParsedText {
-                        original_text: self.current_line.clone(),
-                        clean_text: self.current_line.clone(),
-                        ansi_codes: Vec::new(),
-                        position_map: Vec::new(),
-                    }
+                .unwrap_or_else(|_| ParsedText {
+                    original_text: self.current_line.clone(),
+                    clean_text: self.current_line.clone(),
+                    ansi_codes: Vec::new(),
+                    position_map: Vec::new(),
                 });
 
             let output_line = OutputLine::with_ansi_codes(
@@ -291,6 +333,17 @@ impl OutputProcessor {
         result
     }
 
+    /// Return the partial line currently being accumulated (no newline yet).
+    /// Useful for prompt detection when the shell writes a prompt without a
+    /// trailing newline.  Returns the cleaned text with ANSI/OSC stripped.
+    pub fn peek_partial_line(&self) -> Option<&str> {
+        if self.current_line.is_empty() && self.current_ansi_codes.is_empty() {
+            None
+        } else {
+            Some(&self.current_line)
+        }
+    }
+
     /// Check if there are pending lines
     pub fn has_pending_lines(&self) -> bool {
         !self.processed_lines.is_empty() || !self.current_line.is_empty()
@@ -308,7 +361,8 @@ impl OutputProcessor {
         self.current_line.clear();
         self.current_ansi_codes.clear();
         self.line_counter = 0;
-        self.in_ansi_sequence = false;
+        self.escape_state = EscapeState::None;
+        self.escape_buf.clear();
     }
 
     /// Get buffer statistics
@@ -551,5 +605,224 @@ mod tests {
         assert_eq!(SegmentType::CommandOutput, SegmentType::CommandOutput);
         assert_eq!(SegmentType::ErrorOutput, SegmentType::ErrorOutput);
         assert_eq!(SegmentType::SystemMessage, SegmentType::SystemMessage);
+    }
+
+    #[test]
+    fn test_ansi_code_positions_in_clean_text() {
+        let mut processor = OutputProcessor::new();
+
+        // "\x1b[31m" at position 0 in clean text, then "Red" text,
+        // then "\x1b[0m" at position 3, then " normal" text
+        let chunk = OutputChunk {
+            data: b"\x1b[31mRed\x1b[0m normal\n".to_vec(),
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: true,
+        };
+
+        let lines = processor.process_chunk(chunk).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "Red normal");
+        assert!(
+            lines[0].ansi_codes.len() >= 2,
+            "expected at least 2 ANSI codes"
+        );
+
+        // First code (\x1b[31m) should be at position 0
+        assert_eq!(lines[0].ansi_codes[0].position, 0);
+        // Second code (\x1b[0m) should be at position 3 ("Red" has 3 chars)
+        assert_eq!(lines[0].ansi_codes[1].position, 3);
+    }
+
+    #[test]
+    fn test_osc_without_bel_uses_backslash_terminator() {
+        let mut processor = OutputProcessor::new();
+
+        // OSC terminated by ESC \ (ST) — common in zsh
+        let data = b"\x1b]2;eza -l\x1b\\\x1b]1;eza\x1b\\actual output\n";
+        let chunk = OutputChunk {
+            data: data.to_vec(),
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: true,
+        };
+
+        let lines = processor.process_chunk(chunk).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "actual output");
+    }
+
+    #[test]
+    fn test_osc_split_across_chunks() {
+        let mut processor = OutputProcessor::new();
+
+        // First chunk ends mid-OSC sequence
+        let chunk1 = OutputChunk {
+            data: b"\x1b]2;eza".to_vec(),
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: false,
+        };
+        let lines1 = processor.process_chunk(chunk1).unwrap();
+        assert!(lines1.is_empty(), "no output yet — still in OSC");
+
+        // Second chunk finishes OSC and provides real content
+        let chunk2 = OutputChunk {
+            data: b" -l\x07real output\n".to_vec(),
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: true,
+        };
+        let lines2 = processor.process_chunk(chunk2).unwrap();
+        assert_eq!(lines2.len(), 1);
+        assert_eq!(lines2[0].text, "real output");
+    }
+
+    #[test]
+    fn test_osc7_with_backslash_newline() {
+        // zsh's OSC-7 ends with ESC \ followed by newline
+        let mut processor = OutputProcessor::new();
+        let data = b"\x1b]7;file://host/Users/user\x1b\\\n";
+        let chunk = OutputChunk {
+            data: data.to_vec(),
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: true,
+        };
+        let lines = processor.process_chunk(chunk).unwrap();
+        // Should produce no visible output
+        assert!(lines.is_empty() || lines.iter().all(|l| l.text.is_empty()));
+    }
+
+    #[test]
+    fn test_exact_zsh_ohmyzsh_output_pattern() {
+        // This is the EXACT byte sequence zsh + Oh My Zsh produces for `eza -l`:
+        // 1. prompt echo with OSC title/icon/cwd sequences
+        // 2. command output
+        // 3. post-command prompt with OSC title/icon/cwd sequences
+        let mut processor = OutputProcessor::new();
+
+        // zsh echoes the command surrounded by OSC sequences
+        let prompt_echo = b"\r\n\x1b]2;eza -l\x07\x1b]1;eza\x07";
+        let chunk1 = OutputChunk {
+            data: prompt_echo.to_vec(),
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: false,
+        };
+        let lines1 = processor.process_chunk(chunk1).unwrap();
+        // Should be empty — all OSC sequences, no printable text after the \r\n
+        for line in &lines1 {
+            assert!(
+                line.text.is_empty() || !line.text.contains("]2;"),
+                "OSC leaked: '{}'",
+                line.text
+            );
+        }
+
+        // Actual command output
+        let output = b".rw-r--r--  2.3k ddaniels  6 Apr 15:33 Current-IT-Root-CAs.pem\ndrwx------     - ddaniels 27 Mar 13:38 Desktop\n";
+        let chunk2 = OutputChunk {
+            data: output.to_vec(),
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: false,
+        };
+        let lines2 = processor.process_chunk(chunk2).unwrap();
+        assert_eq!(lines2.len(), 2);
+        assert!(lines2[0].text.contains("Current-IT-Root-CAs.pem"));
+        assert!(lines2[1].text.contains("Desktop"));
+
+        // Post-command: zsh sends OSC-2 (title), OSC-1 (icon), OSC-7 (cwd)
+        let post_prompt = b"\x1b]2;ddaniels@ddaniels-mac:~\x07\x1b]1;~\x07\x1b]7;file://ddaniels-mac/Users/ddaniels\x1b\\\r\n";
+        let chunk3 = OutputChunk {
+            data: post_prompt.to_vec(),
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: true,
+        };
+        let lines3 = processor.process_chunk(chunk3).unwrap();
+        for line in &lines3 {
+            assert!(
+                !line.text.contains("]2;")
+                    && !line.text.contains("]1;")
+                    && !line.text.contains("]7;"),
+                "OSC leaked in post-prompt: '{}'",
+                line.text
+            );
+        }
+    }
+
+    #[test]
+    fn test_osc_title_sequences_stripped() {
+        let mut processor = OutputProcessor::new();
+
+        // Simulate what zsh/Oh My Zsh sends: OSC-2 (title), OSC-1 (icon), OSC-7 (cwd)
+        // followed by actual command output.
+        let data = b"\x1b]2;user@host:~/proj\x07\x1b]1;proj\x07\x1b]7;file://host/Users/user/proj\x1b\\git status\nOn branch main\n";
+        let chunk = OutputChunk {
+            data: data.to_vec(),
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: true,
+        };
+
+        let lines = processor.process_chunk(chunk).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].text, "git status");
+        assert_eq!(lines[1].text, "On branch main");
+    }
+
+    #[test]
+    fn test_osc_sequence_with_bel_terminator() {
+        let mut processor = OutputProcessor::new();
+
+        let data = b"\x1b]0;Window Title\x07Hello\n";
+        let chunk = OutputChunk {
+            data: data.to_vec(),
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: true,
+        };
+
+        let lines = processor.process_chunk(chunk).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "Hello");
+    }
+
+    #[test]
+    fn test_osc_sequence_with_st_terminator() {
+        let mut processor = OutputProcessor::new();
+
+        // ST = ESC backslash
+        let data = b"\x1b]2;title\x1b\\output text\n";
+        let chunk = OutputChunk {
+            data: data.to_vec(),
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: true,
+        };
+
+        let lines = processor.process_chunk(chunk).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "output text");
+    }
+
+    #[test]
+    fn test_mixed_csi_and_osc_sequences() {
+        let mut processor = OutputProcessor::new();
+
+        let data = b"\x1b]2;title\x07\x1b[31mRed text\x1b[0m\n";
+        let chunk = OutputChunk {
+            data: data.to_vec(),
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: true,
+        };
+
+        let lines = processor.process_chunk(chunk).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "Red text");
+        assert!(!lines[0].ansi_codes.is_empty());
     }
 }

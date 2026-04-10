@@ -127,14 +127,14 @@ impl Terminal {
         // Allow RC files to load (enables venv, nvm, conda, direnv, etc.)
         // but disable line editor features to prevent interactive behaviors
         let (shell_command, shell_args) = match session.shell_type {
-            crate::models::ShellType::Bash => (
-                "bash".to_string(),
-                vec![
-                    // Remove --norc and --noprofile to allow RC files to load
-                    // This enables venv, nvm, conda, and other environment tools
-                    "--noediting".to_string(), // Keep to prevent line editor interference
-                ],
-            ),
+            crate::models::ShellType::Bash => {
+                let mut args = vec!["--noediting".to_string()];
+                if let Some(rcfile) = session.environment.get("MOSAICTERM_BASH_RCFILE") {
+                    args.push("--rcfile".to_string());
+                    args.push(rcfile.clone());
+                }
+                ("bash".to_string(), args)
+            }
             crate::models::ShellType::Zsh => (
                 "zsh".to_string(),
                 vec![
@@ -323,6 +323,14 @@ impl Terminal {
     /// Get terminal status
     pub fn status(&self) -> TerminalStatus {
         self.state.status()
+    }
+
+    /// Return the partial (un-newlined) text being accumulated by the
+    /// output processor.  This is useful for prompt detection: the shell
+    /// writes a prompt string without a trailing newline, so it will sit
+    /// in the processor's internal buffer until more data arrives.
+    pub fn peek_partial_line(&self) -> Option<&str> {
+        self.output_processor.peek_partial_line()
     }
 
     /// Check if terminal has pending output

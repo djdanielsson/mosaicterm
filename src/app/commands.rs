@@ -38,6 +38,7 @@ pub fn is_tui_command(command: &str, config: &Config) -> bool {
 ///
 /// These commands modify the current working directory and require
 /// special handling to keep the terminal state in sync.
+#[allow(dead_code)]
 pub fn is_cd_command(command: &str) -> bool {
     let cmd_name = get_command_name(command);
     cmd_name == "cd" || cmd_name == "pushd" || cmd_name == "popd"

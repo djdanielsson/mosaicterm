@@ -1,6 +1,6 @@
 [package]
 name = "mosaicterm"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 authors = ["David Danielsson"]
 description = "A Rust GUI terminal emulator inspired by Warp with block-based command history"
@@ -172,5 +172,5 @@ opt-level = 3
 debug = false
 lto = true
 codegen-units = 1
-panic = "abort"
+panic = "unwind"
 strip = true

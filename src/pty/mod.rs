@@ -34,6 +34,7 @@ pub mod manager;
 pub mod operations;
 pub mod process;
 pub mod process_tree;
+pub mod shell_state;
 pub mod signals;
 pub mod streams;
 

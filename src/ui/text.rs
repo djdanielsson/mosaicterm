@@ -741,6 +741,206 @@ pub struct CacheStats {
     pub hit_rate: f32,
 }
 
+/// Build a `LayoutJob` for a block of output lines with ANSI color support.
+///
+/// The returned `(plain_text, LayoutJob)` can be fed to a read-only
+/// `TextEdit::multiline` with a custom layouter so the text is both
+/// selectable and colored.
+///
+/// Colors are resolved from the pre-parsed `line.ansi_codes` vector
+/// (position + raw SGR sequence) so this works even when `line.text` has
+/// already been stripped of escape codes by the OutputProcessor.
+pub fn build_output_layout_job(
+    output_lines: &[crate::models::OutputLine],
+    font: egui::FontId,
+    default_color: egui::Color32,
+) -> (String, egui::epaint::text::LayoutJob) {
+    use egui::epaint::text::{LayoutJob, TextFormat};
+
+    let scheme = ColorScheme::default();
+
+    let mut plain_text = String::new();
+    let mut job = LayoutJob {
+        wrap: egui::epaint::text::TextWrapping {
+            max_width: f32::INFINITY,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let fmt = |color: egui::Color32, fnt: &egui::FontId| TextFormat {
+        font_id: fnt.clone(),
+        color,
+        background: egui::Color32::TRANSPARENT,
+        ..Default::default()
+    };
+
+    let mut cur_color = default_color;
+
+    for (line_idx, line) in output_lines.iter().enumerate() {
+        if line_idx > 0 {
+            plain_text.push('\n');
+            job.append("\n", 0.0, fmt(cur_color, &font));
+        }
+
+        let text = &line.text;
+
+        if line.ansi_codes.is_empty() {
+            plain_text.push_str(text);
+            job.append(text, 0.0, fmt(cur_color, &font));
+        } else {
+            let mut sorted_codes = line.ansi_codes.clone();
+            sorted_codes.sort_by_key(|c| c.position);
+
+            let mut last_pos = 0;
+            for code in &sorted_codes {
+                let pos = code.position.min(text.len());
+                if pos > last_pos {
+                    let segment = &text[last_pos..pos];
+                    plain_text.push_str(segment);
+                    job.append(segment, 0.0, fmt(cur_color, &font));
+                }
+                apply_sgr_string(&code.code, &mut cur_color, default_color, &scheme);
+                last_pos = pos;
+            }
+            if last_pos < text.len() {
+                let segment = &text[last_pos..];
+                plain_text.push_str(segment);
+                job.append(segment, 0.0, fmt(cur_color, &font));
+            }
+        }
+    }
+
+    (plain_text, job)
+}
+
+fn apply_sgr_string(
+    raw: &str,
+    cur_color: &mut egui::Color32,
+    default_color: egui::Color32,
+    scheme: &ColorScheme,
+) {
+    use std::sync::LazyLock;
+    static SGR_RE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"\x1b\[([0-9;]*)m").unwrap());
+
+    if let Some(caps) = SGR_RE.captures(raw) {
+        if let Some(params) = caps.get(1) {
+            for code_str in params.as_str().split(';') {
+                if let Ok(code) = code_str.parse::<u8>() {
+                    *cur_color = ansi_code_to_color(code, *cur_color, default_color, scheme);
+                }
+            }
+        }
+    }
+}
+
+fn ansi_code_to_color(
+    code: u8,
+    current: egui::Color32,
+    default_color: egui::Color32,
+    scheme: &ColorScheme,
+) -> egui::Color32 {
+    use crate::terminal::AnsiColor;
+    match code {
+        0 => default_color,
+        1 => {
+            let r = (current.r() as f32 * 1.2).min(255.0) as u8;
+            let g = (current.g() as f32 * 1.2).min(255.0) as u8;
+            let b = (current.b() as f32 * 1.2).min(255.0) as u8;
+            egui::Color32::from_rgb(r, g, b)
+        }
+        2 => {
+            let r = (current.r() as f32 * 0.7) as u8;
+            let g = (current.g() as f32 * 0.7) as u8;
+            let b = (current.b() as f32 * 0.7) as u8;
+            egui::Color32::from_rgb(r, g, b)
+        }
+        30 => scheme
+            .ansi_colors
+            .get(&AnsiColor::Black)
+            .copied()
+            .unwrap_or(egui::Color32::BLACK),
+        31 => scheme
+            .ansi_colors
+            .get(&AnsiColor::Red)
+            .copied()
+            .unwrap_or(egui::Color32::RED),
+        32 => scheme
+            .ansi_colors
+            .get(&AnsiColor::Green)
+            .copied()
+            .unwrap_or(egui::Color32::GREEN),
+        33 => scheme
+            .ansi_colors
+            .get(&AnsiColor::Yellow)
+            .copied()
+            .unwrap_or(egui::Color32::YELLOW),
+        34 => scheme
+            .ansi_colors
+            .get(&AnsiColor::Blue)
+            .copied()
+            .unwrap_or(egui::Color32::BLUE),
+        35 => scheme
+            .ansi_colors
+            .get(&AnsiColor::Magenta)
+            .copied()
+            .unwrap_or(egui::Color32::from_rgb(188, 63, 188)),
+        36 => scheme
+            .ansi_colors
+            .get(&AnsiColor::Cyan)
+            .copied()
+            .unwrap_or(egui::Color32::from_rgb(17, 168, 205)),
+        37 => scheme
+            .ansi_colors
+            .get(&AnsiColor::White)
+            .copied()
+            .unwrap_or(egui::Color32::WHITE),
+        39 => default_color,
+        90 => scheme
+            .ansi_colors
+            .get(&AnsiColor::BrightBlack)
+            .copied()
+            .unwrap_or(egui::Color32::GRAY),
+        91 => scheme
+            .ansi_colors
+            .get(&AnsiColor::BrightRed)
+            .copied()
+            .unwrap_or(egui::Color32::from_rgb(241, 76, 76)),
+        92 => scheme
+            .ansi_colors
+            .get(&AnsiColor::BrightGreen)
+            .copied()
+            .unwrap_or(egui::Color32::from_rgb(35, 209, 139)),
+        93 => scheme
+            .ansi_colors
+            .get(&AnsiColor::BrightYellow)
+            .copied()
+            .unwrap_or(egui::Color32::from_rgb(245, 245, 67)),
+        94 => scheme
+            .ansi_colors
+            .get(&AnsiColor::BrightBlue)
+            .copied()
+            .unwrap_or(egui::Color32::from_rgb(59, 142, 234)),
+        95 => scheme
+            .ansi_colors
+            .get(&AnsiColor::BrightMagenta)
+            .copied()
+            .unwrap_or(egui::Color32::from_rgb(214, 112, 214)),
+        96 => scheme
+            .ansi_colors
+            .get(&AnsiColor::BrightCyan)
+            .copied()
+            .unwrap_or(egui::Color32::from_rgb(41, 184, 219)),
+        97 => scheme
+            .ansi_colors
+            .get(&AnsiColor::BrightWhite)
+            .copied()
+            .unwrap_or(egui::Color32::WHITE),
+        _ => current,
+    }
+}
+
 /// Text rendering utilities
 pub mod utils {
     use super::*;

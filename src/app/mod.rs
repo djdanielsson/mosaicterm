@@ -189,9 +189,8 @@ pub struct MosaicTermApp {
     prompt_formatter: PromptFormatter,
     /// Context detector for environment tracking (venv, nvm, conda, etc.)
     context_detector: ContextDetector,
-    /// State tracking for environment query across batches
-    env_query_in_progress: bool,
-    env_query_lines: Vec<String>,
+    /// Tracks whether the shell had foreground children last frame (for command completion)
+    shell_had_children: bool,
     /// Tokio runtime for async operations
     #[allow(dead_code)]
     runtime: tokio::runtime::Runtime,
@@ -483,43 +482,47 @@ fn send_system_notification_sync(title: &str, message: &str) {
     }
 }
 
-/// Find the app's icon.png for use in notifications
+/// Embedded icon bytes (same as main.rs) for notification use.
+const EMBEDDED_ICON_PNG: &[u8] = include_bytes!("../../icon.png");
+
+/// Return a path to the app icon suitable for system notification commands.
+///
+/// First checks well-known installed locations, then extracts the embedded
+/// icon to a cache directory so it is available even for standalone binaries.
 fn find_app_icon_path() -> Option<String> {
-    let candidates = [
-        "icon.png",
-        "../icon.png",
-        "bin/mosaicterm/icon.png",
+    let installed_candidates = [
         "/usr/share/icons/hicolor/256x256/apps/mosaicterm.png",
         "/usr/share/pixmaps/mosaicterm.png",
     ];
 
-    // Also check relative to the executable
+    for path in &installed_candidates {
+        if std::path::Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+    }
+
+    // Check next to the executable
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let exe_icon = dir.join("icon.png");
             if exe_icon.exists() {
                 return exe_icon.to_str().map(|s| s.to_string());
             }
-            // Check one level up (e.g. target/release/../icon.png)
-            if let Some(parent) = dir.parent() {
-                let parent_icon = parent.join("icon.png");
-                if parent_icon.exists() {
-                    return parent_icon.to_str().map(|s| s.to_string());
-                }
-                // Two levels up (target/release/../../icon.png = project root)
-                if let Some(grandparent) = parent.parent() {
-                    let gp_icon = grandparent.join("icon.png");
-                    if gp_icon.exists() {
-                        return gp_icon.to_str().map(|s| s.to_string());
-                    }
-                }
-            }
         }
     }
 
-    for path in &candidates {
-        if std::path::Path::new(path).exists() {
-            return Some(path.to_string());
+    // Extract the embedded icon to a cache directory
+    if let Some(cache_dir) = dirs::cache_dir() {
+        let cache_icon = cache_dir.join("mosaicterm").join("icon.png");
+        if cache_icon.exists() {
+            return cache_icon.to_str().map(|s| s.to_string());
+        }
+        if let Some(parent) = cache_icon.parent() {
+            if std::fs::create_dir_all(parent).is_ok()
+                && std::fs::write(&cache_icon, EMBEDDED_ICON_PNG).is_ok()
+            {
+                return cache_icon.to_str().map(|s| s.to_string());
+            }
         }
     }
 
@@ -778,6 +781,7 @@ impl MosaicTermApp {
         // Clone handles for background task
         let pty_manager_clone = pty_manager.clone();
         let terminal_factory_clone = terminal_factory.clone();
+        let runtime_config_clone = runtime_config.clone();
 
         // Spawn background task to handle async operations
         runtime.spawn(async move {
@@ -786,6 +790,7 @@ impl MosaicTermApp {
                 result_tx,
                 pty_manager_clone,
                 terminal_factory_clone,
+                runtime_config_clone,
             )
             .await;
         });
@@ -864,8 +869,7 @@ impl MosaicTermApp {
             history_search_needs_focus: false,
             prompt_formatter,
             context_detector: ContextDetector::new(),
-            env_query_in_progress: false,
-            env_query_lines: Vec::new(),
+            shell_had_children: false,
             runtime,
             async_tx: request_tx,
             async_rx: result_rx,
@@ -948,14 +952,25 @@ impl MosaicTermApp {
             ModelShellType::Other => ModelShellType::Bash, // Default to bash for unknown shells
         };
 
-        // Create terminal session configuration
-        let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+        // Prefer configured working_directory, then CWD (if not /), then $HOME.
+        let working_dir = self
+            .runtime_config
+            .config()
+            .terminal
+            .working_directory
+            .as_ref()
+            .filter(|d| d.is_dir())
+            .cloned()
+            .or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .filter(|p| p != std::path::Path::new("/"))
+            })
+            .or_else(dirs::home_dir)
+            .unwrap_or_else(|| std::path::PathBuf::from("/"));
 
         // Create environment with prompt suppression
         let mut environment: std::collections::HashMap<String, String> = std::env::vars().collect();
-
-        // Disable terminal echo explicitly
-        environment.insert("STTY".to_string(), "-echo".to_string());
 
         // Use xterm-256color so TUI apps work correctly; suppress shell prompts
         // via environment variables. MosaicTerm renders its own prompt, so we need
@@ -973,9 +988,6 @@ impl MosaicTermApp {
                 environment.insert("PS4".to_string(), "".to_string());
             }
             ModelShellType::Zsh => {
-                // For zsh: suppress precmd hooks (Oh My Zsh, Starship, p10k) and prompt
-                // ZDOTDIR override prevents .zshrc from running its prompt setup
-                // We also set a no-op precmd via ENV/ZDOTDIR
                 environment.insert("PS1".to_string(), "".to_string());
                 environment.insert("PS2".to_string(), "".to_string());
                 environment.insert("PS3".to_string(), "".to_string());
@@ -984,6 +996,8 @@ impl MosaicTermApp {
                 environment.insert("ZSH_THEME".to_string(), "".to_string());
                 // Prevent p10k instant prompt
                 environment.insert("POWERLEVEL9K_INSTANT_PROMPT".to_string(), "off".to_string());
+                // Suppress zsh partial-line marker (the % at end of unterminated lines)
+                environment.insert("PROMPT_EOL_MARK".to_string(), "".to_string());
             }
             ModelShellType::Fish => {
                 environment.insert("fish_prompt".to_string(), "".to_string());
@@ -1008,71 +1022,43 @@ impl MosaicTermApp {
             }
         }
 
+        // Install shell integration via startup files (not PTY input).
+        // We use the app PID as a stable identifier since the shell PID
+        // isn't known until after spawn.
+        let integration_pid = std::process::id();
+
+        match shell_type {
+            ModelShellType::Zsh => {
+                if let Some(zdotdir) = mosaicterm::pty::shell_state::create_zdotdir(integration_pid)
+                {
+                    environment.insert("ZDOTDIR".to_string(), zdotdir.display().to_string());
+                    info!("Set ZDOTDIR to {:?} for shell integration", zdotdir);
+                }
+            }
+            ModelShellType::Bash => {
+                if let Some(rcfile) =
+                    mosaicterm::pty::shell_state::create_bash_rcfile(integration_pid)
+                {
+                    // We need to remove --noediting and add --rcfile
+                    // This is handled below when building the session
+                    environment.insert(
+                        "MOSAICTERM_BASH_RCFILE".to_string(),
+                        rcfile.display().to_string(),
+                    );
+                    info!("Created bash rcfile at {:?} for shell integration", rcfile);
+                }
+            }
+            _ => {}
+        }
+
         let session = TerminalSession::with_environment(shell_type, working_dir, environment);
 
-        // Create and initialize terminal
+        // Create and initialize terminal (shell is spawned here)
         let terminal = self.terminal_factory.create_and_initialize(session).await?;
         self.terminal = Some(terminal);
 
         // Update state manager
         self.state_manager.set_terminal_ready(true);
-
-        // State is now managed through StateManager only
-
-        // Send PS1 override to ensure prompts don't appear in output
-        // This is necessary because we now load RC files which may set PS1
-        if let Some(terminal) = &self.terminal {
-            if let Some(handle) = terminal.pty_handle() {
-                // PtyManager is already async and thread-safe, no lock needed
-                let pty_manager = &*self.pty_manager;
-
-                // Silently override PS1 by hiding the command output.
-                // We use `stty -echo` to suppress echoing of the typed command, then
-                // restore with `stty echo`.
-                let ps1_override = match shell_type {
-                    ModelShellType::Bash => {
-                        concat!(
-                            "stty -echo 2>/dev/null; ",
-                            "export PROMPT_COMMAND='PS1=\"\"; PS2=\"\"; PS3=\"\"; PS4=\"\"'; ",
-                            "stty echo 2>/dev/null\n"
-                        )
-                    }
-                    ModelShellType::Zsh => {
-                        concat!(
-                            "stty -echo 2>/dev/null; ",
-                            "precmd() { PS1=''; PS2=''; PS3=''; PS4=''; }; ",
-                            "stty echo 2>/dev/null\n"
-                        )
-                    }
-                    ModelShellType::Fish => {
-                        "stty -echo 2>/dev/null; function fish_prompt; end; stty echo 2>/dev/null\n"
-                    }
-                    ModelShellType::Ksh => {
-                        "stty -echo 2>/dev/null; export PS1=''; export PS2=''; stty echo 2>/dev/null\n"
-                    }
-                    ModelShellType::Csh | ModelShellType::Tcsh => {
-                        "stty -echo; set prompt=''; stty echo\n"
-                    }
-                    ModelShellType::Dash => {
-                        "stty -echo 2>/dev/null; export PS1=''; stty echo 2>/dev/null\n"
-                    }
-                    _ => "",
-                };
-
-                if !ps1_override.is_empty() {
-                    if let Err(e) = pty_manager
-                        .send_input(handle, ps1_override.as_bytes())
-                        .await
-                    {
-                        warn!("Failed to override PS1 after initialization: {}", e);
-                    } else {
-                        info!("Sent PS1 override with persistent hook to suppress shell prompts");
-                    }
-                    // Note: Shell will process PS1 override asynchronously
-                    // The hook ensures PS1 stays empty even if venv/conda tries to modify it
-                }
-            }
-        }
 
         // Update contexts and prompt after terminal initialization
         self.update_contexts();
@@ -1180,9 +1166,6 @@ impl MosaicTermApp {
             return Ok(());
         }
 
-        // Check if this is a cd command - we'll update working directory after it completes
-        let _is_cd_command = self.is_cd_command(&command);
-
         // Check if we should use direct execution (faster, cleaner)
         // IMPORTANT: Skip direct execution when in SSH session - all commands must go through PTY
         if !self.ssh_session_active && DirectExecutor::check_direct_execution(&command) {
@@ -1252,40 +1235,12 @@ impl MosaicTermApp {
         // UI will be updated automatically on the next frame
 
         if let Some(_terminal) = &mut self.terminal {
-            // Send command directly to PTY with newline so the shell executes it
-            // Then send a command to echo the exit code with a special marker
             if let Some(handle) = _terminal.pty_handle() {
-                // PtyManager is already async and thread-safe, no lock needed
                 let pty_manager = &*self.pty_manager;
+
                 let cmd = format!("{}\n", command);
                 if let Err(e) = pty_manager.send_input(handle, cmd.as_bytes()).await {
                     warn!("Failed to send input to PTY: {}", e);
-                }
-
-                // Only send exit code and pwd markers when NOT in SSH session
-                // In SSH session, we rely on prompt detection for completion
-                // and the markers would just add noise to remote output
-                if !self.ssh_session_active {
-                    // Send a command to echo the exit code after the command completes
-                    // Use a unique marker so we can detect it
-                    let exit_code_cmd = "echo \"MOSAICTERM_EXITCODE:$?\"\n";
-                    if let Err(e) = pty_manager
-                        .send_input(handle, exit_code_cmd.as_bytes())
-                        .await
-                    {
-                        warn!("Failed to send exit code check to PTY: {}", e);
-                    }
-
-                    // If this is a cd command, also query the working directory after it completes
-                    if _is_cd_command {
-                        info!("Sending pwd query for cd command: {}", command);
-                        let pwd_cmd = "echo \"MOSAICTERM_PWD:$(pwd)\"\n";
-                        if let Err(e) = pty_manager.send_input(handle, pwd_cmd.as_bytes()).await {
-                            warn!("Failed to send pwd query to PTY: {}", e);
-                        } else {
-                            debug!("Successfully sent pwd query command");
-                        }
-                    }
                 }
             }
 
@@ -1304,7 +1259,7 @@ impl MosaicTermApp {
         Ok(())
     }
 
-    /// Check if command is a cd command
+    #[allow(dead_code)]
     fn is_cd_command(&self, command: &str) -> bool {
         commands::is_cd_command(command)
     }
@@ -1357,6 +1312,51 @@ impl MosaicTermApp {
         info!("Updated contexts from shell environment");
     }
 
+    /// Sync shell state (CWD, environment) directly from the OS after a command completes.
+    fn sync_shell_state(&mut self) {
+        let shell_pid = self
+            .terminal
+            .as_ref()
+            .and_then(|t| t.pty_handle())
+            .and_then(|h| h.pid);
+
+        // Update CWD from OS
+        if let Some(pid) = shell_pid {
+            if let Some(os_cwd) = mosaicterm::pty::shell_state::read_cwd(pid) {
+                if let Some(terminal) = &mut self.terminal {
+                    let current = terminal.get_working_directory().to_path_buf();
+                    if os_cwd != current {
+                        info!("CWD updated from OS: {:?} -> {:?}", current, os_cwd);
+                        terminal.set_working_directory(os_cwd.clone());
+                        self.state_manager.set_previous_directory(Some(current));
+
+                        if self.tool_availability.zoxide {
+                            Self::zoxide_add_background(&os_cwd);
+                        }
+                    }
+                }
+            }
+        }
+
+        self.update_contexts();
+
+        // Read env vars from the precmd state file (keyed by app PID)
+        let app_pid = std::process::id();
+        let state_path = mosaicterm::pty::shell_state::state_file_path(app_pid);
+        if let Ok(contents) = std::fs::read_to_string(&state_path) {
+            let env_lines: String = contents
+                .lines()
+                .filter(|l| !l.starts_with("EXIT:"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !env_lines.is_empty() {
+                self.parse_env_output(&env_lines);
+            }
+        }
+
+        self.update_prompt();
+    }
+
     fn zoxide_query(query: &str) -> Option<String> {
         let output = std::process::Command::new("zoxide")
             .args(["query", "--", query])
@@ -1383,28 +1383,6 @@ impl MosaicTermApp {
                 .stderr(std::process::Stdio::null())
                 .status();
         });
-    }
-
-    fn is_env_query_output(line: &str) -> bool {
-        const ENV_PREFIXES: &[&str] = &[
-            "VIRTUAL_ENV=",
-            "CONDA_DEFAULT_ENV=",
-            "CONDA_PREFIX=",
-            "NVM_BIN=",
-            "RBENV_VERSION=",
-            "rvm_ruby_string=",
-            "DIRENV_DIR=",
-            "GOVERSION=",
-            "JAVA_HOME=",
-            "RUSTUP_TOOLCHAIN=",
-            "DOCKER_HOST=",
-            "DOCKER_CONTEXT=",
-            "KUBECONFIG=",
-            "AWS_PROFILE=",
-            "AWS_DEFAULT_PROFILE=",
-            "TF_WORKSPACE=",
-        ];
-        ENV_PREFIXES.iter().any(|p| line.starts_with(p))
     }
 
     /// Check if a command is a TUI app that should open in fullscreen overlay
@@ -1438,17 +1416,9 @@ impl MosaicTermApp {
                 // Store handle ID before mutable borrow
                 let handle_id = handle.id.clone();
 
-                // Send command to PTY
+                // Send the TUI command to PTY (TERM is already set in the environment)
                 {
                     let pty_manager = &*self.pty_manager;
-
-                    let env_cmd = "export TERM=xterm-256color\n";
-                    if let Err(e) = pty_manager.send_input(handle, env_cmd.as_bytes()).await {
-                        warn!("Failed to set TERM for TUI command: {}", e);
-                    }
-
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-
                     let cmd = format!("{}\n", command);
                     if let Err(e) = pty_manager.send_input(handle, cmd.as_bytes()).await {
                         warn!("Failed to send TUI command to PTY: {}", e);
@@ -2537,11 +2507,7 @@ impl eframe::App for MosaicTermApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         info!("MosaicTerm application shutting down");
-
-        // Cleanup terminal session
-        if self.terminal.is_some() {
-            // Terminal cleanup will happen automatically when dropped
-        }
+        mosaicterm::pty::shell_state::cleanup_shell_files(std::process::id());
     }
 }
 
@@ -2814,10 +2780,28 @@ impl MosaicTermApp {
                     }
                 }
 
-                // Only ensure the input keeps focus if history search and SSH prompt are not active
-                // When these overlays are active, their input fields should have focus instead
-                if !self.history_search_active && !self.ssh_prompt_overlay.is_active() {
-                    input_response.request_focus();
+                // Focus management: the input should have focus unless the
+                // user is selecting text in an output block.
+                //
+                // When the user clicks output text, that TextEdit gets focus
+                // and the selection persists so they can Cmd/Ctrl+C.  Focus
+                // returns to the input only when the user:
+                //   - clicks on the input area (egui handles this naturally)
+                //   - presses Escape
+                //   - starts typing (any printable character)
+                //   - nothing at all has focus (startup / after overlay close)
+                if !self.history_search_active
+                    && !self.ssh_prompt_overlay.is_active()
+                    && !input_response.has_focus()
+                {
+                    let nothing_focused = ui.ctx().memory(|mem| mem.focus().is_none());
+                    let explicit_return = ui.input(|i| {
+                        i.key_pressed(egui::Key::Escape)
+                            || i.events.iter().any(|e| matches!(e, egui::Event::Text(_)))
+                    });
+                    if nothing_focused || explicit_return {
+                        input_response.request_focus();
+                    }
                 }
 
                 // Check if input changed (for filtering)
@@ -3351,6 +3335,7 @@ impl MosaicTermApp {
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .stick_to_bottom(true)
+                .drag_to_scroll(false)
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         // Commands appear in execution order: oldest at top, newest at bottom
@@ -3488,27 +3473,29 @@ impl MosaicTermApp {
                 if !block.output.is_empty() {
                     ui.add_space(3.0);
 
-                    for line in block.output.iter() {
-                        if !line.ansi_codes.is_empty() {
-                            let mut ansi_renderer = mosaicterm::ui::text::AnsiTextRenderer::new();
-                            if let Err(e) =
-                                ansi_renderer.render_ansi_text(ui, &line.text, &line.ansi_codes)
-                            {
-                                debug!("ANSI rendering failed: {}, falling back to plain text", e);
-                                ui.label(
-                                    egui::RichText::new(&line.text)
-                                        .font(egui::FontId::monospace(12.0))
-                                        .color(colors.blocks.output_text),
-                                );
-                            }
-                        } else {
-                            ui.label(
-                                egui::RichText::new(&line.text)
-                                    .font(egui::FontId::monospace(12.0))
-                                    .color(colors.blocks.output_text),
-                            );
-                        }
-                    }
+                    let mono_font = egui::FontId::monospace(12.0);
+                    let output_color = colors.blocks.output_text;
+                    let (plain_text, layout_job) = mosaicterm::ui::text::build_output_layout_job(
+                        &block.output,
+                        mono_font.clone(),
+                        output_color,
+                    );
+
+                    let job_for_layouter = layout_job;
+                    let mut layouter = move |ui: &egui::Ui, _text: &str, wrap_width: f32| {
+                        let mut j = job_for_layouter.clone();
+                        j.wrap.max_width = wrap_width;
+                        ui.fonts(|f| f.layout_job(j))
+                    };
+                    let mut text_ref: &str = &plain_text;
+                    ui.add(
+                        egui::TextEdit::multiline(&mut text_ref)
+                            .id_source(format!("output_{}", block.id))
+                            .font(mono_font)
+                            .desired_width(f32::INFINITY)
+                            .frame(false)
+                            .layouter(&mut layouter),
+                    );
                 }
             });
         });
@@ -3726,14 +3713,57 @@ impl MosaicTermApp {
         }
     }
 
+    /// Check output lines for well-known shell error patterns.
+    /// Returns an inferred exit code if an error pattern is found.
+    fn detect_error_in_output(lines: &[mosaicterm::models::OutputLine]) -> Option<i32> {
+        for line in lines {
+            let t = line.text.trim();
+            if t.is_empty() {
+                continue;
+            }
+            let lower = t.to_ascii_lowercase();
+            // zsh / bash: "command not found"
+            if lower.contains("command not found") {
+                return Some(127);
+            }
+            // bash: "No such file or directory" (when running a script path)
+            if lower.contains("no such file or directory") {
+                return Some(127);
+            }
+            // zsh/bash: "permission denied"
+            if lower.contains("permission denied") {
+                return Some(126);
+            }
+            // zsh/bash: "is a directory"
+            if lower.ends_with("is a directory") {
+                return Some(126);
+            }
+            // common: "syntax error"
+            if lower.contains("syntax error") {
+                return Some(2);
+            }
+            // zsh: "bad option" / "unknown option"
+            if lower.contains("bad option") || lower.contains("unknown option") {
+                return Some(1);
+            }
+            // git: "'foo' is not a git command"
+            if lower.contains("is not a") && lower.contains("command") {
+                return Some(1);
+            }
+            // segfault
+            if lower.contains("segmentation fault") || lower.contains("killed") {
+                return Some(139);
+            }
+        }
+        None
+    }
+
     /// Handle async operations (called from update) - SIMPLIFIED VERSION
     fn handle_async_operations(&mut self, _ctx: &egui::Context) {
         let bg_notification_threshold_ms: u128 = 10_000;
         // SIMPLIFIED: Poll PTY output and add to current command (no complex prompt detection)
-        let mut should_update_contexts = false; // Track if we need to update contexts
-        let mut env_query_output = None; // Track environment query output
-        let mut timeout_kill_status_message: Option<String> = None; // Track timeout kill status
-        let mut should_update_working_dir: Option<(std::path::PathBuf, std::path::PathBuf)> = None; // Track working dir sync
+        let mut should_update_contexts = false;
+        let mut timeout_kill_status_message: Option<String> = None;
         let mut ssh_session_ended = false; // Track if SSH session ended
         let mut ssh_session_should_activate = false; // Track if SSH session should be activated
         let mut new_remote_prompt: Option<String> = None; // Track new remote prompt
@@ -3868,13 +3898,11 @@ impl MosaicTermApp {
                             self.state_manager.clear_command_history();
                             // Skip processing this output as it's just a clear command
                         } else {
-                            // Process output
-                            debug!(
-                                "PTY read {} bytes: {:?}",
-                                data.len(),
-                                String::from_utf8_lossy(&data)
-                            );
-                            // Process output and get the lines directly from the return value
+                            debug!("PTY read {} bytes", data.len(),);
+
+                            // --- All output goes through the OutputProcessor ---
+                            // This ensures OSC / CSI sequences are properly
+                            // stripped before any text reaches the UI.
                             let ready_lines = futures::executor::block_on(async {
                                 _terminal
                                     .process_output(&data, mosaicterm::terminal::StreamType::Stdout)
@@ -3885,17 +3913,25 @@ impl MosaicTermApp {
                                     })
                             });
 
-                            debug!("Got {} lines from terminal", ready_lines.len());
+                            // Peek at the partial (un-newlined) text the
+                            // processor is accumulating — used for prompt
+                            // detection below.
+                            let partial_line_text: Option<String> =
+                                _terminal.peek_partial_line().map(|s| s.to_owned());
 
-                            // Get the last command block from state_manager (single source of truth)
-                            // Get last_command_time before mutable borrow
+                            debug!(
+                                "Got {} lines from terminal, partial: {:?}",
+                                ready_lines.len(),
+                                partial_line_text.as_deref().unwrap_or("")
+                            );
+
                             let last_command_time = self.state_manager.last_command_time();
                             let mut lines_count = 0;
                             let mut should_clear_command_time = false;
+
                             if let Some(command_history) = self.state_manager.command_history_mut()
                             {
                                 if let Some(last_block) = command_history.last_mut() {
-                                    // Skip output processing if this command is in TUI mode
                                     if last_block.status
                                         == mosaicterm::models::ExecutionStatus::TuiMode
                                     {
@@ -3903,202 +3939,16 @@ impl MosaicTermApp {
                                         return;
                                     }
 
-                                    let has_ready_lines = !ready_lines.is_empty();
-
-                                    // Batch process all lines at once for better performance
-                                    let mut lines_to_add = Vec::with_capacity(ready_lines.len());
-                                    // Clone command text once for use in multiple places
                                     let command_text = last_block.command.trim().to_string();
                                     let current_output_count = last_block.output.len();
 
-                                    // Check for environment query marker (state persists across batches)
-                                    info!(
-                                        "Processing {} ready_lines for env query (in_progress={})",
-                                        ready_lines.len(),
-                                        self.env_query_in_progress
-                                    );
-                                    for (idx, line) in ready_lines.iter().enumerate() {
-                                        let line_text = line.text.trim();
-                                        if line_text.contains("MOSAICTERM_ENV_QUERY:START") {
-                                            info!("Found ENV_QUERY:START marker at line {}", idx);
-                                            self.env_query_in_progress = true;
-                                            self.env_query_lines.clear(); // Start fresh
-                                            continue;
-                                        }
-                                        if line_text.contains("MOSAICTERM_ENV_QUERY:END") {
-                                            info!("Found ENV_QUERY:END marker at line {} (collected {} lines total)", idx, self.env_query_lines.len());
-                                            self.env_query_in_progress = false;
-                                            // Store for processing after borrow ends
-                                            if !self.env_query_lines.is_empty() {
-                                                env_query_output =
-                                                    Some(self.env_query_lines.join("\n"));
-                                            }
-                                            continue;
-                                        }
-                                        if self.env_query_in_progress {
-                                            info!("Collecting env line {}: '{}'", idx, line_text);
-                                            self.env_query_lines.push(line_text.to_string());
-                                        } else if !line_text.is_empty() {
-                                            info!("Skipping non-env line {}: '{}'", idx, line_text);
-                                        }
-                                    }
-
-                                    // Check for exit code marker and pwd marker
-                                    let mut found_exit_code: Option<i32> = None;
-                                    let mut found_pwd: Option<String> = None;
-                                    for line in ready_lines.iter() {
-                                        let line_text = line.text.trim();
-                                        if line_text.starts_with("MOSAICTERM_EXITCODE:") {
-                                            if let Some(exit_code_str) =
-                                                line_text.strip_prefix("MOSAICTERM_EXITCODE:")
-                                            {
-                                                if let Ok(exit_code) =
-                                                    exit_code_str.trim().parse::<i32>()
-                                                {
-                                                    found_exit_code = Some(exit_code);
-                                                }
-                                            }
-                                        }
-                                        if line_text.starts_with("MOSAICTERM_PWD:") {
-                                            if let Some(pwd_str) =
-                                                line_text.strip_prefix("MOSAICTERM_PWD:")
-                                            {
-                                                let pwd = pwd_str.trim().to_string();
-                                                info!(
-                                                    "Found MOSAICTERM_PWD marker with value: {}",
-                                                    pwd
-                                                );
-                                                found_pwd = Some(pwd);
-                                            }
-                                        }
-                                    }
-
-                                    // Apply exit code if found
-                                    if let Some(exit_code) = found_exit_code {
-                                        let elapsed_ms = if let Some(start_time) = last_command_time
-                                        {
-                                            start_time.elapsed().as_millis()
-                                        } else {
-                                            0
-                                        };
-
-                                        if exit_code == 0 {
-                                            last_block.mark_completed(
-                                                std::time::Duration::from_millis(
-                                                    elapsed_ms.try_into().unwrap_or(1000),
-                                                ),
-                                            );
-                                            debug!(
-                                                "✅ Command completed with exit code 0: {}",
-                                                command_text
-                                            );
-                                        } else {
-                                            last_block.mark_failed(
-                                                std::time::Duration::from_millis(
-                                                    elapsed_ms.try_into().unwrap_or(1000),
-                                                ),
-                                                exit_code,
-                                            );
-                                            debug!(
-                                                "❌ Command failed with exit code {}: {}",
-                                                exit_code, command_text
-                                            );
-                                        }
-
-                                        // Send system notification if window is not focused
-                                        // and command ran longer than threshold
-                                        if !self.window_has_focus
-                                            && elapsed_ms >= bg_notification_threshold_ms
-                                        {
-                                            let elapsed_secs = elapsed_ms / 1000;
-                                            let status_str = if exit_code == 0 {
-                                                "completed"
-                                            } else {
-                                                "failed"
-                                            };
-                                            let cmd_short = if command_text.len() > 40 {
-                                                format!("{}...", &command_text[..40])
-                                            } else {
-                                                command_text.clone()
-                                            };
-                                            send_system_notification(
-                                                "MosaicTerm",
-                                                &format!(
-                                                    "Command {} ({}s): {}",
-                                                    status_str, elapsed_secs, cmd_short
-                                                ),
-                                            );
-                                        }
-
-                                        should_clear_command_time = true;
-                                    }
-
-                                    // If this was a cd command and we got the pwd, sync our tracking
-                                    // Check this separately from exit code since pwd might come in a different batch
-                                    if found_pwd.is_some() && command_text.trim().starts_with("cd")
-                                    {
-                                        if let Some(actual_dir) = &found_pwd {
-                                            if let Ok(canonical_dir) =
-                                                std::path::PathBuf::from(actual_dir).canonicalize()
-                                            {
-                                                if let Some(terminal) = &self.terminal {
-                                                    let current_tracked = terminal
-                                                        .get_working_directory()
-                                                        .to_path_buf();
-                                                    if canonical_dir != current_tracked {
-                                                        info!("Found pwd for cd command: {:?} -> {:?}", current_tracked, canonical_dir);
-                                                        // Store for later update after borrow ends
-                                                        should_update_working_dir =
-                                                            Some((current_tracked, canonical_dir));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                    // ---- Add ready (newline-terminated) lines ----
+                                    let mut lines_to_add = Vec::with_capacity(ready_lines.len());
 
                                     for (idx, line) in ready_lines.iter().enumerate() {
                                         let line_text = line.text.trim();
-                                        let is_first_few_lines = current_output_count + idx < 5;
+                                        let is_first_few = current_output_count + idx < 5;
 
-                                        // Skip internal markers, shell init noise, and env query echo commands
-                                        if line_text.starts_with("MOSAICTERM_EXITCODE:")
-                                            || line_text.contains("echo \"MOSAICTERM_EXITCODE:")
-                                            || line_text == "echo \"MOSAICTERM_EXITCODE:$?\""
-                                            || line_text.starts_with("MOSAICTERM_PWD:")
-                                            || line_text.contains("echo \"MOSAICTERM_PWD:")
-                                            || line_text.contains("MOSAICTERM_ENV_QUERY")
-                                            || line_text.starts_with("echo 'MOSAICTERM_ENV_QUERY")
-                                            || line_text.starts_with("echo \"VIRTUAL_ENV=")
-                                            || line_text.starts_with("echo \"CONDA_DEFAULT_ENV=")
-                                            || line_text.starts_with("echo \"CONDA_PREFIX=")
-                                            || line_text.starts_with("echo \"NVM_BIN=")
-                                            || line_text.starts_with("echo \"RBENV_VERSION=")
-                                            || line_text.starts_with("echo \"rvm_ruby_string=")
-                                            || line_text.starts_with("echo \"DIRENV_DIR=")
-                                            || line_text.starts_with("echo \"GOVERSION=")
-                                            || line_text.starts_with("echo \"JAVA_HOME=")
-                                            || line_text.starts_with("echo \"RUSTUP_TOOLCHAIN=")
-                                            || line_text.starts_with("echo \"DOCKER_HOST=")
-                                            || line_text.starts_with("echo \"DOCKER_CONTEXT=")
-                                            || line_text.starts_with("echo \"KUBECONFIG=")
-                                            || line_text.starts_with("echo \"AWS_PROFILE=")
-                                            || line_text.starts_with("echo \"AWS_DEFAULT_PROFILE=")
-                                            || line_text.starts_with("echo \"TF_WORKSPACE=")
-                                            || Self::is_env_query_output(line_text)
-                                            // Filter shell init noise (precmd, stty, PS1/PS2/PS3/PS4 overrides)
-                                            || line_text.contains("precmd()")
-                                            || line_text.starts_with("stty ")
-                                            || line_text.contains("PS1=''")
-                                            || line_text.contains("PS1=\"\"")
-                                            || line_text.contains("PROMPT_COMMAND=")
-                                            || line_text.starts_with("export PROMPT_COMMAND")
-                                            || (line_text.starts_with("precmd") && line_text.contains("PS"))
-                                        {
-                                            continue;
-                                        }
-
-                                        // Check if line looks like a shell prompt
-                                        // In SSH mode, be more lenient - remote shells may have different prompt formats
                                         let ends_with_prompt_char = line_text.ends_with("$ ")
                                             || line_text.ends_with("$")
                                             || line_text.ends_with("% ")
@@ -4108,57 +3958,71 @@ impl MosaicTermApp {
                                             || line_text.ends_with("# ")
                                             || line_text.ends_with("#");
 
-                                        let looks_like_prompt = ends_with_prompt_char
+                                        // Classic prompt: "user@host:path$ " or "user@host path% "
+                                        let classic_prompt = ends_with_prompt_char
                                             && (line_text.contains("@")
                                                 || line_text.contains(":")
                                                 || line_text.len() < 50
-                                                // In SSH mode, also accept short lines that look like prompts
-                                                || (self.ssh_session_active && line_text.len() < 100));
+                                                || (self.ssh_session_active
+                                                    && line_text.len() < 100));
+                                        // Oh My Zsh / Powerline prompt: " user@host  ~  " (no trailing $/%,
+                                        // but has user@host and ends with a path-like segment + whitespace)
+                                        let ohmyzsh_prompt = line_text.contains("@")
+                                            && line_text.len() < 120
+                                            && (line_text.trim_end().ends_with("~")
+                                                || line_text.trim_end().ends_with("/"));
+                                        let looks_like_prompt = classic_prompt || ohmyzsh_prompt;
 
-                                        // Check if line is command echo with prompt (SSH style: "user@host:~$ command")
-                                        let is_prompt_with_command = looks_like_prompt
-                                            || (self.ssh_session_active
-                                                && line_text.contains(&command_text));
+                                        // Detect user@host pattern (prompt from zsh/Oh My Zsh themes)
+                                        let has_user_at_host =
+                                            line_text.contains("@") && line_text.len() < 200;
+                                        // Prompt line with command echo:
+                                        //   " user@host  ~  eza -l"
+                                        let is_prompt_command_echo = has_user_at_host
+                                            && !command_text.is_empty()
+                                            && line_text.ends_with(&command_text);
 
-                                        // Skip if:
-                                        // 1. Exact match of command
-                                        // 2. First few lines and is a prefix of command (partial echo)
-                                        // 3. Contains "^C" (Ctrl+C echo from shell) or is empty
-                                        // 4. Looks like a shell prompt (for SSH sessions)
-                                        // 5. Is prompt + command (SSH echo: "user@host:~$ ls")
-                                        let is_ssh_prompt_skip =
-                                            self.ssh_session_active && looks_like_prompt;
+                                        // Filter prompts in BOTH local and SSH modes
                                         let should_skip = line_text == command_text
-                                                || (is_first_few_lines
-                                                    && !line_text.is_empty()
-                                                    && command_text.starts_with(line_text)
-                                                    && line_text.len() <= 3) // Only skip very short prefixes
-                                                || line_text.contains("^C") // Skip any line with Ctrl+C echo
-                                                || line_text.is_empty() // Skip empty lines
-                                                || is_ssh_prompt_skip // Skip prompts in SSH mode
-                                                || (self.ssh_session_active && is_prompt_with_command); // Skip prompt+command echo in SSH mode
+                                            || (is_first_few
+                                                && !line_text.is_empty()
+                                                && command_text.starts_with(line_text)
+                                                && line_text.len() <= 3)
+                                            || line_text.contains("^C")
+                                            || line_text.is_empty()
+                                            || looks_like_prompt
+                                            || is_prompt_command_echo;
 
-                                        // In SSH mode, mark command as complete when we see a prompt
-                                        // Works even for commands with no output (like cd)
-                                        if is_ssh_prompt_skip
+                                        // If we see a prompt and command is still running,
+                                        // mark completed with proper exit code
+                                        if looks_like_prompt
                                             && last_block.status
                                                 == mosaicterm::models::ExecutionStatus::Running
                                         {
-                                            let elapsed = if let Some(start) = last_command_time {
-                                                start.elapsed()
-                                            } else {
-                                                std::time::Duration::from_secs(0)
-                                            };
-                                            last_block.mark_completed(elapsed);
+                                            let elapsed = last_command_time
+                                                .map(|s| s.elapsed())
+                                                .unwrap_or_default();
+                                            let mut exit_code =
+                                                mosaicterm::pty::shell_state::read_exit_code(
+                                                    std::process::id(),
+                                                )
+                                                .unwrap_or(0);
+                                            if exit_code == 0 {
+                                                if let Some(err_code) =
+                                                    Self::detect_error_in_output(&last_block.output)
+                                                {
+                                                    exit_code = err_code;
+                                                }
+                                            }
+                                            last_block.mark_completed_with_code(elapsed, exit_code);
                                             should_clear_command_time = true;
                                             debug!(
-                                                "✅ SSH command completed (prompt in line batch): {}",
-                                                last_block.command
+                                                "Command completed (prompt in line batch, exit {}): {}",
+                                                exit_code, last_block.command
                                             );
                                         }
 
                                         if !should_skip {
-                                            // Truncate line if too long
                                             let mut line_to_add = line.clone();
                                             if line_to_add.text.len() > MAX_LINE_LENGTH {
                                                 line_to_add.text.truncate(MAX_LINE_LENGTH);
@@ -4168,19 +4032,38 @@ impl MosaicTermApp {
                                         }
                                     }
 
-                                    // Add all lines at once (batch operation)
                                     if !lines_to_add.is_empty() {
                                         last_block.add_output_lines(lines_to_add.clone());
                                         lines_count = lines_to_add.len();
+
+                                        // Eagerly detect shell errors in the new output.
+                                        // If the output contains "command not found" or similar,
+                                        // mark the block as failed right now.
+                                        if last_block.status
+                                            == mosaicterm::models::ExecutionStatus::Running
+                                        {
+                                            if let Some(err_code) =
+                                                Self::detect_error_in_output(&lines_to_add)
+                                            {
+                                                let elapsed = last_command_time
+                                                    .map(|s| s.elapsed())
+                                                    .unwrap_or_default();
+                                                last_block
+                                                    .mark_completed_with_code(elapsed, err_code);
+                                                should_clear_command_time = true;
+                                                debug!(
+                                                    "Command failed (error pattern in output, exit {}): {}",
+                                                    err_code, last_block.command
+                                                );
+                                            }
+                                        }
                                     }
 
-                                    // Check if we need to truncate old lines (after batch add)
                                     if last_block.output.len() > MAX_OUTPUT_LINES_PER_COMMAND {
                                         let to_remove = last_block.output.len()
                                             - MAX_OUTPUT_LINES_PER_COMMAND
                                             + 1000;
                                         last_block.output.drain(0..to_remove);
-                                        // Add truncation notice at the beginning
                                         let truncation_notice =
                                             mosaicterm::models::OutputLine::new(format!(
                                                 "... [truncated {} lines due to size limit] ...",
@@ -4193,316 +4076,191 @@ impl MosaicTermApp {
                                         );
                                     }
 
-                                    // Also handle partial data (no newlines) as immediate output
-                                    if !has_ready_lines {
-                                        let text = String::from_utf8_lossy(&data);
-                                        debug!("Processing partial data: '{}'", text.trim());
-
-                                        let trimmed_text = text.trim();
-
-                                        // Check if this looks like a shell prompt (for completion detection)
-                                        let looks_like_prompt = !trimmed_text.is_empty()
-                                            && (trimmed_text.ends_with("$ ")
-                                                || trimmed_text.ends_with("% ")
-                                                || trimmed_text.ends_with("> ")
-                                                || trimmed_text.ends_with("# ")  // root prompt
-                                                || trimmed_text.ends_with("$")
-                                                || trimmed_text.ends_with("%")
-                                                || trimmed_text.ends_with(">")
-                                                || trimmed_text.ends_with("#")   // root prompt
-                                                || (trimmed_text.contains("@")
-                                                    && (trimmed_text.contains("$")
-                                                        || trimmed_text.contains("%")
-                                                        || trimmed_text.contains("#"))));
-
-                                        // If this looks like a prompt, check if it's AFTER command output (indicating completion)
-                                        if looks_like_prompt {
-                                            debug!("🎯 Detected shell prompt: '{}'", trimmed_text);
-
-                                            // In SSH mode, don't add prompt to output - mark command as complete directly
-                                            if self.ssh_session_active {
-                                                // Mark command as complete when we see a prompt (even with no output)
-                                                if last_block.status
-                                                    == mosaicterm::models::ExecutionStatus::Running
-                                                {
-                                                    let elapsed =
-                                                        if let Some(start) = last_command_time {
-                                                            start.elapsed()
-                                                        } else {
-                                                            std::time::Duration::from_secs(0)
-                                                        };
-                                                    last_block.mark_completed(elapsed);
-                                                    should_clear_command_time = true;
-                                                    debug!(
-                                                        "✅ SSH command completed (prompt detected): {}",
-                                                        last_block.command
-                                                    );
-                                                }
+                                    // ---- Prompt-based completion detection ----
+                                    // Use the partial line from the OutputProcessor
+                                    // (already has OSC stripped) for prompt detection.
+                                    let prompt_detected =
+                                        if let Some(ref partial) = partial_line_text {
+                                            let pt = partial.trim();
+                                            if pt.is_empty() {
+                                                false
                                             } else {
-                                                // In local mode, add prompt for completion detection purposes
-                                                // Parse ANSI codes and add as output line for completion detection
-                                                let mut ansi_parser =
-                                                    mosaicterm::terminal::ansi_parser::AnsiParser::new(
-                                                    );
-                                                let parsed_result =
-                                                    ansi_parser.parse(trimmed_text).unwrap_or_else(|_| {
-                                                        mosaicterm::terminal::ansi_parser::ParsedText::new(
-                                                            trimmed_text.to_string(),
-                                                        )
-                                                    });
-
-                                                let clean_text = parsed_result.clean_text.clone();
-
-                                                // Add the prompt as an output line
-                                                let prompt_line =
-                                                    mosaicterm::models::OutputLine::with_ansi_codes(
-                                                        parsed_result.clean_text,
-                                                        parsed_result.ansi_codes,
-                                                        0,
-                                                    );
-                                                last_block.add_output_line(prompt_line);
-                                                debug!(
-                                                    "Added prompt line for completion detection: '{}'",
-                                                    clean_text
-                                                );
+                                                let classic = pt.ends_with("$ ")
+                                                    || pt.ends_with("$")
+                                                    || pt.ends_with("% ")
+                                                    || pt.ends_with("%")
+                                                    || pt.ends_with("> ")
+                                                    || pt.ends_with(">")
+                                                    || pt.ends_with("# ")
+                                                    || pt.ends_with("#")
+                                                    || (pt.contains("@")
+                                                        && (pt.contains("$")
+                                                            || pt.contains("%")
+                                                            || pt.contains("#")));
+                                                let ohmyzsh = pt.contains("@")
+                                                    && pt.len() < 120
+                                                    && (pt.trim_end().ends_with("~")
+                                                        || pt.trim_end().ends_with("/"));
+                                                classic || ohmyzsh
                                             }
-                                        // Regular output (not command echo, not prompt)
-                                        // In SSH mode, also skip lines that contain the command (prompt+command echo)
-                                        } else if !(trimmed_text.is_empty()
-                                            || trimmed_text == last_block.command.trim()
-                                            || looks_like_prompt
-                                            || (self.ssh_session_active
-                                                && trimmed_text
-                                                    .contains(last_block.command.trim())))
-                                        {
-                                            // Regular output (not command echo, not prompt)
-                                            // Parse ANSI codes from the text before adding to output
-                                            let mut ansi_parser =
-                                                mosaicterm::terminal::ansi_parser::AnsiParser::new(
-                                                );
-                                            let parsed_result =
-                                                ansi_parser.parse(trimmed_text).unwrap_or_else(|_| {
-                                                    mosaicterm::terminal::ansi_parser::ParsedText::new(
-                                                        trimmed_text.to_string(),
-                                                    )
-                                                });
-
-                                            let clean_text = parsed_result.clean_text.clone();
-
-                                            // Create output line with clean text and parsed ANSI codes
-                                            // Truncate if too long
-                                            let line_text = if parsed_result.clean_text.len()
-                                                > MAX_LINE_LENGTH
-                                            {
-                                                let mut truncated = parsed_result.clean_text
-                                                    [..MAX_LINE_LENGTH]
-                                                    .to_string();
-                                                truncated.push_str("... [truncated]");
-                                                truncated
-                                            } else {
-                                                parsed_result.clean_text
-                                            };
-                                            let partial_line =
-                                                mosaicterm::models::OutputLine::with_ansi_codes(
-                                                    line_text,
-                                                    parsed_result.ansi_codes,
-                                                    0,
-                                                );
-
-                                            last_block.add_output_line(partial_line);
-                                            debug!(
-                                                "Added partial data as output line (clean): '{}'",
-                                                clean_text
-                                            );
-
-                                            // Check if we need to truncate old lines (same check as above)
-                                            if last_block.output.len()
-                                                > MAX_OUTPUT_LINES_PER_COMMAND
-                                            {
-                                                let to_remove = last_block.output.len()
-                                                    - MAX_OUTPUT_LINES_PER_COMMAND
-                                                    + 1000;
-                                                last_block.output.drain(0..to_remove);
-                                                let truncation_notice = mosaicterm::models::OutputLine::new(
-                                                    format!("... [truncated {} lines due to size limit] ...", to_remove)
-                                                );
-                                                last_block.output.insert(0, truncation_notice);
-                                            }
-                                        }
-                                    }
-
-                                    // Prompt-based completion detection using existing CommandCompletionDetector
-                                    if let Some(start_time) = last_command_time {
-                                        let elapsed_ms = start_time.elapsed().as_millis();
-                                        let elapsed_secs = (elapsed_ms / 1000) as u64;
-
-                                        // Clone the necessary data to avoid borrowing conflicts
-                                        let output_lines_clone: Vec<_> = last_block.output.clone();
-                                        let command_clone = last_block.command.clone();
-
-                                        // Use the terminal's completion detector to check if command is done
-                                        let is_complete = if !output_lines_clone.is_empty() {
-                                            // Check if the latest output contains a shell prompt indicating completion
-                                            let recent_lines = if output_lines_clone.len() > 3 {
-                                                &output_lines_clone[output_lines_clone.len() - 3..]
-                                            } else {
-                                                &output_lines_clone
-                                            };
-
-                                            // Create a completion detector and check for command completion
-                                            // The detector will work on the clean text (without ANSI codes)
-                                            let completion_detector = mosaicterm::terminal::prompt::CommandCompletionDetector::new();
-                                            let is_complete = completion_detector
-                                                .is_command_complete(recent_lines);
-
-                                            // Debug: Log what we're checking for completion
-                                            if !is_complete && elapsed_ms > 500 {
-                                                // Only log after some time to avoid spam
-                                                debug!("🔍 Checking completion for command '{}' ({}ms elapsed)", command_clone, elapsed_ms);
-                                                for (i, line) in recent_lines.iter().enumerate() {
-                                                    debug!(
-                                                        "  Line {}: '{}'",
-                                                        i,
-                                                        line.text.replace('\n', "\\n")
-                                                    );
-                                                }
-                                            } else if is_complete {
-                                                debug!(
-                                                    "✅ Prompt detection found completion for: {}",
-                                                    command_clone
-                                                );
-                                                for (i, line) in recent_lines.iter().enumerate() {
-                                                    debug!(
-                                                        "  Completion line {}: '{}'",
-                                                        i, line.text
-                                                    );
-                                                }
-                                            }
-
-                                            is_complete
                                         } else {
                                             false
                                         };
 
-                                        // Check if command might be interactive/long-running (for fallback timeout)
-                                        let is_interactive_command =
-                                            last_block.command.contains("top")
-                                                || last_block.command.contains("htop")
-                                                || last_block.command.contains("vim")
-                                                || last_block.command.contains("nano")
-                                                || last_block.command.contains("less")
-                                                || last_block.command.contains("man")
-                                                || last_block.command.starts_with("ssh ")
-                                                || last_block.command.contains(" | ")
-                                                || last_block.command.contains(" > ")
-                                                || last_block.command.contains(" >> ");
-
-                                        // Get timeout configuration
-                                        let timeout_config =
-                                            &self.runtime_config.config().terminal.timeout;
-                                        let timeout_secs = if is_interactive_command {
-                                            timeout_config.interactive_command_timeout_secs
-                                        } else {
-                                            timeout_config.regular_command_timeout_secs
-                                        };
-
-                                        if is_complete {
-                                            // Command completed based on prompt detection - mark as completed
-                                            last_block.mark_completed(
-                                                std::time::Duration::from_millis(
-                                                    elapsed_ms.try_into().unwrap_or(1000),
-                                                ),
-                                            );
-                                            should_clear_command_time = true;
-                                            debug!(
-                                            "✅ Command completed based on prompt detection: {}",
-                                            last_block.command
+                                    if prompt_detected
+                                        && last_block.status
+                                            == mosaicterm::models::ExecutionStatus::Running
+                                    {
+                                        let elapsed = last_command_time
+                                            .map(|s| s.elapsed())
+                                            .unwrap_or_default();
+                                        let mut exit_code =
+                                            mosaicterm::pty::shell_state::read_exit_code(
+                                                std::process::id(),
+                                            )
+                                            .unwrap_or(0);
+                                        if exit_code == 0 {
+                                            if let Some(err_code) =
+                                                Self::detect_error_in_output(&last_block.output)
+                                            {
+                                                exit_code = err_code;
+                                            }
+                                        }
+                                        last_block.mark_completed_with_code(elapsed, exit_code);
+                                        should_clear_command_time = true;
+                                        debug!(
+                                            "Command completed (prompt in partial, exit {}): {}",
+                                            exit_code, last_block.command
                                         );
-                                        } else if timeout_secs > 0 && elapsed_secs >= timeout_secs {
-                                            // Command has exceeded configured timeout
-                                            warn!(
-                                                "⏰ Command exceeded timeout of {}s: {}",
-                                                timeout_secs, command_clone
-                                            );
+                                    }
 
-                                            // Add timeout notice to output
-                                            let timeout_notice =
-                                                mosaicterm::models::OutputLine::new(format!(
-                                                    "\n[Timeout: Command exceeded {}s limit]",
-                                                    timeout_secs
-                                                ));
-                                            last_block.output.push(timeout_notice);
+                                    // Also check completed lines for prompt-based completion
+                                    if !should_clear_command_time {
+                                        if let Some(start_time) = last_command_time {
+                                            let elapsed_ms = start_time.elapsed().as_millis();
+                                            let elapsed_secs = (elapsed_ms / 1000) as u64;
 
-                                            // Mark as completed (with timeout flag)
-                                            last_block.mark_completed(
-                                                std::time::Duration::from_secs(timeout_secs),
-                                            );
-                                            should_clear_command_time = true;
+                                            let output_lines_clone: Vec<_> =
+                                                last_block.output.clone();
+                                            let command_clone = last_block.command.clone();
 
-                                            // If kill_on_timeout is true, send kill signal to PTY process
-                                            if timeout_config.kill_on_timeout {
-                                                info!(
-                                                    "Killing timed-out command: {}",
-                                                    command_clone
-                                                );
-                                                let kill_result = if let Some(terminal) =
-                                                    &self.terminal
-                                                {
-                                                    if let Some(handle) = terminal.pty_handle() {
-                                                        let handle_id = handle.id.clone();
-                                                        // Send kill signal asynchronously
-                                                        self.async_tx
-                                                            .send(AsyncRequest::SendInterrupt(
-                                                                handle_id.clone(),
-                                                            ))
-                                                            .map_err(|e| e.to_string())
-                                                    } else {
-                                                        Err("No PTY handle available".to_string())
-                                                    }
+                                            let is_complete = if !output_lines_clone.is_empty() {
+                                                let recent_lines = if output_lines_clone.len() > 3 {
+                                                    &output_lines_clone
+                                                        [output_lines_clone.len() - 3..]
                                                 } else {
-                                                    Err("No terminal available".to_string())
+                                                    &output_lines_clone
                                                 };
+                                                let detector = mosaicterm::terminal::prompt::CommandCompletionDetector::new();
+                                                detector.is_command_complete(recent_lines)
+                                            } else {
+                                                false
+                                            };
 
-                                                match kill_result {
-                                                    Ok(_) => {
-                                                        info!("Kill signal sent for timed-out command");
-                                                        timeout_kill_status_message = Some(format!(
+                                            let is_interactive_command =
+                                                last_block.command.contains("top")
+                                                    || last_block.command.contains("htop")
+                                                    || last_block.command.contains("vim")
+                                                    || last_block.command.contains("nano")
+                                                    || last_block.command.contains("less")
+                                                    || last_block.command.contains("man")
+                                                    || last_block.command.starts_with("ssh ")
+                                                    || last_block.command.contains(" | ")
+                                                    || last_block.command.contains(" > ")
+                                                    || last_block.command.contains(" >> ");
+
+                                            let timeout_config =
+                                                &self.runtime_config.config().terminal.timeout;
+                                            let timeout_secs = if is_interactive_command {
+                                                timeout_config.interactive_command_timeout_secs
+                                            } else {
+                                                timeout_config.regular_command_timeout_secs
+                                            };
+
+                                            if is_complete {
+                                                let mut exit_code =
+                                                    mosaicterm::pty::shell_state::read_exit_code(
+                                                        std::process::id(),
+                                                    )
+                                                    .unwrap_or(0);
+                                                if exit_code == 0 {
+                                                    if let Some(err_code) =
+                                                        Self::detect_error_in_output(
+                                                            &output_lines_clone,
+                                                        )
+                                                    {
+                                                        exit_code = err_code;
+                                                    }
+                                                }
+                                                last_block.mark_completed_with_code(
+                                                    std::time::Duration::from_millis(
+                                                        elapsed_ms.try_into().unwrap_or(1000),
+                                                    ),
+                                                    exit_code,
+                                                );
+                                                should_clear_command_time = true;
+                                                debug!(
+                                                    "Command completed based on prompt detection (exit {}): {}",
+                                                    exit_code, command_clone
+                                                );
+                                            } else if timeout_secs > 0
+                                                && elapsed_secs >= timeout_secs
+                                            {
+                                                warn!(
+                                                    "Command exceeded timeout of {}s: {}",
+                                                    timeout_secs, command_clone
+                                                );
+                                                let timeout_notice =
+                                                    mosaicterm::models::OutputLine::new(format!(
+                                                        "\n[Timeout: Command exceeded {}s limit]",
+                                                        timeout_secs
+                                                    ));
+                                                last_block.output.push(timeout_notice);
+                                                last_block.mark_completed(
+                                                    std::time::Duration::from_secs(timeout_secs),
+                                                );
+                                                should_clear_command_time = true;
+
+                                                if timeout_config.kill_on_timeout {
+                                                    info!(
+                                                        "Killing timed-out command: {}",
+                                                        command_clone
+                                                    );
+                                                    let kill_result = if let Some(terminal) =
+                                                        &self.terminal
+                                                    {
+                                                        if let Some(handle) = terminal.pty_handle()
+                                                        {
+                                                            let handle_id = handle.id.clone();
+                                                            self.async_tx
+                                                                .send(AsyncRequest::SendInterrupt(
+                                                                    handle_id.clone(),
+                                                                ))
+                                                                .map_err(|e| e.to_string())
+                                                        } else {
+                                                            Err("No PTY handle available"
+                                                                .to_string())
+                                                        }
+                                                    } else {
+                                                        Err("No terminal available".to_string())
+                                                    };
+
+                                                    match kill_result {
+                                                        Ok(_) => {
+                                                            info!("Kill signal sent for timed-out command");
+                                                            timeout_kill_status_message = Some(format!(
                                                                 "Command timed out and was killed after {}s",
                                                                 timeout_secs
                                                             ));
-                                                    }
-                                                    Err(e) => {
-                                                        error!("Failed to send kill request for timeout: {}", e);
-                                                        timeout_kill_status_message = Some(format!(
+                                                        }
+                                                        Err(e) => {
+                                                            error!("Failed to send kill request for timeout: {}", e);
+                                                            timeout_kill_status_message = Some(format!(
                                                                 "Failed to kill timed-out command: {}",
                                                                 e
                                                             ));
+                                                        }
                                                     }
-                                                }
-                                            }
-                                        } else if !is_interactive_command
-                                            && elapsed_ms > 1000
-                                            && !output_lines_clone.is_empty()
-                                        {
-                                            // For regular commands, use simple completion detection as fallback
-                                            // Check if the last line looks like it could be a prompt or completion
-                                            if let Some(last_line) = output_lines_clone.last() {
-                                                let text = last_line.text.trim();
-                                                // Simple heuristics for completion detection
-                                                let looks_complete = text.is_empty() ||  // Empty line often indicates completion
-                                                text.ends_with("$") ||              // Shell prompt ending
-                                                text.ends_with("%") ||              // Zsh prompt ending
-                                                text.ends_with(">") ||              // Fish/PowerShell prompt ending
-                                                text.contains("@") && (text.contains("$") || text.contains("%")); // user@host$ pattern
-
-                                                if looks_complete {
-                                                    last_block.mark_completed(
-                                                        std::time::Duration::from_millis(
-                                                            elapsed_ms.try_into().unwrap_or(1000),
-                                                        ),
-                                                    );
-                                                    should_clear_command_time = true;
-                                                    debug!("✅ Command completed based on simple heuristics: {} (last line: '{}')", command_clone, text);
                                                 }
                                             }
                                         }
@@ -4510,13 +4268,11 @@ impl MosaicTermApp {
                                 }
                             }
 
-                            // Update statistics after borrow ends
                             if lines_count > 0 {
                                 self.state_manager.statistics_mut().total_output_lines +=
                                     lines_count;
                             }
 
-                            // Clear command time if needed (after borrow ends)
                             if should_clear_command_time {
                                 self.state_manager.clear_last_command_time();
                                 should_update_contexts = true;
@@ -4553,77 +4309,162 @@ impl MosaicTermApp {
             }
         }
 
-        // Update contexts after pty_manager borrow is released
-        if should_update_contexts {
-            self.update_contexts();
-
-            // Also trigger environment query
+        // Idle prompt detection: check the OutputProcessor's partial line
+        // for a shell prompt even when no new data has arrived.  This catches
+        // fast-failing commands (typos, command-not-found) where the error +
+        // prompt arrive in one burst and no subsequent data triggers the
+        // in-data-handler check.
+        if !should_update_contexts && !self.ssh_session_active {
             if let Some(terminal) = &self.terminal {
-                if let Some(handle) = terminal.pty_handle() {
-                    let marker = "MOSAICTERM_ENV_QUERY";
-                    let query_cmd = format!(
-                        concat!(
-                            "echo '{}:START';",
-                            " echo \"VIRTUAL_ENV=${{VIRTUAL_ENV}}\";",
-                            " echo \"CONDA_DEFAULT_ENV=${{CONDA_DEFAULT_ENV}}\";",
-                            " echo \"CONDA_PREFIX=${{CONDA_PREFIX}}\";",
-                            " echo \"NVM_BIN=${{NVM_BIN}}\";",
-                            " echo \"RBENV_VERSION=${{RBENV_VERSION}}\";",
-                            " echo \"rvm_ruby_string=${{rvm_ruby_string}}\";",
-                            " echo \"DIRENV_DIR=${{DIRENV_DIR}}\";",
-                            " echo \"GOVERSION=${{GOVERSION}}\";",
-                            " echo \"JAVA_HOME=${{JAVA_HOME}}\";",
-                            " echo \"RUSTUP_TOOLCHAIN=${{RUSTUP_TOOLCHAIN}}\";",
-                            " echo \"DOCKER_HOST=${{DOCKER_HOST}}\";",
-                            " echo \"DOCKER_CONTEXT=${{DOCKER_CONTEXT}}\";",
-                            " echo \"KUBECONFIG=${{KUBECONFIG}}\";",
-                            " echo \"AWS_PROFILE=${{AWS_PROFILE}}\";",
-                            " echo \"AWS_DEFAULT_PROFILE=${{AWS_DEFAULT_PROFILE}}\";",
-                            " echo \"TF_WORKSPACE=${{TF_WORKSPACE}}\";",
-                            " echo '{}:END'\n",
-                        ),
-                        marker, marker
-                    );
+                if let Some(partial) = terminal.peek_partial_line() {
+                    let pt = partial.trim();
+                    let prompt_detected = if pt.is_empty() {
+                        false
+                    } else {
+                        let classic = pt.ends_with("$ ")
+                            || pt.ends_with("$")
+                            || pt.ends_with("% ")
+                            || pt.ends_with("%")
+                            || pt.ends_with("> ")
+                            || pt.ends_with(">")
+                            || pt.ends_with("# ")
+                            || pt.ends_with("#")
+                            || (pt.contains("@")
+                                && (pt.contains("$") || pt.contains("%") || pt.contains("#")));
+                        let ohmyzsh = pt.contains("@")
+                            && pt.len() < 120
+                            && (pt.trim_end().ends_with("~") || pt.trim_end().ends_with("/"));
+                        classic || ohmyzsh
+                    };
 
-                    info!("Sending environment query command");
-                    // Try to send query (non-blocking)
-                    // PtyManager is already async and thread-safe, no lock needed
-                    let pty_manager = &*self.pty_manager;
-                    match futures::executor::block_on(async {
-                        pty_manager.send_input(handle, query_cmd.as_bytes()).await
-                    }) {
-                        Ok(_) => info!("Successfully sent environment query"),
-                        Err(e) => warn!("Failed to send environment query: {}", e),
+                    if prompt_detected {
+                        let last_command_time = self.state_manager.last_command_time();
+                        let mut did_complete = false;
+                        if let Some(history) = self.state_manager.command_history_mut() {
+                            if let Some(last_block) = history.last_mut() {
+                                if last_block.status == mosaicterm::models::ExecutionStatus::Running
+                                {
+                                    let elapsed =
+                                        last_command_time.map(|t| t.elapsed()).unwrap_or_default();
+                                    let mut exit_code =
+                                        mosaicterm::pty::shell_state::read_exit_code(
+                                            std::process::id(),
+                                        )
+                                        .unwrap_or(0);
+                                    if exit_code == 0 {
+                                        if let Some(err_code) =
+                                            Self::detect_error_in_output(&last_block.output)
+                                        {
+                                            exit_code = err_code;
+                                        }
+                                    }
+                                    last_block.mark_completed_with_code(elapsed, exit_code);
+                                    did_complete = true;
+                                    debug!(
+                                        "Command completed (idle prompt check, exit {}): {}",
+                                        exit_code, last_block.command
+                                    );
+                                }
+                            }
+                        }
+                        if did_complete {
+                            self.state_manager.clear_last_command_time();
+                            should_update_contexts = true;
+                        }
                     }
                 }
             }
-
-            self.update_prompt();
         }
 
-        // Parse environment output if we received one
-        if let Some(env_output) = env_query_output {
-            self.parse_env_output(&env_output);
-            self.update_prompt();
-        }
+        // Process-tree-based command completion: poll whether the shell
+        // still has child processes.  When children disappear the command is done.
+        if !should_update_contexts && !self.ssh_session_active {
+            if let Some(terminal) = &self.terminal {
+                if let Some(handle) = terminal.pty_handle() {
+                    if let Some(shell_pid) = handle.pid {
+                        let has_children =
+                            mosaicterm::pty::shell_state::has_foreground_children(shell_pid);
 
-        // Sync working directory if cd command completed
-        if let Some((current_tracked, canonical_dir)) = should_update_working_dir {
-            if let Some(terminal) = &mut self.terminal {
-                info!(
-                    "Syncing working directory from shell: {:?} -> {:?}",
-                    current_tracked, canonical_dir
-                );
-                terminal.set_working_directory(canonical_dir.clone());
-                self.state_manager
-                    .set_previous_directory(Some(current_tracked));
-                self.update_contexts();
-                self.update_prompt();
+                        if self.shell_had_children && !has_children {
+                            // Transition: children → no children → command finished
+                            debug!(
+                                "Shell {} children gone, marking command complete",
+                                shell_pid
+                            );
 
-                if self.tool_availability.zoxide {
-                    Self::zoxide_add_background(&canonical_dir);
+                            let last_command_time = self.state_manager.last_command_time();
+                            if let Some(history) = self.state_manager.command_history_mut() {
+                                if let Some(last_block) = history.last_mut() {
+                                    if last_block.status
+                                        == mosaicterm::models::ExecutionStatus::Running
+                                    {
+                                        let elapsed = last_command_time
+                                            .map(|t| t.elapsed())
+                                            .unwrap_or_default();
+                                        let elapsed_ms = elapsed.as_millis();
+
+                                        let mut exit_code =
+                                            mosaicterm::pty::shell_state::read_exit_code(
+                                                std::process::id(),
+                                            )
+                                            .unwrap_or(0);
+                                        if exit_code == 0 {
+                                            if let Some(err_code) =
+                                                Self::detect_error_in_output(&last_block.output)
+                                            {
+                                                exit_code = err_code;
+                                            }
+                                        }
+
+                                        if exit_code == 0 {
+                                            last_block.mark_completed(elapsed);
+                                        } else {
+                                            last_block.mark_failed(elapsed, exit_code);
+                                        }
+                                        debug!(
+                                            "Command '{}' finished via process tree (exit {})",
+                                            last_block.command, exit_code
+                                        );
+
+                                        if !self.window_has_focus
+                                            && elapsed_ms >= bg_notification_threshold_ms
+                                        {
+                                            let cmd_short = if last_block.command.len() > 40 {
+                                                format!("{}...", &last_block.command[..40])
+                                            } else {
+                                                last_block.command.clone()
+                                            };
+                                            let status_str = if exit_code == 0 {
+                                                "completed"
+                                            } else {
+                                                "failed"
+                                            };
+                                            send_system_notification(
+                                                "MosaicTerm",
+                                                &format!(
+                                                    "Command {} ({}s): {}",
+                                                    status_str,
+                                                    elapsed_ms / 1000,
+                                                    cmd_short
+                                                ),
+                                            );
+                                        }
+
+                                        self.state_manager.clear_last_command_time();
+                                        should_update_contexts = true;
+                                    }
+                                }
+                            }
+                        }
+                        self.shell_had_children = has_children;
+                    }
                 }
             }
+        }
+
+        // After command completes, sync CWD and env context from the OS
+        if should_update_contexts {
+            self.sync_shell_state();
         }
     }
 }

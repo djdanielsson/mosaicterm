@@ -6,7 +6,7 @@
 mod app;
 
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process;
 
 use tracing::{debug, error, info, warn};
@@ -387,40 +387,51 @@ fn create_native_options(args: &AppArgs) -> Result<eframe::NativeOptions> {
     Ok(options)
 }
 
-/// Create window icon
-fn create_window_icon() -> eframe::egui::IconData {
-    // Create a simple terminal-inspired icon
-    // This creates a 32x32 icon with a terminal-like appearance
+/// The application icon, embedded at compile time so it is always available
+/// regardless of the working directory or install location.
+const EMBEDDED_ICON_PNG: &[u8] = include_bytes!("../icon.png");
+
+/// Load the embedded icon.png, falling back to a generated procedural icon.
+fn load_or_create_window_icon() -> eframe::egui::IconData {
+    if let Ok(img) = image::load_from_memory(EMBEDDED_ICON_PNG) {
+        let rgba = img.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        info!("Loaded embedded window icon ({}x{})", width, height);
+        return eframe::egui::IconData {
+            rgba: rgba.into_raw(),
+            width,
+            height,
+        };
+    }
+
+    warn!("Failed to decode embedded icon, using procedural fallback");
+    create_fallback_icon()
+}
+
+/// Procedural 32x32 icon used only if the embedded PNG cannot be decoded.
+fn create_fallback_icon() -> eframe::egui::IconData {
     let mut rgba = Vec::with_capacity(32 * 32 * 4);
+    let bg = [32u8, 32, 48, 255];
+    let fg = [100u8, 220, 100, 255];
+    let accent = [150u8, 150, 200, 255];
 
-    // Terminal colors
-    let bg_color = [32, 32, 48, 255]; // Dark background
-    let fg_color = [100, 220, 100, 255]; // Green foreground
-    let accent_color = [150, 150, 200, 255]; // Light accent
-
-    for y in 0..32 {
-        for x in 0..32 {
+    for y in 0..32u32 {
+        for x in 0..32u32 {
             let pixel = if (4..28).contains(&x) && (4..28).contains(&y) {
-                // Terminal window area
                 if y < 8 {
-                    // Title bar
-                    bg_color
+                    bg
                 } else if (6..26).contains(&x) && (10..26).contains(&y) {
-                    // Terminal content area with some pattern
                     match (x + y) % 7 {
-                        0 => fg_color, // Terminal text
-                        1 => fg_color,
-                        2 => accent_color,
-                        _ => bg_color, // Background
+                        0 | 1 => fg,
+                        2 => accent,
+                        _ => bg,
                     }
                 } else {
-                    bg_color
+                    bg
                 }
             } else {
-                // Border/frame
-                bg_color
+                bg
             };
-
             rgba.extend_from_slice(&pixel);
         }
     }
@@ -430,57 +441,6 @@ fn create_window_icon() -> eframe::egui::IconData {
         width: 32,
         height: 32,
     }
-}
-
-/// Try loading `icon.png` from project root or current working directory; fallback to generated icon
-fn load_or_create_window_icon() -> eframe::egui::IconData {
-    if let Some(path) = find_icon_path() {
-        if let Ok(img) = image::open(&path) {
-            let rgba = img.to_rgba8();
-            let (width, height) = rgba.dimensions();
-            info!("Loaded window icon from {}", path.display());
-            return eframe::egui::IconData {
-                rgba: rgba.into_raw(),
-                width,
-                height,
-            };
-        }
-    }
-
-    info!("Using generated fallback window icon");
-    create_window_icon()
-}
-
-fn find_icon_path() -> Option<std::path::PathBuf> {
-    let static_candidates: &[&str] = &["icon.png", "bin/mosaicterm/icon.png", "../icon.png"];
-
-    for c in static_candidates {
-        let p = Path::new(c);
-        if p.exists() {
-            return Some(p.to_path_buf());
-        }
-    }
-
-    // Search relative to executable location
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            for depth in 0..3 {
-                let mut search = dir.to_path_buf();
-                for _ in 0..depth {
-                    search = match search.parent() {
-                        Some(p) => p.to_path_buf(),
-                        None => break,
-                    };
-                }
-                let candidate = search.join("icon.png");
-                if candidate.exists() {
-                    return Some(candidate);
-                }
-            }
-        }
-    }
-
-    None
 }
 
 #[cfg(test)]
@@ -525,7 +485,7 @@ mod tests {
 
     #[test]
     fn test_window_icon_creation() {
-        let icon = create_window_icon();
+        let icon = create_fallback_icon();
         assert_eq!(icon.width, 32);
         assert_eq!(icon.height, 32);
         assert_eq!(icon.rgba.len(), 32 * 32 * 4); // RGBA = 4 bytes per pixel
