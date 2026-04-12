@@ -159,13 +159,13 @@ impl SshPromptOverlay {
         egui::Area::new(egui::Id::new("ssh_prompt_backdrop"))
             .fixed_pos(egui::Pos2::ZERO)
             .show(ctx, |ui| {
-                let screen_rect = ctx.screen_rect();
+                let screen_rect = ctx.content_rect();
                 ui.allocate_space(screen_rect.size());
 
                 // Semi-transparent backdrop
                 ui.painter().rect_filled(
                     screen_rect,
-                    0.0,
+                    egui::CornerRadius::ZERO,
                     egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180),
                 );
             });
@@ -204,7 +204,7 @@ impl SshPromptOverlay {
                                 egui::RichText::new(message)
                                     .color(egui::Color32::from_rgb(220, 220, 220)),
                             )
-                            .wrap(true),
+                            .wrap(),
                         );
                     });
                 });

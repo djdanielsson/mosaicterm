@@ -22,8 +22,9 @@
 //! ```
 
 use chrono::{DateTime, Utc};
+use portable_pty::{MasterPty, PtySize};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -79,6 +80,8 @@ pub struct PtyInfo {
 struct PtyEntry {
     process: PtyProcess,
     streams: PtyStreams,
+    /// Wrapped in Mutex because MasterPty is Send but not Sync
+    master: Mutex<Box<dyn MasterPty + Send>>,
 }
 
 /// Main PTY manager with per-terminal locks for better concurrency
@@ -138,16 +141,18 @@ impl PtyManager {
         // Create PTY handle
         let mut handle = PtyHandle::new();
 
-        // Spawn the PTY process
-        let (process, streams) = spawn_pty_process(command, args, env, working_directory).await?;
+        let (process, streams, master) =
+            spawn_pty_process(command, args, env, working_directory).await?;
 
-        // Set the PID in the handle
         if let Some(pid) = process.pid {
             handle.pid = Some(pid);
         }
 
-        // Create entry with its own lock
-        let entry = Arc::new(RwLock::new(PtyEntry { process, streams }));
+        let entry = Arc::new(RwLock::new(PtyEntry {
+            process,
+            streams,
+            master: Mutex::new(master),
+        }));
 
         // Store in the global map
         let handle_id = handle.id.clone();
@@ -241,6 +246,33 @@ impl PtyManager {
             entry.streams.write(data).await
         } else {
             Err(Error::PtyStreamsNotFound {
+                handle_id: handle.id.to_string(),
+            })
+        }
+    }
+
+    /// Resize the PTY terminal dimensions
+    pub async fn resize_pty(&self, handle: &PtyHandle, rows: u16, cols: u16) -> Result<()> {
+        let terminals = self.terminals.read().await;
+        if let Some(entry_lock) = terminals.get(&handle.id) {
+            let entry = entry_lock.read().await;
+            let master = entry.master.lock().map_err(|e| Error::PtyCreationFailed {
+                command: "resize".to_string(),
+                reason: format!("mutex poisoned: {}", e),
+            })?;
+            master
+                .resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(|e| Error::PtyCreationFailed {
+                    command: "resize".to_string(),
+                    reason: e.to_string(),
+                })
+        } else {
+            Err(Error::PtyHandleNotFound {
                 handle_id: handle.id.to_string(),
             })
         }

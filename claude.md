@@ -5,7 +5,7 @@
 MosaicTerm is a Rust GUI terminal emulator inspired by Warp. Commands and their outputs are grouped into discrete, scrollable "blocks" with a permanently pinned input prompt at the bottom. It runs zsh (with Oh My Zsh, plugins, themes, completions, fzf, etc.) inside a PTY and renders the UI with egui/eframe.
 
 - **Language**: Rust (stable, 1.90+)
-- **Version**: 0.4.1
+- **Version**: 0.5.1
 - **License**: MIT
 - **Platforms**: macOS (primary), Linux, Windows
 

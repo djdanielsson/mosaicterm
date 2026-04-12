@@ -77,7 +77,7 @@ impl MosaicTermApp {
         }
 
         // Only handle other shortcuts when no text input is focused
-        if ctx.memory(|mem| mem.focus().is_none()) {
+        if ctx.memory(|mem| mem.focused().is_none()) {
             // Application shortcuts
             if ctx.input(|i| i.key_pressed(egui::Key::Q) && i.modifiers.ctrl) {
                 self.handle_exit();

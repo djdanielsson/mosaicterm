@@ -109,12 +109,12 @@ impl InputPrompt {
         let mut submitted_command = None;
 
         // Create a styled frame for the input area with better positioning
-        let input_frame = egui::Frame::none()
+        let input_frame = egui::Frame::new()
             .fill(egui::Color32::from_rgba_premultiplied(20, 20, 30, 220))
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 70, 90)))
-            .inner_margin(egui::Margin::symmetric(16.0, 12.0))
-            .outer_margin(egui::Margin::symmetric(8.0, 6.0))
-            .rounding(egui::Rounding::same(6.0));
+            .inner_margin(egui::Margin::symmetric(16, 12))
+            .outer_margin(egui::Margin::symmetric(8, 6))
+            .corner_radius(egui::CornerRadius::same(6));
 
         input_frame.show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -145,7 +145,9 @@ impl InputPrompt {
                     if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), input_response.id)
                     {
                         let ccursor = egui::text::CCursor::new(self.cursor_position);
-                        state.set_ccursor_range(Some(egui::text::CCursorRange::one(ccursor)));
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
                         state.store(ui.ctx(), input_response.id);
                     }
                     self.request_focus = false;
@@ -158,18 +160,20 @@ impl InputPrompt {
                     let rect = input_response.rect.expand(2.0);
                     painter.rect_stroke(
                         rect,
-                        4.0,
+                        egui::CornerRadius::same(4),
                         egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 150, 255)),
+                        egui::StrokeKind::Outside,
                     );
 
                     // Add subtle glow effect
                     painter.rect_stroke(
                         rect.expand(1.0),
-                        4.0,
+                        egui::CornerRadius::same(4),
                         egui::Stroke::new(
                             1.0,
                             egui::Color32::from_rgba_premultiplied(100, 150, 255, 100),
                         ),
+                        egui::StrokeKind::Outside,
                     );
                 }
 
@@ -196,7 +200,7 @@ impl InputPrompt {
             });
 
             // Enhanced history hint with better positioning
-            if ui.memory(|mem| mem.focus().is_some()) {
+            if ui.memory(|mem| mem.focused().is_some()) {
                 ui.add_space(6.0);
                 ui.separator();
                 ui.add_space(4.0);

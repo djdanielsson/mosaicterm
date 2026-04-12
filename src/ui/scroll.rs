@@ -144,8 +144,8 @@ impl ScrollableHistory {
 
         // Handle mouse wheel events for smooth scrolling
         ui.input(|input| {
-            if input.scroll_delta.y != 0.0 {
-                self.handle_mouse_wheel(input.scroll_delta);
+            if input.smooth_scroll_delta.y != 0.0 {
+                self.handle_mouse_wheel(input.smooth_scroll_delta);
             }
         });
 
@@ -229,7 +229,8 @@ impl ScrollableHistory {
             egui::Color32::from_rgb(35, 35, 45)
         };
 
-        ui.painter().rect_filled(block_response.rect, 4.0, bg_color);
+        ui.painter()
+            .rect_filled(block_response.rect, egui::CornerRadius::same(4), bg_color);
 
         // Block border
         let border_color = if is_hovered {
@@ -240,29 +241,33 @@ impl ScrollableHistory {
 
         ui.painter().rect_stroke(
             block_response.rect,
-            4.0,
+            egui::CornerRadius::same(4),
             egui::Stroke::new(1.0, border_color),
+            egui::StrokeKind::Outside,
         );
 
         // Block content
-        ui.allocate_ui_at_rect(block_response.rect.shrink(8.0), |ui| {
-            ui.vertical(|ui| {
-                // Block header with index
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(format!("[{}]", index + 1))
-                            .font(egui::FontId::monospace(10.0))
-                            .color(egui::Color32::LIGHT_GRAY),
-                    );
+        ui.scope_builder(
+            egui::UiBuilder::new().max_rect(block_response.rect.shrink(8.0)),
+            |ui| {
+                ui.vertical(|ui| {
+                    // Block header with index
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("[{}]", index + 1))
+                                .font(egui::FontId::monospace(10.0))
+                                .color(egui::Color32::LIGHT_GRAY),
+                        );
 
-                    ui.label(
-                        egui::RichText::new(block)
-                            .font(egui::FontId::monospace(12.0))
-                            .color(egui::Color32::WHITE),
-                    );
+                        ui.label(
+                            egui::RichText::new(block)
+                                .font(egui::FontId::monospace(12.0))
+                                .color(egui::Color32::WHITE),
+                        );
+                    });
                 });
-            });
-        });
+            },
+        );
 
         // Handle click for selection
         if block_response.clicked() {
@@ -284,8 +289,11 @@ impl ScrollableHistory {
         );
 
         // Scrollbar background
-        ui.painter()
-            .rect_filled(scrollbar_rect, 0.0, self.scrollbar_config.background_color);
+        ui.painter().rect_filled(
+            scrollbar_rect,
+            egui::CornerRadius::ZERO,
+            self.scrollbar_config.background_color,
+        );
 
         // Calculate handle size and position
         let handle_height =
@@ -309,7 +317,8 @@ impl ScrollableHistory {
         };
 
         // Draw handle
-        ui.painter().rect_filled(handle_rect, 4.0, handle_color);
+        ui.painter()
+            .rect_filled(handle_rect, egui::CornerRadius::same(4), handle_color);
 
         // Handle drag
         if let Some(drag_delta) = handle_response.interact_pointer_pos() {

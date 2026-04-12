@@ -2056,7 +2056,11 @@ impl MosaicTermApp {
 }
 
 impl eframe::App for MosaicTermApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // Own a clone so we can pass `&mut ui` to nested UIs (e.g. TUI overlay) while still using ctx.
+        let ctx_owned = ui.ctx().clone();
+        let ctx: &egui::Context = &ctx_owned;
+
         // Track window focus state for background notifications
         self.window_has_focus = ctx.input(|i| i.focused);
 
@@ -2174,17 +2178,17 @@ impl eframe::App for MosaicTermApp {
 
         // Show loading overlay if active
         if self.state_manager.is_loading() {
-            egui::Area::new("loading_overlay")
+            egui::Area::new(egui::Id::new("loading_overlay"))
                 .fixed_pos(egui::pos2(10.0, 10.0))
                 .show(ctx, |ui| {
-                    let frame = egui::Frame::none()
+                    let frame = egui::Frame::new()
                         .fill(egui::Color32::from_rgba_premultiplied(30, 30, 40, 240))
                         .stroke(egui::Stroke::new(
                             1.0,
                             egui::Color32::from_rgb(100, 100, 200),
                         ))
-                        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-                        .rounding(egui::Rounding::same(4.0));
+                        .inner_margin(egui::Margin::symmetric(12, 8))
+                        .corner_radius(egui::CornerRadius::same(4));
 
                     frame.show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -2298,51 +2302,8 @@ impl eframe::App for MosaicTermApp {
             self.render_dev_panel(ctx);
         }
 
-        // Main layout with scrollable history and pinned input
-        egui::CentralPanel::default()
-            .frame(
-                egui::Frame::none()
-                    .fill(self.ui_colors.background)
-                    .inner_margin(egui::Margin::same(2.0)),
-            )
-            .show(ctx, |ui| {
-                let available_height = ui.available_height();
-                let input_height = 60.0;
-                let history_height = (available_height - input_height).max(100.0);
-
-                // Layout from bottom to top: input at bottom, then history above it
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    // FIXED INPUT AREA AT BOTTOM - This stays static
-                    ui.allocate_ui_with_layout(
-                        egui::Vec2::new(ui.available_width(), input_height),
-                        egui::Layout::left_to_right(egui::Align::LEFT),
-                        |ui| {
-                            self.render_fixed_input_area(ui);
-                        },
-                    );
-
-                    // HISTORY AREA ABOVE INPUT - Scrollable, with commands stacking from newest to oldest
-                    ui.allocate_ui_with_layout(
-                        egui::Vec2::new(ui.available_width(), history_height),
-                        egui::Layout::top_down(egui::Align::LEFT),
-                        |ui| {
-                            self.render_command_history_area(ui);
-                        },
-                    );
-                });
-            });
-
-        // Render context menu if active
-        self.render_context_menu(ctx);
-
-        // Render performance metrics panel if visible
-        if self.metrics_panel.is_visible() {
-            let pty_count = executor::block_on(async { self.pty_manager.active_count().await });
-            let stats = self.state_manager.statistics();
-            self.metrics_panel.render_with_ctx(ctx, stats, pty_count);
-        }
-
-        // Render TUI overlay if active
+        // When the TUI overlay is active, it takes over the entire UI area.
+        // Otherwise, render the normal terminal layout.
         if self.tui_overlay.is_active() {
             // Handle input for TUI app BEFORE rendering
             if let Some(input_data) = self.tui_overlay.handle_input(ctx) {
@@ -2352,9 +2313,7 @@ impl eframe::App for MosaicTermApp {
                 );
                 // Send input to PTY
                 if let Some(_handle_id) = self.tui_overlay.pty_handle() {
-                    // PtyManager is already async and thread-safe, no lock needed
                     let pty_manager = &*self.pty_manager;
-                    // Get the actual PTY handle from the terminal
                     if let Some(terminal) = &self.terminal {
                         if let Some(pty_handle) = terminal.pty_handle() {
                             if let Err(e) = executor::block_on(async {
@@ -2367,51 +2326,100 @@ impl eframe::App for MosaicTermApp {
                 }
             }
 
-            // Render overlay UI
-            let overlay_closed = self.tui_overlay.render(ctx);
+            // Apply pending PTY resize if the overlay detected a size change
+            if let Some((rows, cols)) = self.tui_overlay.take_pending_resize() {
+                if let Some(terminal) = &self.terminal {
+                    if let Some(pty_handle) = terminal.pty_handle() {
+                        let pty_manager = &*self.pty_manager;
+                        if let Err(e) = executor::block_on(async {
+                            pty_manager.resize_pty(pty_handle, rows, cols).await
+                        }) {
+                            warn!("Failed to resize PTY for TUI overlay: {}", e);
+                        }
+                    }
+                }
+            }
+
+            // Render overlay UI (takes the full root ui)
+            let overlay_closed = self.tui_overlay.render(ctx, ui);
             if overlay_closed || self.tui_overlay.has_exited() {
                 info!("TUI overlay closing");
 
                 // Send Ctrl+C to kill the TUI process and reset terminal
                 if let Some(terminal) = &self.terminal {
                     if let Some(pty_handle) = terminal.pty_handle() {
-                        // PtyManager is already async and thread-safe, no lock needed
-                        {
-                            let pty_manager = &*self.pty_manager;
+                        let pty_manager = &*self.pty_manager;
 
-                            // Send Ctrl+C (ASCII 3) to terminate the process
-                            executor::block_on(async {
-                                let _ = pty_manager.send_input(pty_handle, &[3]).await;
-                            });
+                        executor::block_on(async {
+                            let _ = pty_manager.send_input(pty_handle, &[3]).await;
+                        });
 
-                            // Wait a moment for process to die (use std::thread::sleep in sync context)
-                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        std::thread::sleep(std::time::Duration::from_millis(100));
 
-                            // Send Enter to clear any partial input and get a fresh prompt
-                            executor::block_on(async {
-                                let _ = pty_manager.send_input(pty_handle, b"\n").await;
-                            });
+                        executor::block_on(async {
+                            let _ = pty_manager.send_input(pty_handle, b"\n").await;
+                        });
 
-                            // Wait for shell to process and give us a prompt
-                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        std::thread::sleep(std::time::Duration::from_millis(50));
 
-                            // Drain any pending output to clear echoed characters
-                            executor::block_on(async {
-                                let _ = pty_manager.drain_output(pty_handle).await;
-                            });
+                        executor::block_on(async {
+                            let _ = pty_manager.drain_output(pty_handle).await;
+                        });
 
-                            info!("Sent Ctrl+C and cleared PTY buffer after TUI exit");
-                        }
+                        info!("Sent Ctrl+C and cleared PTY buffer after TUI exit");
                     }
                 }
 
-                // TUI app exited, mark command block as completed with empty output
                 if let Some(cmd) = self.tui_overlay.command() {
                     self.handle_tui_exit(cmd.to_string());
                 }
 
                 self.tui_overlay.stop();
             }
+        } else {
+            // Main layout with scrollable history and pinned input
+            egui::CentralPanel::default()
+                .frame(
+                    egui::Frame::new()
+                        .fill(self.ui_colors.background)
+                        .inner_margin(egui::Margin::same(2)),
+                )
+                .show_inside(ui, |ui| {
+                    let available_height = ui.available_height();
+                    let input_height = 60.0;
+                    let history_height = (available_height - input_height).max(100.0);
+
+                    // Layout from bottom to top: input at bottom, then history above it
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                        // FIXED INPUT AREA AT BOTTOM - This stays static
+                        ui.allocate_ui_with_layout(
+                            egui::Vec2::new(ui.available_width(), input_height),
+                            egui::Layout::left_to_right(egui::Align::LEFT),
+                            |ui| {
+                                self.render_fixed_input_area(ui);
+                            },
+                        );
+
+                        // HISTORY AREA ABOVE INPUT - Scrollable, with commands stacking from newest to oldest
+                        ui.allocate_ui_with_layout(
+                            egui::Vec2::new(ui.available_width(), history_height),
+                            egui::Layout::top_down(egui::Align::LEFT),
+                            |ui| {
+                                self.render_command_history_area(ui);
+                            },
+                        );
+                    });
+                });
+
+            // Render context menu if active (only in normal mode)
+            self.render_context_menu(ctx);
+        }
+
+        // Render performance metrics panel if visible
+        if self.metrics_panel.is_visible() {
+            let pty_count = executor::block_on(async { self.pty_manager.active_count().await });
+            let stats = self.state_manager.statistics();
+            self.metrics_panel.render_with_ctx(ctx, stats, pty_count);
         }
 
         // Render SSH prompt overlay if active
@@ -2585,7 +2593,7 @@ impl MosaicTermApp {
             let mut fonts = egui::FontDefinitions::default();
             fonts.font_data.insert(
                 "custom_mono".to_string(),
-                egui::FontData::from_owned(font_data),
+                Arc::new(egui::FontData::from_owned(font_data)),
             );
             fonts
                 .families
@@ -2644,12 +2652,12 @@ impl MosaicTermApp {
     /// Set up visual style for the application
     fn setup_visual_style(&self, ctx: &egui::Context) {
         let font_size = self.runtime_config.config().ui.font_size as f32;
-        let mut style = (*ctx.style()).clone();
+        let mut style = (*ctx.global_style()).clone();
 
         style.visuals.dark_mode = true;
         style.visuals.window_fill = self.ui_colors.background;
         style.visuals.panel_fill = self.ui_colors.background;
-        style.visuals.window_rounding = egui::Rounding::same(4.0);
+        style.visuals.window_corner_radius = egui::CornerRadius::same(4);
         style.visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(50, 50, 70));
 
         style.visuals.selection.bg_fill = self.ui_colors.selection;
@@ -2657,7 +2665,7 @@ impl MosaicTermApp {
 
         style.spacing.item_spacing = egui::vec2(4.0, 2.0);
         style.spacing.button_padding = egui::vec2(8.0, 3.0);
-        style.spacing.window_margin = egui::Margin::same(4.0);
+        style.spacing.window_margin = egui::Margin::same(4);
 
         style
             .text_styles
@@ -2667,14 +2675,14 @@ impl MosaicTermApp {
             egui::FontId::monospace(font_size),
         );
 
-        ctx.set_style(style);
+        ctx.set_global_style(style);
     }
 
     /// Render the fixed input area at the bottom
     fn render_fixed_input_area(&mut self, ui: &mut egui::Ui) {
-        let input_frame = egui::Frame::none()
+        let input_frame = egui::Frame::new()
             .fill(self.ui_colors.background)
-            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+            .inner_margin(egui::Margin::symmetric(10, 6))
             .outer_margin(egui::Margin::ZERO);
 
         let frame_response = input_frame.show(ui, |ui| {
@@ -2714,7 +2722,7 @@ impl MosaicTermApp {
                                 .layout_no_wrap(seg.text.clone(), font.clone(), seg.fg);
                         let (rect, _response) =
                             ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-                        ui.painter().galley(rect.min, galley);
+                        ui.painter().galley(rect.min, galley, egui::Color32::WHITE);
                     }
                 }
                 ui.spacing_mut().item_spacing.x = 4.0;
@@ -2748,7 +2756,7 @@ impl MosaicTermApp {
                             egui::TextEdit::singleline(&mut current_input)
                                 .font(egui::FontId::monospace(font_size))
                                 .desired_width(f32::INFINITY)
-                                .frame(false)
+                                .frame(egui::Frame::NONE)
                                 .margin(egui::Vec2::new(2.0, 3.0))
                                 .lock_focus(true),
                         )
@@ -2763,7 +2771,7 @@ impl MosaicTermApp {
                     if ghost.len() > current_input.len() {
                         let ghost_suffix = &ghost[current_input.len()..];
                         let mono_font = egui::FontId::monospace(13.0);
-                        let input_text_width = ui.fonts(|fonts| {
+                        let input_text_width = ui.fonts_mut(|fonts| {
                             fonts.glyph_width(&mono_font, 'M') * current_input.len() as f32
                         });
                         let ghost_pos = egui::pos2(
@@ -2794,7 +2802,7 @@ impl MosaicTermApp {
                     && !self.ssh_prompt_overlay.is_active()
                     && !input_response.has_focus()
                 {
-                    let nothing_focused = ui.ctx().memory(|mem| mem.focus().is_none());
+                    let nothing_focused = ui.ctx().memory(|mem| mem.focused().is_none());
                     let explicit_return = ui.input(|i| {
                         i.key_pressed(egui::Key::Escape)
                             || i.events.iter().any(|e| matches!(e, egui::Event::Text(_)))
@@ -2815,7 +2823,9 @@ impl MosaicTermApp {
                     if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), input_response.id)
                     {
                         let ccursor = egui::text::CCursor::new(current_input.len());
-                        state.set_ccursor_range(Some(egui::text::CCursorRange::one(ccursor)));
+                        state
+                            .cursor
+                            .set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
                         state.store(ui.ctx(), input_response.id);
                     }
                     self.state_manager.set_completion_just_applied(false);
@@ -2862,7 +2872,8 @@ impl MosaicTermApp {
                             egui::TextEdit::load_state(ui.ctx(), input_response.id)
                         {
                             state
-                                .ccursor_range()
+                                .cursor
+                                .char_range()
                                 .map(|r| r.primary.index >= current_input.len())
                                 .unwrap_or(true)
                         } else {
@@ -3097,7 +3108,7 @@ impl MosaicTermApp {
         let popup_y = input_rect.top() - popup_height - 10.0;
 
         // Create popup above input
-        egui::Area::new("history_search")
+        egui::Area::new(egui::Id::new("history_search"))
             .fixed_pos(egui::pos2(popup_x, popup_y))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
@@ -3144,7 +3155,7 @@ impl MosaicTermApp {
 
                             // Force focus on search field - try multiple methods
                             let search_has_focus = search_response.has_focus()
-                                || ui.memory(|mem| mem.focus() == Some(search_id));
+                                || ui.memory(|mem| mem.focused() == Some(search_id));
                             if self.history_search_needs_focus || !search_has_focus {
                                 ctx.memory_mut(|mem| mem.request_focus(search_id));
                                 search_response.request_focus();
@@ -3190,7 +3201,8 @@ impl MosaicTermApp {
 
                             // Handle arrow key navigation (check if search field is focused)
                             let selected_idx = self.state_manager.get_history_search_selected();
-                            let search_has_focus = ui.memory(|mem| mem.focus() == Some(search_id));
+                            let search_has_focus =
+                                ui.memory(|mem| mem.focused() == Some(search_id));
 
                             if search_has_focus || search_response.has_focus() {
                                 if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
@@ -3290,9 +3302,9 @@ impl MosaicTermApp {
         let colors = self.ui_colors.clone();
 
         ui.vertical(|ui| {
-            let status_frame = egui::Frame::none()
+            let status_frame = egui::Frame::new()
                 .fill(colors.status_bar.background)
-                .inner_margin(egui::Margin::symmetric(6.0, 2.0));
+                .inner_margin(egui::Margin::symmetric(6, 2));
 
             status_frame.show(ui, |ui| {
                 ui.set_height(16.0);
@@ -3335,7 +3347,10 @@ impl MosaicTermApp {
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .stick_to_bottom(true)
-                .drag_to_scroll(false)
+                .scroll_source(
+                    egui::scroll_area::ScrollSource::SCROLL_BAR
+                        | egui::scroll_area::ScrollSource::MOUSE_WHEEL,
+                )
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         // Commands appear in execution order: oldest at top, newest at bottom
@@ -3415,20 +3430,20 @@ impl MosaicTermApp {
             colors.background.b().saturating_add(5),
         );
 
-        let block_frame = egui::Frame::none()
+        let block_frame = egui::Frame::new()
             .fill(block_bg)
             .inner_margin(if is_compact {
-                egui::Margin::symmetric(12.0, 4.0)
+                egui::Margin::symmetric(12, 4)
             } else {
-                egui::Margin::symmetric(12.0, 6.0)
+                egui::Margin::symmetric(12, 6)
             })
             .outer_margin(egui::Margin {
-                left: 4.0,
-                right: 4.0,
-                top: 1.0,
-                bottom: 1.0,
+                left: 4,
+                right: 4,
+                top: 1,
+                bottom: 1,
             })
-            .rounding(egui::Rounding::same(4.0));
+            .corner_radius(egui::CornerRadius::same(4));
 
         // Reserve a shape slot BEFORE the block content for hover background.
         // This ensures the hover fill is drawn BEHIND the text.
@@ -3482,18 +3497,19 @@ impl MosaicTermApp {
                     );
 
                     let job_for_layouter = layout_job;
-                    let mut layouter = move |ui: &egui::Ui, _text: &str, wrap_width: f32| {
-                        let mut j = job_for_layouter.clone();
-                        j.wrap.max_width = wrap_width;
-                        ui.fonts(|f| f.layout_job(j))
-                    };
+                    let mut layouter =
+                        move |ui: &egui::Ui, _buf: &dyn egui::TextBuffer, wrap_width: f32| {
+                            let mut j = job_for_layouter.clone();
+                            j.wrap.max_width = wrap_width;
+                            ui.fonts_mut(|f| f.layout_job(j))
+                        };
                     let mut text_ref: &str = &plain_text;
                     ui.add(
                         egui::TextEdit::multiline(&mut text_ref)
                             .id_source(format!("output_{}", block.id))
                             .font(mono_font)
                             .desired_width(f32::INFINITY)
-                            .frame(false)
+                            .frame(egui::Frame::NONE)
                             .layouter(&mut layouter),
                     );
                 }
@@ -3511,17 +3527,18 @@ impl MosaicTermApp {
             );
             ui.painter().set(
                 hover_bg_idx,
-                egui::Shape::rect_filled(rect, egui::Rounding::same(4.0), hover_bg),
+                egui::Shape::rect_filled(rect, egui::CornerRadius::same(4), hover_bg),
             );
 
             // Border glow (on top is fine, these are decorative non-text shapes)
             ui.painter().rect_stroke(
                 rect,
-                egui::Rounding::same(4.0),
+                egui::CornerRadius::same(4),
                 egui::Stroke::new(
                     0.5,
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 20),
                 ),
+                egui::StrokeKind::Outside,
             );
 
             // Accent stripe on left edge
@@ -3531,11 +3548,11 @@ impl MosaicTermApp {
             );
             ui.painter().rect_filled(
                 stripe,
-                egui::Rounding {
-                    nw: 4.0,
-                    sw: 4.0,
-                    ne: 0.0,
-                    se: 0.0,
+                egui::CornerRadius {
+                    nw: 4,
+                    sw: 4,
+                    ne: 0,
+                    se: 0,
                 },
                 accent_color,
             );

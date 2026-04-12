@@ -214,8 +214,11 @@ fn main() -> Result<()> {
     // Run the application
     info!("🎨 Initializing GUI...");
 
-    if let Err(e) = eframe::run_native("MosaicTerm", native_options, Box::new(|_cc| Box::new(app)))
-    {
+    if let Err(e) = eframe::run_native(
+        "MosaicTerm",
+        native_options,
+        Box::new(|_cc| Ok(Box::new(app))),
+    ) {
         error!("💥 Application failed: {}", e);
         process::exit(1);
     }

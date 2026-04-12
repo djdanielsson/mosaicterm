@@ -3,7 +3,7 @@
 //! Handles the creation and spawning of pseudoterminal processes
 //! using the portable-pty crate for cross-platform compatibility.
 
-use portable_pty::{native_pty_system, CommandBuilder, PtyPair, PtySize};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtyPair, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -14,17 +14,16 @@ use super::streams::PtyStreams;
 use crate::error::{Error, Result};
 use crate::models::PtyProcess;
 
-/// Spawn a new PTY process with the given command and environment
+/// Spawn a new PTY process with the given command and environment.
+/// Returns the process model, I/O streams, and the master PTY handle (for resize).
 pub async fn spawn_pty_process(
     command: &str,
     args: &[String],
     env: &HashMap<String, String>,
     working_directory: Option<&Path>,
-) -> Result<(PtyProcess, PtyStreams)> {
-    // Get the native PTY system
+) -> Result<(PtyProcess, PtyStreams, Box<dyn MasterPty + Send>)> {
     let pty_system = native_pty_system();
 
-    // Create a new PTY pair
     let pair = pty_system
         .openpty(PtySize {
             rows: 24,
@@ -37,21 +36,17 @@ pub async fn spawn_pty_process(
             reason: e.to_string(),
         })?;
 
-    // Build the command
     let mut cmd_builder = CommandBuilder::new(command);
     cmd_builder.args(args);
 
-    // Set environment variables
     for (key, value) in env {
         cmd_builder.env(key, value);
     }
 
-    // Set working directory if provided
     if let Some(dir) = working_directory {
         cmd_builder.cwd(dir);
     }
 
-    // Spawn the process
     let child = pair
         .slave
         .spawn_command(cmd_builder)
@@ -60,10 +55,8 @@ pub async fn spawn_pty_process(
             reason: e.to_string(),
         })?;
 
-    // Get the PID
     let pid = child.process_id();
 
-    // Create PTY process model with working directory
     let mut pty_process = if let Some(dir) = working_directory {
         PtyProcess::with_working_directory(command.to_string(), args.to_vec(), dir.to_path_buf())
     } else {
@@ -73,15 +66,13 @@ pub async fn spawn_pty_process(
         pty_process.mark_started(p);
     }
 
-    // Create streams wrapper
-    let streams = create_pty_streams(pair)?;
+    let (streams, master) = create_pty_streams(pair)?;
 
-    Ok((pty_process, streams))
+    Ok((pty_process, streams, master))
 }
 
-/// Create PTY streams from a PTY pair
-fn create_pty_streams(pair: PtyPair) -> Result<PtyStreams> {
-    // Bridge blocking PTY I/O to async via channels and a background thread
+/// Create PTY streams from a PTY pair, returning the master handle for resize.
+fn create_pty_streams(pair: PtyPair) -> Result<(PtyStreams, Box<dyn MasterPty + Send>)> {
     let mut master_reader =
         pair.master
             .try_clone_reader()
@@ -223,7 +214,10 @@ fn create_pty_streams(pair: PtyPair) -> Result<PtyStreams> {
         debug!("PTY writer thread exiting");
     });
 
-    Ok(PtyStreams::from_channels(rx_async_out, tx_stdin))
+    Ok((
+        PtyStreams::from_channels(rx_async_out, tx_stdin),
+        pair.master,
+    ))
 }
 
 // Note: PTY stream conversion is simplified for now.
@@ -397,7 +391,7 @@ mod tests {
         // In some environments (like CI), PTY spawning might fail
         // So we'll just ensure it doesn't panic
         match result {
-            Ok((process, _streams)) => {
+            Ok((process, _streams, _master)) => {
                 assert_eq!(process.command, "echo");
                 assert!(process.args.contains(&"test".to_string()));
             }

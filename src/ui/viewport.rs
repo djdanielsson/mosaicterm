@@ -77,7 +77,7 @@ impl TerminalViewport {
         self.dimensions = ui.available_size();
 
         // Create the viewport frame
-        egui::Frame::none()
+        egui::Frame::new()
             .fill(self.config.background_color)
             .stroke(egui::Stroke::new(
                 self.config.border_width,

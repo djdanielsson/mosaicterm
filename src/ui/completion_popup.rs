@@ -110,11 +110,13 @@ impl CompletionPopup {
             .collapsible(false)
             .fixed_pos(popup_pos)
             .frame(egui::Frame {
-                inner_margin: egui::Margin::same(8.0),
+                inner_margin: egui::Margin::same(8),
                 outer_margin: egui::Margin::ZERO,
-                rounding: egui::Rounding::same(6.0),
-                shadow: egui::epaint::Shadow {
-                    extrusion: 16.0,
+                corner_radius: egui::CornerRadius::same(6),
+                shadow: egui::Shadow {
+                    blur: 16,
+                    spread: 0,
+                    offset: [0, 0],
                     color: egui::Color32::from_black_alpha(80),
                 },
                 fill: egui::Color32::from_rgb(30, 30, 45),
@@ -152,7 +154,7 @@ impl CompletionPopup {
                 let scroll_area = egui::ScrollArea::vertical()
                     .max_height(dynamic_height)
                     .auto_shrink([false; 2])
-                    .id_source("completion_scroll");
+                    .id_salt("completion_scroll");
 
                 scroll_area.show(ui, |ui| {
                     // Show all suggestions, not just first 10
@@ -161,19 +163,19 @@ impl CompletionPopup {
 
                         // Create completion item frame
                         let item_frame = if is_selected {
-                            egui::Frame::none()
+                            egui::Frame::new()
                                 .fill(egui::Color32::from_rgb(60, 80, 120))
                                 .stroke(egui::Stroke::new(
                                     1.0,
                                     egui::Color32::from_rgb(100, 150, 255),
                                 ))
-                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                .rounding(egui::Rounding::same(4.0))
+                                .inner_margin(egui::Margin::symmetric(8, 6))
+                                .corner_radius(egui::CornerRadius::same(4))
                         } else {
-                            egui::Frame::none()
+                            egui::Frame::new()
                                 .fill(egui::Color32::from_rgb(40, 40, 55))
-                                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
-                                .rounding(egui::Rounding::same(4.0))
+                                .inner_margin(egui::Margin::symmetric(8, 6))
+                                .corner_radius(egui::CornerRadius::same(4))
                         };
 
                         let response = item_frame.show(ui, |ui| {

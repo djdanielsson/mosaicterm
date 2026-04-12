@@ -409,13 +409,13 @@ impl ScreenBuffer {
         };
 
         for (row_idx, row) in self.grid.iter().enumerate() {
-            let trimmed_len = row.iter().rposition(|c| c.ch != ' ').map_or(0, |p| p + 1);
-
+            // Render full row width (including trailing spaces) so the galley
+            // fills the entire terminal area — critical for correct sizing.
             let mut run_start = 0;
-            while run_start < trimmed_len {
+            while run_start < self.cols {
                 let style = row[run_start].style;
                 let mut run_end = run_start + 1;
-                while run_end < trimmed_len && row[run_end].style == style {
+                while run_end < self.cols && row[run_end].style == style {
                     run_end += 1;
                 }
 
@@ -459,6 +459,10 @@ impl ScreenBuffer {
         }
 
         job
+    }
+
+    fn cursor_position(&self) -> (usize, usize) {
+        (self.cursor_row, self.cursor_col)
     }
 }
 
@@ -949,7 +953,7 @@ impl TuiOverlay {
     }
 
     /// Render the overlay using the full window area with top and bottom bars
-    pub fn render(&mut self, ctx: &egui::Context) -> bool {
+    pub fn render(&mut self, ctx: &egui::Context, host_ui: &mut egui::Ui) -> bool {
         if !self.active {
             return false;
         }
@@ -960,14 +964,14 @@ impl TuiOverlay {
         let border_color = egui::Color32::from_rgb(60, 60, 90);
 
         // Top bar with command name and Escape hint
-        egui::TopBottomPanel::top("tui_header")
+        egui::Panel::top("tui_header")
             .frame(
-                egui::Frame::none()
+                egui::Frame::new()
                     .fill(header_color)
                     .stroke(egui::Stroke::new(1.0, border_color))
-                    .inner_margin(egui::Margin::symmetric(12.0, 6.0)),
+                    .inner_margin(egui::Margin::symmetric(12, 6)),
             )
-            .show(ctx, |ui| {
+            .show_inside(host_ui, |ui| {
                 ui.horizontal(|ui| {
                     if let Some(cmd) = &self.command {
                         ui.label(
@@ -988,14 +992,14 @@ impl TuiOverlay {
             });
 
         // Bottom bar with exit button and status
-        egui::TopBottomPanel::bottom("tui_footer")
+        egui::Panel::bottom("tui_footer")
             .frame(
-                egui::Frame::none()
+                egui::Frame::new()
                     .fill(header_color)
                     .stroke(egui::Stroke::new(1.0, border_color))
-                    .inner_margin(egui::Margin::symmetric(12.0, 5.0)),
+                    .inner_margin(egui::Margin::symmetric(12, 5)),
             )
-            .show(ctx, |ui| {
+            .show_inside(host_ui, |ui| {
                 ui.horizontal(|ui| {
                     if self.has_exited {
                         ui.label(
@@ -1029,13 +1033,13 @@ impl TuiOverlay {
         // Central terminal area fills the rest
         egui::CentralPanel::default()
             .frame(
-                egui::Frame::none()
+                egui::Frame::new()
                     .fill(DEFAULT_BG.to_color32())
-                    .inner_margin(egui::Margin::symmetric(4.0, 2.0)),
+                    .inner_margin(egui::Margin::symmetric(4, 2)),
             )
-            .show(ctx, |ui| {
+            .show_inside(host_ui, |ui| {
                 let mono_font = egui::FontId::new(13.0, egui::FontFamily::Monospace);
-                let char_width = ui.fonts(|fonts| fonts.glyph_width(&mono_font, 'M'));
+                let char_width = ui.fonts_mut(|fonts| fonts.glyph_width(&mono_font, 'M'));
                 let line_height = ui.text_style_height(&egui::TextStyle::Monospace);
 
                 let available = ui.available_size();
@@ -1049,10 +1053,29 @@ impl TuiOverlay {
                     self.pending_resize = Some((rows as u16, cols as u16));
                 }
 
-                let job = self.screen_buffer.render_to_layout_job(mono_font);
-                let galley = ui.fonts(|fonts| fonts.layout_job(job));
-                let (response, painter) = ui.allocate_painter(galley.size(), egui::Sense::hover());
-                painter.galley(response.rect.min, galley);
+                let job = self.screen_buffer.render_to_layout_job(mono_font.clone());
+                let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                let (response, painter) = ui.allocate_painter(available, egui::Sense::hover());
+                painter.rect_filled(
+                    response.rect,
+                    egui::CornerRadius::ZERO,
+                    DEFAULT_BG.to_color32(),
+                );
+                painter.galley(response.rect.min, galley, DEFAULT_FG.to_color32());
+
+                // Draw cursor block at current position
+                let (cursor_row, cursor_col) = self.screen_buffer.cursor_position();
+                let cursor_x = response.rect.min.x + (cursor_col as f32) * char_width;
+                let cursor_y = response.rect.min.y + (cursor_row as f32) * line_height;
+                let cursor_rect = egui::Rect::from_min_size(
+                    egui::pos2(cursor_x, cursor_y),
+                    egui::vec2(char_width, line_height),
+                );
+                painter.rect_filled(
+                    cursor_rect,
+                    egui::CornerRadius::ZERO,
+                    egui::Color32::from_rgba_premultiplied(200, 200, 200, 180),
+                );
             });
 
         // Double-Escape to close overlay (single Escape is forwarded to the app)

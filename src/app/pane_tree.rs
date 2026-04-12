@@ -182,9 +182,10 @@ impl PaneTree {
         match node {
             PaneNode::Leaf(pane) => {
                 let is_active = pane.id == active_id;
-                let mut child_ui = ui.child_ui(
-                    rect,
-                    eframe::egui::Layout::top_down(eframe::egui::Align::LEFT),
+                let mut child_ui = ui.new_child(
+                    eframe::egui::UiBuilder::new()
+                        .max_rect(rect)
+                        .layout(eframe::egui::Layout::top_down(eframe::egui::Align::LEFT)),
                 );
                 render_fn(&mut child_ui, pane, is_active);
             }
@@ -230,7 +231,7 @@ impl PaneTree {
                         };
                         ui.painter().rect_filled(
                             divider_rect,
-                            eframe::egui::Rounding::ZERO,
+                            eframe::egui::CornerRadius::ZERO,
                             eframe::egui::Color32::from_rgb(60, 60, 80),
                         );
                         offset += divider_width;

@@ -314,7 +314,7 @@ impl LayoutManager {
             self.responsive_spacing().x * 0.75,
             self.responsive_spacing().y * 0.5,
         );
-        style.spacing.menu_margin = egui::Margin::same(self.responsive_spacing().x * 0.5);
+        style.spacing.menu_margin = egui::Margin::same((self.responsive_spacing().x * 0.5) as i8);
 
         // Update font sizes
         style.text_styles.insert(

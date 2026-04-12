@@ -722,7 +722,7 @@ impl ThemeManager {
         let theme = self.current_theme()?;
 
         // Apply visual style
-        let mut style = (*ctx.style()).clone();
+        let mut style = (*ctx.global_style()).clone();
 
         // Set overall theme mode
         style.visuals.dark_mode = matches!(
@@ -762,7 +762,9 @@ impl ThemeManager {
 
         // Apply window shadow
         style.visuals.window_shadow = egui::epaint::Shadow {
-            extrusion: 8.0,
+            offset: [0, 0],
+            blur: 8,
+            spread: 0,
             color: egui::Color32::from_rgba_premultiplied(0, 0, 0, 40),
         };
 
@@ -776,7 +778,7 @@ impl ThemeManager {
         // Apply spacing
         style.spacing.item_spacing = egui::vec2(8.0, 4.0);
         style.spacing.button_padding = egui::vec2(8.0, 4.0);
-        style.spacing.menu_margin = egui::Margin::same(6.0);
+        style.spacing.menu_margin = egui::Margin::same(6);
         style.spacing.indent = 18.0;
 
         // Apply font settings
@@ -797,7 +799,7 @@ impl ThemeManager {
             egui::FontId::proportional(theme.typography.heading_size),
         );
 
-        ctx.set_style(style);
+        ctx.set_global_style(style);
 
         Ok(())
     }

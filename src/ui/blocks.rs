@@ -169,11 +169,11 @@ impl CommandBlocks {
     /// Render a single command block with enhanced styling
     fn render_enhanced_block(&mut self, ui: &mut egui::Ui, block: &CommandBlock, index: usize) {
         // Create a frame for the block with subtle background
-        let block_frame = egui::Frame::none()
+        let block_frame = egui::Frame::new()
             .fill(egui::Color32::from_rgba_premultiplied(25, 25, 35, 180))
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(45, 45, 65)))
             .inner_margin(self.config.padding)
-            .outer_margin(egui::Margin::symmetric(0.0, 2.0));
+            .outer_margin(egui::Margin::symmetric(0, 2));
 
         block_frame.show(ui, |ui| {
             ui.vertical(|ui| {
@@ -275,10 +275,10 @@ impl CommandBlocks {
     /// Render output area
     fn render_output_area(&mut self, ui: &mut egui::Ui, block: &CommandBlock) {
         // Create a subtle frame for output
-        let output_frame = egui::Frame::none()
+        let output_frame = egui::Frame::new()
             .fill(egui::Color32::from_rgba_premultiplied(15, 15, 25, 200))
             .stroke(egui::Stroke::new(0.5, egui::Color32::from_rgb(60, 60, 80)))
-            .inner_margin(egui::Margin::symmetric(8.0, 6.0));
+            .inner_margin(egui::Margin::symmetric(8, 6));
 
         output_frame.show(ui, |ui| {
             ui.vertical(|ui| {
@@ -431,7 +431,8 @@ impl CommandBlocks {
             egui::Color32::from_rgb(35, 35, 45)
         };
 
-        ui.painter().rect_filled(block_rect, 4.0, bg_color);
+        ui.painter()
+            .rect_filled(block_rect, egui::CornerRadius::same(4), bg_color);
 
         // Block border
         let border_color = if is_selected {
@@ -440,23 +441,30 @@ impl CommandBlocks {
             egui::Color32::from_rgb(80, 80, 100)
         };
 
-        ui.painter()
-            .rect_stroke(block_rect, 4.0, egui::Stroke::new(1.0, border_color));
+        ui.painter().rect_stroke(
+            block_rect,
+            egui::CornerRadius::same(4),
+            egui::Stroke::new(1.0, border_color),
+            egui::StrokeKind::Outside,
+        );
 
         // Block content
-        ui.allocate_ui_at_rect(block_rect.shrink(self.config.padding.x), |ui| {
-            ui.vertical(|ui| {
-                // Header with command and status
-                self.render_block_header(ui, rendered);
+        ui.scope_builder(
+            egui::UiBuilder::new().max_rect(block_rect.shrink(self.config.padding.x)),
+            |ui| {
+                ui.vertical(|ui| {
+                    // Header with command and status
+                    self.render_block_header(ui, rendered);
 
-                ui.add_space(self.config.spacing);
+                    ui.add_space(self.config.spacing);
 
-                // Output area
-                if rendered.expanded {
-                    self.render_block_output(ui, rendered);
-                }
-            });
-        });
+                    // Output area
+                    if rendered.expanded {
+                        self.render_block_output(ui, rendered);
+                    }
+                });
+            },
+        );
 
         // Handle left click for selection
         if block_response.clicked_by(egui::PointerButton::Primary) {
@@ -526,7 +534,8 @@ impl CommandBlocks {
         // Output background (slightly different from main background)
         let output_bg = egui::Color32::from_rgb(25, 25, 35);
         let output_rect = ui.available_rect_before_wrap();
-        ui.painter().rect_filled(output_rect, 2.0, output_bg);
+        ui.painter()
+            .rect_filled(output_rect, egui::CornerRadius::same(2), output_bg);
 
         ui.add_space(2.0);
 
@@ -601,11 +610,14 @@ impl CommandBlocks {
         let mut action = None;
 
         // Render context menu at the specified position
-        let response = egui::Area::new(format!("block_context_menu_{}", command_block.id))
-            .fixed_pos(position)
-            .show(ui.ctx(), |ui| {
-                self.render_context_menu_ui(ui, command_block, &mut action);
-            });
+        let response = egui::Area::new(egui::Id::new(format!(
+            "block_context_menu_{}",
+            command_block.id
+        )))
+        .fixed_pos(position)
+        .show(ui.ctx(), |ui| {
+            self.render_context_menu_ui(ui, command_block, &mut action);
+        });
 
         // Close menu if clicked outside or if the response was clicked
         if ui.input(|i| i.pointer.any_click())
@@ -632,7 +644,12 @@ impl CommandBlocks {
         action: &mut Option<ContextMenuAction>,
     ) {
         egui::Frame::popup(ui.style())
-            .shadow(egui::epaint::Shadow::small_dark())
+            .shadow(egui::Shadow {
+                offset: [0, 2],
+                blur: 8,
+                spread: 0,
+                color: egui::Color32::from_black_alpha(96),
+            })
             .show(ui, |ui| {
                 ui.set_min_width(180.0);
 
