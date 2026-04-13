@@ -188,9 +188,10 @@ impl PtyManager {
         if let Some(entry_lock) = terminals.remove(&process_id) {
             let mut entry = entry_lock.write().await;
             // Kill the OS child process if we have a PID
-            if let Some(pid) = entry.process.pid {
+            if let Some(_pid) = entry.process.pid {
                 #[cfg(unix)]
                 {
+                    let pid = _pid;
                     use nix::sys::signal::{kill, Signal};
                     use nix::unistd::Pid;
                     if let Err(e) = kill(Pid::from_raw(pid as i32), Signal::SIGTERM) {

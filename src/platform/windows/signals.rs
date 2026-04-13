@@ -44,7 +44,7 @@ impl SignalOps for WindowsSignals {
 
         unsafe {
             let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
-            if handle == 0 {
+            if handle.is_null() {
                 return Err(Error::SignalSendFailed {
                     signal: "Terminate".to_string(),
                     reason: format!(
@@ -81,7 +81,7 @@ impl SignalOps for WindowsSignals {
 
         unsafe {
             let handle = OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid);
-            if handle == 0 {
+            if handle.is_null() {
                 return false;
             }
 

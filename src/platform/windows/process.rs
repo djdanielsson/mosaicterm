@@ -71,7 +71,7 @@ impl ProcessTreeOps for WindowsProcessTree {
         for pid in descendants.iter().rev() {
             unsafe {
                 let handle = OpenProcess(PROCESS_TERMINATE, 0, *pid);
-                if handle != 0 {
+                if !handle.is_null() {
                     let _ = TerminateProcess(handle, 1);
                     CloseHandle(handle);
                 }
@@ -81,7 +81,7 @@ impl ProcessTreeOps for WindowsProcessTree {
         // Finally kill the root process
         unsafe {
             let handle = OpenProcess(PROCESS_TERMINATE, 0, root_pid);
-            if handle != 0 {
+            if !handle.is_null() {
                 let _ = TerminateProcess(handle, 1);
                 CloseHandle(handle);
             }
