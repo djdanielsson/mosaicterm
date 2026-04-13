@@ -1914,7 +1914,7 @@ dependencies = [
 
 [[package]]
 name = "mosaicterm"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2436,9 +2436,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.112"
+version = "0.9.113"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57d55af3b3e226502be1526dfdba67ab0e9c96fc293004e79576b2b9edb0dbdb"
+checksum = "ad2f2c0eba47118757e4c6d2bff2838f3e0523380021356e7875e858372ce644"
 dependencies = [
  "cc",
  "libc",
