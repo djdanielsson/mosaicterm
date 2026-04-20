@@ -30,7 +30,7 @@ repos:
         args: [feat, fix, refactor, perf, test, docs, style, build, ci, chore, revert]
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1.45.0
+    rev: v1.45.1
     hooks:
       - id: typos
 
