@@ -14,7 +14,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -23,7 +23,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           workspaces: ${{ github.workspace }}
           cache-all-crates: true
@@ -84,7 +84,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -111,7 +111,7 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           workspaces: ${{ github.workspace }}
           cache-all-crates: true
@@ -157,7 +157,7 @@ jobs:
 
       - name: Upload macOS App Bundle
         if: matrix.os == 'macos-latest'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
           files: MosaicTerm-${{ matrix.name }}.app.tar.gz
         env:
@@ -165,7 +165,7 @@ jobs:
 
       - name: Upload CLI binary for Linux/macOS
         if: matrix.os != 'windows-latest'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
           files: mosaicterm-${{ matrix.name }}.tar.gz
         env:
@@ -173,7 +173,7 @@ jobs:
 
       - name: Upload Windows release
         if: matrix.os == 'windows-latest'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
           files: mosaicterm-${{ matrix.name }}.zip
         env:
