@@ -87,7 +87,7 @@ jobs:
           matrix.target == 'x86_64-apple-darwin' ||
           matrix.target == 'aarch64-apple-darwin' ||
           matrix.target == 'x86_64-pc-windows-msvc'
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: ~/.cargo/bin/cargo-nextest
           key: cargo-nextest-${{ runner.os }}-v1
@@ -198,7 +198,7 @@ jobs:
 
       - name: Cache cargo-tarpaulin
         id: cache-cargo-tarpaulin
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: ~/.cargo/bin/cargo-tarpaulin
           key: cargo-tarpaulin-${{ runner.os }}-v1
