@@ -281,20 +281,18 @@ impl ScreenBuffer {
             '\x08' => {
                 self.cursor_col = self.cursor_col.saturating_sub(1);
             }
-            c if c >= ' ' => {
-                if self.cursor_row < self.rows && self.cursor_col < self.cols {
-                    self.grid[self.cursor_row][self.cursor_col] = Cell {
-                        ch: c,
-                        style: self.current_style,
-                    };
-                    self.cursor_col += 1;
-                    if self.cursor_col >= self.cols {
-                        self.cursor_col = 0;
-                        if self.cursor_row >= self.scroll_bottom {
-                            self.scroll_up(1);
-                        } else {
-                            self.cursor_row += 1;
-                        }
+            c if c >= ' ' && self.cursor_row < self.rows && self.cursor_col < self.cols => {
+                self.grid[self.cursor_row][self.cursor_col] = Cell {
+                    ch: c,
+                    style: self.current_style,
+                };
+                self.cursor_col += 1;
+                if self.cursor_col >= self.cols {
+                    self.cursor_col = 0;
+                    if self.cursor_row >= self.scroll_bottom {
+                        self.scroll_up(1);
+                    } else {
+                        self.cursor_row += 1;
                     }
                 }
             }
