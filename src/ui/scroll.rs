@@ -242,7 +242,7 @@ impl ScrollableHistory {
         ui.painter().rect_stroke(
             block_response.rect,
             egui::CornerRadius::same(4),
-            egui::Stroke::new(1.0, border_color),
+            egui::Stroke::new(1.0_f32, border_color),
             egui::StrokeKind::Outside,
         );
 

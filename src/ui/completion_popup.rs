@@ -120,7 +120,7 @@ impl CompletionPopup {
                     color: egui::Color32::from_black_alpha(80),
                 },
                 fill: egui::Color32::from_rgb(30, 30, 45),
-                stroke: egui::Stroke::new(1.5, egui::Color32::from_rgb(100, 100, 150)),
+                stroke: egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(100, 100, 150)),
             })
             .show(ctx, |ui| {
                 // Header with count
@@ -166,7 +166,7 @@ impl CompletionPopup {
                             egui::Frame::new()
                                 .fill(egui::Color32::from_rgb(60, 80, 120))
                                 .stroke(egui::Stroke::new(
-                                    1.0,
+                                    1.0_f32,
                                     egui::Color32::from_rgb(100, 150, 255),
                                 ))
                                 .inner_margin(egui::Margin::symmetric(8, 6))

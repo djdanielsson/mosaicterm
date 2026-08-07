@@ -433,7 +433,7 @@ impl ScreenBuffer {
                     text_format.color = brighten(text_format.color);
                 }
                 if style.underline {
-                    text_format.underline = egui::Stroke::new(1.0, text_format.color);
+                    text_format.underline = egui::Stroke::new(1.0_f32, text_format.color);
                 }
                 if style.italic {
                     text_format.italics = true;
@@ -966,7 +966,7 @@ impl TuiOverlay {
             .frame(
                 egui::Frame::new()
                     .fill(header_color)
-                    .stroke(egui::Stroke::new(1.0, border_color))
+                    .stroke(egui::Stroke::new(1.0_f32, border_color))
                     .inner_margin(egui::Margin::symmetric(12, 6)),
             )
             .show_inside(host_ui, |ui| {
@@ -994,7 +994,7 @@ impl TuiOverlay {
             .frame(
                 egui::Frame::new()
                     .fill(header_color)
-                    .stroke(egui::Stroke::new(1.0, border_color))
+                    .stroke(egui::Stroke::new(1.0_f32, border_color))
                     .inner_margin(egui::Margin::symmetric(12, 5)),
             )
             .show_inside(host_ui, |ui| {
