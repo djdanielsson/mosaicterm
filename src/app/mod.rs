@@ -2184,7 +2184,7 @@ impl eframe::App for MosaicTermApp {
                     let frame = egui::Frame::new()
                         .fill(egui::Color32::from_rgba_premultiplied(30, 30, 40, 240))
                         .stroke(egui::Stroke::new(
-                            1.0,
+                            1.0_f32,
                             egui::Color32::from_rgb(100, 100, 200),
                         ))
                         .inner_margin(egui::Margin::symmetric(12, 8))
@@ -2658,10 +2658,11 @@ impl MosaicTermApp {
         style.visuals.window_fill = self.ui_colors.background;
         style.visuals.panel_fill = self.ui_colors.background;
         style.visuals.window_corner_radius = egui::CornerRadius::same(4);
-        style.visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(50, 50, 70));
+        style.visuals.window_stroke =
+            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(50, 50, 70));
 
         style.visuals.selection.bg_fill = self.ui_colors.selection;
-        style.visuals.selection.stroke = egui::Stroke::new(1.0, self.ui_colors.accent);
+        style.visuals.selection.stroke = egui::Stroke::new(1.0_f32, self.ui_colors.accent);
 
         style.spacing.item_spacing = egui::vec2(4.0, 2.0);
         style.spacing.button_padding = egui::vec2(8.0, 3.0);
@@ -3114,7 +3115,7 @@ impl MosaicTermApp {
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
                     .fill(self.ui_colors.blocks.background)
-                    .stroke(egui::Stroke::new(2.0, self.ui_colors.accent))
+                    .stroke(egui::Stroke::new(2.0_f32, self.ui_colors.accent))
                     .show(ui, |ui| {
                         ui.set_width(popup_width);
                         ui.set_height(popup_height);
@@ -3535,7 +3536,7 @@ impl MosaicTermApp {
                 rect,
                 egui::CornerRadius::same(4),
                 egui::Stroke::new(
-                    0.5,
+                    0.5_f32,
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 20),
                 ),
                 egui::StrokeKind::Outside,

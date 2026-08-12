@@ -111,7 +111,10 @@ impl InputPrompt {
         // Create a styled frame for the input area with better positioning
         let input_frame = egui::Frame::new()
             .fill(egui::Color32::from_rgba_premultiplied(20, 20, 30, 220))
-            .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(70, 70, 90)))
+            .stroke(egui::Stroke::new(
+                1.0_f32,
+                egui::Color32::from_rgb(70, 70, 90),
+            ))
             .inner_margin(egui::Margin::symmetric(16, 12))
             .outer_margin(egui::Margin::symmetric(8, 6))
             .corner_radius(egui::CornerRadius::same(6));

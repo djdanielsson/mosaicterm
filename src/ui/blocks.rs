@@ -171,7 +171,10 @@ impl CommandBlocks {
         // Create a frame for the block with subtle background
         let block_frame = egui::Frame::new()
             .fill(egui::Color32::from_rgba_premultiplied(25, 25, 35, 180))
-            .stroke(egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(45, 45, 65)))
+            .stroke(egui::Stroke::new(
+                1.0_f32,
+                egui::Color32::from_rgb(45, 45, 65),
+            ))
             .inner_margin(self.config.padding)
             .outer_margin(egui::Margin::symmetric(0, 2));
 
@@ -277,7 +280,10 @@ impl CommandBlocks {
         // Create a subtle frame for output
         let output_frame = egui::Frame::new()
             .fill(egui::Color32::from_rgba_premultiplied(15, 15, 25, 200))
-            .stroke(egui::Stroke::new(0.5_f32, egui::Color32::from_rgb(60, 60, 80)))
+            .stroke(egui::Stroke::new(
+                0.5_f32,
+                egui::Color32::from_rgb(60, 60, 80),
+            ))
             .inner_margin(egui::Margin::symmetric(8, 6));
 
         output_frame.show(ui, |ui| {
