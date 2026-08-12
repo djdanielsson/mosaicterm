@@ -41,7 +41,7 @@ pub fn detect_git_status(terminal: Option<&Terminal>) -> Option<GitPromptStatus>
     let detached = head.as_ref().map(|h| !h.is_branch()).unwrap_or(true);
     let branch_name = head
         .as_ref()
-        .and_then(|h| h.shorthand())
+        .and_then(|h| h.shorthand().ok())
         .unwrap_or("HEAD")
         .to_string();
 
@@ -83,7 +83,7 @@ pub fn detect_git_status(terminal: Option<&Terminal>) -> Option<GitPromptStatus>
     let (ahead, behind) = (|| -> Option<(usize, usize)> {
         let local_oid = repo.head().ok()?.target()?;
         let branch = repo.head().ok()?;
-        let branch_name = branch.shorthand()?;
+        let branch_name = branch.shorthand().ok()?;
         let upstream_name = format!("refs/remotes/origin/{}", branch_name);
         let upstream_ref = repo.find_reference(&upstream_name).ok()?;
         let upstream_oid = upstream_ref.target()?;
