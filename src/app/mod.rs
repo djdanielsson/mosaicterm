@@ -2384,7 +2384,7 @@ impl eframe::App for MosaicTermApp {
                         .fill(self.ui_colors.background)
                         .inner_margin(egui::Margin::same(2)),
                 )
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     let available_height = ui.available_height();
                     let input_height = 60.0;
                     let history_height = (available_height - input_height).max(100.0);
