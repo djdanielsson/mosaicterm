@@ -969,7 +969,7 @@ impl TuiOverlay {
                     .stroke(egui::Stroke::new(1.0_f32, border_color))
                     .inner_margin(egui::Margin::symmetric(12, 6)),
             )
-            .show_inside(host_ui, |ui| {
+            .show(host_ui, |ui| {
                 ui.horizontal(|ui| {
                     if let Some(cmd) = &self.command {
                         ui.label(
@@ -997,7 +997,7 @@ impl TuiOverlay {
                     .stroke(egui::Stroke::new(1.0_f32, border_color))
                     .inner_margin(egui::Margin::symmetric(12, 5)),
             )
-            .show_inside(host_ui, |ui| {
+            .show(host_ui, |ui| {
                 ui.horizontal(|ui| {
                     if self.has_exited {
                         ui.label(
@@ -1035,7 +1035,7 @@ impl TuiOverlay {
                     .fill(DEFAULT_BG.to_color32())
                     .inner_margin(egui::Margin::symmetric(4, 2)),
             )
-            .show_inside(host_ui, |ui| {
+            .show(host_ui, |ui| {
                 let mono_font = egui::FontId::new(13.0, egui::FontFamily::Monospace);
                 let char_width = ui.fonts_mut(|fonts| fonts.glyph_width(&mono_font, 'M'));
                 let line_height = ui.text_style_height(&egui::TextStyle::Monospace);
