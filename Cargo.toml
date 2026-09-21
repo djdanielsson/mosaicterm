@@ -13,7 +13,7 @@ homepage = "https://github.com/djdanielsson/mosaicterm"
 [dependencies]
 # GUI Framework
 # Note: egui is re-exported by eframe, use eframe::egui for consistency
-eframe = { version = "0.34", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
 
 # PTY and Terminal
 portable-pty = "0.9"
