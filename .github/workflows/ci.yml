@@ -253,7 +253,7 @@ jobs:
       - name: Setup Rust (MSRV)
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.92"  # MSRV — eframe 0.34 requires 1.92+
+          toolchain: "1.95"  # MSRV — eframe 0.36 requires 1.95+
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
