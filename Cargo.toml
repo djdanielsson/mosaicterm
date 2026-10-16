@@ -2,6 +2,7 @@
 name = "mosaicterm"
 version = "0.5.1"
 edition = "2021"
+rust-version = "1.95"
 authors = ["David Danielsson"]
 description = "A Rust GUI terminal emulator inspired by Warp with block-based command history"
 license = "MIT"
