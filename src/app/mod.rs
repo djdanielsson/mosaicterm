@@ -2178,7 +2178,7 @@ impl eframe::App for MosaicTermApp {
 
         // Show loading overlay if active
         if self.state_manager.is_loading() {
-            egui::Area::new(egui::Id::new("loading_overlay"))
+            egui::Area::new(egui::Id::unique("loading_overlay"))
                 .fixed_pos(egui::pos2(10.0, 10.0))
                 .show(ctx, |ui| {
                     let frame = egui::Frame::new()
@@ -3099,7 +3099,7 @@ impl MosaicTermApp {
     fn render_history_search_popup(&mut self, ctx: &egui::Context, input_rect: egui::Rect) {
         // Request focus on search field if needed (before showing popup)
         if self.history_search_needs_focus {
-            let search_id = egui::Id::new("history_search_input");
+            let search_id = egui::Id::unique("history_search_input");
             ctx.memory_mut(|mem| mem.request_focus(search_id));
             self.history_search_needs_focus = false;
         }
@@ -3111,7 +3111,7 @@ impl MosaicTermApp {
         let popup_y = input_rect.top() - popup_height - 10.0;
 
         // Create popup above input
-        egui::Area::new(egui::Id::new("history_search"))
+        egui::Area::new(egui::Id::unique("history_search"))
             .fixed_pos(egui::pos2(popup_x, popup_y))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
@@ -3147,7 +3147,7 @@ impl MosaicTermApp {
                             ui.add_space(8.0);
 
                             // Search input - ensure it gets focus
-                            let search_id = egui::Id::new("history_search_input");
+                            let search_id = egui::Id::unique("history_search_input");
                             let search_response = ui.add(
                                 egui::TextEdit::singleline(&mut self.history_search_query)
                                     .hint_text("Type to search... (fuzzy matching)")
