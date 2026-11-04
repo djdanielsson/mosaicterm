@@ -616,7 +616,7 @@ impl CommandBlocks {
         let mut action = None;
 
         // Render context menu at the specified position
-        let response = egui::Area::new(egui::Id::new(format!(
+        let response = egui::Area::new(egui::Id::unique(format!(
             "block_context_menu_{}",
             command_block.id
         )))

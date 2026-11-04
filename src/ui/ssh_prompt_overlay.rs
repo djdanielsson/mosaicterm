@@ -153,10 +153,10 @@ impl SshPromptOverlay {
         }
 
         let mut should_close = false;
-        let window_id = egui::Id::new("ssh_prompt_overlay");
+        let window_id = egui::Id::unique("ssh_prompt_overlay");
 
         // Create a modal overlay
-        egui::Area::new(egui::Id::new("ssh_prompt_backdrop"))
+        egui::Area::new(egui::Id::unique("ssh_prompt_backdrop"))
             .fixed_pos(egui::Pos2::ZERO)
             .show(ctx, |ui| {
                 let screen_rect = ctx.content_rect();
@@ -223,7 +223,7 @@ impl SshPromptOverlay {
                     ui.label("Response:");
 
                     // Use a unique ID for the text field
-                    let text_field_id = egui::Id::new("ssh_prompt_input_field");
+                    let text_field_id = egui::Id::unique("ssh_prompt_input_field");
 
                     let response = if self.prompt_type.is_secret() {
                         // Password field
