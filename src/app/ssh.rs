@@ -3,7 +3,6 @@
 //! This module handles SSH session detection, remote prompt parsing,
 //! and session lifecycle management.
 
-use futures::executor;
 use tracing::info;
 
 use super::MosaicTermApp;
@@ -30,7 +29,7 @@ impl MosaicTermApp {
 
     /// End the SSH session and restore local mode
     pub(super) fn end_ssh_session(&mut self) {
-        if self.ssh_session_active {
+        if self.pane.ssh_session_active {
             info!("Ending SSH session - performing full cleanup");
 
             // Log session end (non-sensitive)
@@ -39,49 +38,10 @@ impl MosaicTermApp {
                 Some("reason=user_exit"),
             );
 
-            self.ssh_session_active = false;
-            self.ssh_session_command = None;
-            self.ssh_remote_prompt = None;
-            self.ssh_prompt_buffer.clear();
-
-            // CRITICAL: Drain the PTY output channel to discard any stale SSH output
-            // This prevents old SSH output from being associated with new local commands
-            if let Some(terminal) = &self.terminal {
-                if let Some(handle) = terminal.pty_handle() {
-                    let pty_manager = &*self.pty_manager;
-                    if let Ok(drained_count) =
-                        executor::block_on(async { pty_manager.drain_output(handle).await })
-                    {
-                        if drained_count > 0 {
-                            info!(
-                                "Drained {} pending output chunks from PTY channel",
-                                drained_count
-                            );
-                        }
-                    }
-                }
-            }
-
-            // Clear any pending output from the terminal to avoid mixing with local commands
-            if let Some(terminal) = &mut self.terminal {
-                terminal.clear_pending_output();
-            }
-
-            // Clear any pending output from state manager's active session as well
-            if let Some(session) = self.state_manager.active_session_mut() {
-                session.clear_pending_output();
-
-                // Mark any running command as completed (the exit command itself)
-                if let Some(last_block) = session.current_command_block_mut() {
-                    if last_block.status == mosaicterm::models::ExecutionStatus::Running {
-                        last_block.mark_completed(std::time::Duration::from_secs(0));
-                        info!("Marked SSH exit command as completed");
-                    }
-                }
-            }
-
-            // Clear the last command time to avoid timing issues
-            self.state_manager.clear_last_command_time();
+            self.pane.ssh_session_active = false;
+            self.pane.ssh_session_command = None;
+            self.pane.ssh_remote_prompt = None;
+            self.pane.ssh_prompt_buffer.clear();
 
             // Restore local prompt
             self.update_prompt();

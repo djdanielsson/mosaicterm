@@ -47,13 +47,13 @@ pub async fn spawn_pty_process(
         cmd_builder.cwd(dir);
     }
 
-    let child = pair
-        .slave
-        .spawn_command(cmd_builder)
-        .map_err(|e| Error::CommandSpawnFailed {
-            command: command.to_string(),
-            reason: e.to_string(),
-        })?;
+    let mut child =
+        pair.slave
+            .spawn_command(cmd_builder)
+            .map_err(|e| Error::CommandSpawnFailed {
+                command: command.to_string(),
+                reason: e.to_string(),
+            })?;
 
     let pid = child.process_id();
 
@@ -66,7 +66,17 @@ pub async fn spawn_pty_process(
         pty_process.mark_started(p);
     }
 
-    let (streams, master) = create_pty_streams(pair)?;
+    let (mut streams, master) = match create_pty_streams(pair) {
+        Ok(streams) => streams,
+        Err(error) => {
+            let _ = child.kill();
+            thread::spawn(move || {
+                let _ = child.wait();
+            });
+            return Err(error);
+        }
+    };
+    streams.attach_child(child);
 
     Ok((pty_process, streams, master))
 }
@@ -257,6 +267,10 @@ pub fn validate_command(command: &str) -> Result<()> {
     use crate::platform::Platform;
 
     let fs_ops = Platform::filesystem();
+    let path = Path::new(command);
+    if path.is_absolute() && path.is_file() && fs_ops.is_executable(path) {
+        return Ok(());
+    }
     match fs_ops.find_command(command) {
         Ok(Some(_)) => Ok(()),
         Ok(None) => Err(Error::CommandNotFound {

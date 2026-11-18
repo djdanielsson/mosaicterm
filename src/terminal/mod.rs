@@ -21,7 +21,7 @@ pub use state::{
 
 use crate::error::Result;
 use crate::models::{OutputLine, ShellType, TerminalSession};
-use crate::pty::{PtyHandle, PtyManager};
+use crate::pty::{shell_state::ShellIntegration, PtyHandle, PtyManager};
 use chrono::Utc;
 use std::sync::Arc;
 
@@ -41,6 +41,7 @@ pub struct Terminal {
     pty_manager: Arc<PtyManager>,
     /// Current PTY handle
     pty_handle: Option<PtyHandle>,
+    shell_integration: Option<ShellIntegration>,
 }
 
 impl Terminal {
@@ -54,6 +55,7 @@ impl Terminal {
             completion_detector: CommandCompletionDetector::new(),
             pty_manager,
             pty_handle: None,
+            shell_integration: None,
         }
     }
 
@@ -117,10 +119,6 @@ impl Terminal {
     /// # }
     /// ```
     pub async fn initialize_session(&mut self) -> Result<()> {
-        // PtyManager is already async and thread-safe, no lock needed
-        let pty_manager = &*self.pty_manager;
-
-        // Create PTY process for the terminal session
         let session = &self.state.session;
 
         // Determine shell command and args based on shell type
@@ -158,24 +156,73 @@ impl Terminal {
             crate::models::ShellType::Other => ("sh".to_string(), vec![]), // Fallback to basic shell
         };
 
-        let handle = pty_manager
-            .create_pty(
-                &shell_command,
-                &shell_args,
-                &session.environment,
-                Some(session.working_directory.as_path()),
-            )
-            .await?;
-
-        // Store PTY handle and log
-        let handle_id = handle.id.clone();
-        self.pty_handle = Some(handle);
-
-        info!(
-            "Terminal session initialized with PTY handle: {}",
-            handle_id
+        self.pty_handle = Some(
+            self.spawn_shell(&shell_command, &shell_args, &session.environment)
+                .await?,
         );
         Ok(())
+    }
+
+    /// Launch the configured executable and install shell integration when supported.
+    pub async fn initialize_configured_shell(
+        &mut self,
+        executable: &std::path::Path,
+        mut args: Vec<String>,
+    ) -> Result<()> {
+        let session = &self.state.session;
+        let mut environment = session.environment.clone();
+
+        if args.is_empty() {
+            match session.shell_type {
+                ShellType::Bash => args.push("--noediting".to_string()),
+                ShellType::Zsh => args.push("+Z".to_string()),
+                _ => {}
+            }
+        }
+
+        let integration =
+            ShellIntegration::install(session.shell_type, &mut args, &mut environment)?;
+        self.pty_handle = Some(
+            self.spawn_shell(&executable.to_string_lossy(), &args, &environment)
+                .await?,
+        );
+        self.shell_integration = integration;
+        Ok(())
+    }
+
+    async fn spawn_shell(
+        &self,
+        executable: &str,
+        args: &[String],
+        environment: &std::collections::HashMap<String, String>,
+    ) -> Result<PtyHandle> {
+        self.pty_manager
+            .create_pty(
+                executable,
+                args,
+                environment,
+                Some(self.get_working_directory()),
+            )
+            .await
+    }
+
+    /// Read or observe shell integration state for this terminal.
+    pub fn shell_integration(&mut self) -> Option<&mut ShellIntegration> {
+        self.shell_integration.as_mut()
+    }
+
+    /// True once this terminal's shell has announced prompt integration.
+    pub fn integration_ready(&self) -> bool {
+        self.shell_integration
+            .as_ref()
+            .is_some_and(|integration| integration.is_ready())
+    }
+
+    /// Close the PTY and release its startup and state files.
+    pub async fn close(mut self) {
+        if let Some(handle) = self.pty_handle.take() {
+            let _ = self.pty_manager.terminate_pty(&handle).await;
+        }
     }
 
     /// Initialize terminal with existing PTY handle
@@ -254,6 +301,20 @@ impl Terminal {
         }
 
         Ok(InputResult::CommandReady(command.to_string()))
+    }
+
+    /// Parse a PTY chunk without inferring a command boundary from its text.
+    pub fn process_block_output(
+        &mut self,
+        data: Vec<u8>,
+        complete: bool,
+    ) -> Result<Vec<OutputLine>> {
+        self.output_processor.process_chunk(OutputChunk {
+            data,
+            timestamp: Utc::now(),
+            stream_type: StreamType::Stdout,
+            is_complete: complete,
+        })
     }
 
     /// Process output from PTY
@@ -367,6 +428,17 @@ impl Terminal {
     /// Get detected shell type
     pub fn detected_shell(&self) -> ShellType {
         self.prompt_detector.current_shell()
+    }
+
+    /// Match a visible prompt for shells that do not report a completion marker.
+    pub fn is_shell_prompt(&self, text: &str) -> bool {
+        if text.is_empty() {
+            return false;
+        }
+        self.prompt_detector.matches_current_shell(text)
+            || self
+                .completion_detector
+                .is_line_a_prompt(&OutputLine::new(text))
     }
 
     /// Set custom prompt pattern
