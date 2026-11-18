@@ -3983,7 +3983,13 @@ mod tests {
         assert_eq!(last_output, Some("2"));
         run_command(&mut app, "cd 'name with space'");
         assert_eq!(
-            app.pane.terminal.as_ref().unwrap().get_working_directory(),
+            app.pane
+                .terminal
+                .as_ref()
+                .unwrap()
+                .get_working_directory()
+                .canonicalize()
+                .unwrap(),
             subdir.canonicalize().unwrap()
         );
         run_command(&mut app, "false");
