@@ -338,15 +338,63 @@ fi
             .iter()
             .map(|var| format!(" \"{var}=${{{var}-}}\""))
             .collect::<String>();
-        let token = &self.token;
-        let return_status = if shell == crate::models::ShellType::Bash {
-            "$__ec"
-        } else {
-            // Zsh skips subsequent precmd hooks when a hook returns nonzero.
-            "0"
-        };
-        format!(
-            r#"
+        let snapshot =
+            format!(r#"builtin printf '%s\0' "$PWD"{state_fields} 2>/dev/null > {state_path}"#);
+        shell_hook(shell, &self.token, &snapshot)
+    }
+
+    /// Token carried by OSC 133 records emitted by this session's own hooks.
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    /// Read the latest directory and environment snapshot.
+    pub fn read_state(&self) -> Option<(PathBuf, String)> {
+        let data = std::fs::read(self.directory.path().join("state")).ok()?;
+        let data = String::from_utf8_lossy(&data);
+        let mut fields = data.split_terminator('\0');
+        Some((
+            PathBuf::from(fields.next()?),
+            fields.collect::<Vec<_>>().join("\n"),
+        ))
+    }
+}
+
+/// Bash startup for a shell that outlives the GUI and can resume through tmux.
+pub fn persistent_bash_rc(token: &str) -> String {
+    let hook = shell_hook(
+        crate::models::ShellType::Bash,
+        token,
+        r#"
+  if [[ -n "${TMUX_PANE-}" ]]; then
+    command tmux set-option -pq -t "$TMUX_PANE" @mosaicterm_exit "$__ec" \; set-option -pq -t "$TMUX_PANE" @mosaicterm_idle 1
+  fi"#,
+    );
+    format!(
+        r#"
+[[ -n "$MOSAICTERM_BOOTSTRAP" ]] && command rm -f -- "$MOSAICTERM_BOOTSTRAP"
+unset MOSAICTERM_BOOTSTRAP
+[[ -f /etc/bash.bashrc ]] && source /etc/bash.bashrc
+[[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
+{hook}
+if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )); then
+  PROMPT_COMMAND=(__mosaicterm_precmd "${{PROMPT_COMMAND[@]}}")
+else
+  PROMPT_COMMAND="__mosaicterm_precmd${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}"
+fi
+"#
+    )
+}
+
+fn shell_hook(shell: crate::models::ShellType, token: &str, snapshot: &str) -> String {
+    let return_status = if shell == crate::models::ShellType::Bash {
+        "$__ec"
+    } else {
+        // Zsh skips subsequent precmd hooks when a hook returns nonzero.
+        "0"
+    };
+    format!(
+        r#"
 # Provide directory jumping without overriding commands from the user's startup files.
 if command -v zoxide >/dev/null 2>&1; then
   __mosaicterm_zoxide_jump() {{
@@ -383,7 +431,7 @@ __mosaicterm_cwd() {{
 __mosaicterm_precmd() {{
   local __ec=$?
   PS1='' PS2='' PS3='' PS4=''
-  builtin printf '%s\0' "$PWD"{state_fields} 2>/dev/null > {state_path}
+  {snapshot}
   __mosaicterm_cwd
   if [[ -n "${{__mosaicterm_ready-}}" ]]; then
     builtin printf '\033]133;D;%s;mosaicterm={token}\033\\' "$__ec"
@@ -393,24 +441,7 @@ __mosaicterm_precmd() {{
   return {return_status}
 }}
 "#
-        )
-    }
-
-    /// Token carried by OSC 133 records emitted by this session's own hooks.
-    pub fn token(&self) -> &str {
-        &self.token
-    }
-
-    /// Read the latest directory and environment snapshot.
-    pub fn read_state(&self) -> Option<(PathBuf, String)> {
-        let data = std::fs::read(self.directory.path().join("state")).ok()?;
-        let data = String::from_utf8_lossy(&data);
-        let mut fields = data.split_terminator('\0');
-        Some((
-            PathBuf::from(fields.next()?),
-            fields.collect::<Vec<_>>().join("\n"),
-        ))
-    }
+    )
 }
 
 fn shell_quote(value: &str) -> String {

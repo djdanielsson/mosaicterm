@@ -477,6 +477,8 @@ fn brighten(color: egui::Color32) -> egui::Color32 {
 /// Fullscreen TUI overlay component
 pub struct TuiOverlay {
     /// Whether the overlay is currently active
+    ghostty: Option<super::ghostty_overlay::GhosttyOverlay>,
+    ghostty_dirty: bool,
     active: bool,
     /// The command being run in the overlay
     command: Option<String>,
@@ -508,6 +510,8 @@ impl TuiOverlay {
     /// Create a new TUI overlay
     pub fn new() -> Self {
         Self {
+            ghostty: None,
+            ghostty_dirty: false,
             active: false,
             command: None,
             pty_handle_id: None,
@@ -531,6 +535,20 @@ impl TuiOverlay {
         self.active = true;
         self.command = Some(command);
         self.pty_handle_id = Some(pty_handle_id);
+        self.ghostty = std::env::var_os("MOSAICTERM_GHOSTTY_VT").and_then(|library| {
+            match super::ghostty_overlay::GhosttyOverlay::load(
+                std::path::Path::new(&library),
+                self.screen_buffer.rows as u16,
+                self.screen_buffer.cols as u16,
+            ) {
+                Ok(overlay) => Some(overlay),
+                Err(error) => {
+                    tracing::warn!("Could not use libghostty-vt: {error}");
+                    None
+                }
+            }
+        });
+        self.ghostty_dirty = self.ghostty.is_some();
         self.screen_buffer.clear();
         self.has_exited = false;
         self.started_at = Some(std::time::Instant::now());
@@ -539,6 +557,8 @@ impl TuiOverlay {
 
     /// Stop the overlay
     pub fn stop(&mut self) {
+        self.ghostty = None;
+        self.ghostty_dirty = false;
         self.active = false;
         self.command = None;
         self.pty_handle_id = None;
@@ -603,8 +623,36 @@ impl TuiOverlay {
 
     /// Add raw output data and process ANSI sequences
     pub fn add_raw_output(&mut self, data: &[u8]) {
+        if let Some(terminal) = &mut self.ghostty {
+            terminal.write(data);
+            self.ghostty_dirty = true;
+            return;
+        }
         let text = String::from_utf8_lossy(data);
         self.process_ansi_text(&text);
+    }
+
+    /// Bytes the active engine generated in response to terminal queries.
+    pub fn take_pty_replies(&mut self) -> Vec<u8> {
+        self.ghostty
+            .as_mut()
+            .map(|terminal| terminal.take_replies())
+            .unwrap_or_default()
+    }
+
+    fn refresh_ghostty_screen(&mut self) {
+        if !std::mem::take(&mut self.ghostty_dirty) {
+            return;
+        }
+        if let Some(terminal) = &self.ghostty {
+            match terminal.snapshot() {
+                Ok(snapshot) => {
+                    self.screen_buffer.clear();
+                    self.process_ansi_text(&String::from_utf8_lossy(&snapshot));
+                }
+                Err(error) => tracing::warn!("Could not read libghostty-vt screen: {error}"),
+            }
+        }
     }
 
     /// Process text with ANSI escape sequences and update screen buffer
@@ -1048,9 +1096,22 @@ impl TuiOverlay {
                 if self.last_char_size != Some(new_size) {
                     self.last_char_size = Some(new_size);
                     self.screen_buffer.resize(rows, cols);
+                    if let Some(terminal) = &mut self.ghostty {
+                        let pixels = ctx.pixels_per_point();
+                        if let Err(error) = terminal.resize(
+                            rows as u16,
+                            cols as u16,
+                            (char_width * pixels).round().max(1.0) as u32,
+                            (line_height * pixels).round().max(1.0) as u32,
+                        ) {
+                            tracing::warn!("Could not resize libghostty-vt: {error}");
+                        }
+                        self.ghostty_dirty = true;
+                    }
                     self.pending_resize = Some((rows as u16, cols as u16));
                 }
 
+                self.refresh_ghostty_screen();
                 let job = self.screen_buffer.render_to_layout_job(mono_font.clone());
                 let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
                 let (response, painter) = ui.allocate_painter(available, egui::Sense::hover());

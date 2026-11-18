@@ -1831,6 +1831,7 @@ dependencies = [
  "git2",
  "hostname",
  "image",
+ "libloading",
  "nix 0.31.3",
  "notify",
  "objc",

@@ -19,6 +19,7 @@ eframe = { version = "0.37", default-features = false, features = ["default_font
 # PTY and Terminal
 portable-pty = "0.9"
 vte = "0.15"
+libloading = "0.8"
 
 # Serialization and Configuration
 serde = { version = "1.0", features = ["derive"] }

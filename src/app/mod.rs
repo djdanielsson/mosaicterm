@@ -62,6 +62,7 @@ mod context;
 mod input;
 #[allow(dead_code)]
 pub mod pane_tree;
+mod persistent;
 mod prompt;
 mod ssh;
 
@@ -74,6 +75,7 @@ use mosaicterm::context::ContextDetector;
 use mosaicterm::error::Result;
 use mosaicterm::models::{CommandBlock, ExecutionStatus};
 use mosaicterm::pty::{PtyHandle, PtyManager};
+use mosaicterm::session::persistent::{PersistentSession, SessionHost, SessionSnapshot};
 use mosaicterm::state_manager::StateManager;
 use mosaicterm::terminal::{
     osc::{ShellMark, ShellMarkKind, TerminalEvent, TerminalEventParser},
@@ -119,7 +121,10 @@ pub(crate) enum AsyncRequest {
         pane_id: String,
         config: Box<TerminalConfig>,
         working_dir: PathBuf,
+        launch: ShellLaunch,
     },
+    ListSessions(SessionHost),
+    EndSession(PersistentSession),
     CloseTerminal(Box<Terminal>),
     SendInterrupt {
         pane_id: String,
@@ -127,10 +132,28 @@ pub(crate) enum AsyncRequest {
     },
 }
 
+pub(super) enum ShellLaunch {
+    Native,
+    Persistent {
+        session: PersistentSession,
+        create: bool,
+    },
+}
+
+pub(super) struct StartedShell {
+    terminal: Box<Terminal>,
+    snapshot: Option<SessionSnapshot>,
+}
+
 pub(crate) enum AsyncResult {
     ShellStarted {
         pane_id: String,
-        result: Result<Box<Terminal>>,
+        result: Result<StartedShell>,
+    },
+    SessionsListed(Result<Vec<PersistentSession>>),
+    SessionEnded {
+        session: PersistentSession,
+        result: Result<()>,
     },
     InterruptSent {
         pane_id: String,
@@ -142,6 +165,7 @@ pub(crate) enum AsyncResult {
 struct PaneSession {
     terminal: Option<Box<Terminal>>,
     initializing: bool,
+    persistent: Option<PersistentSession>,
     status_message: Option<String>,
     input_prompt: InputPrompt,
     prompt_segments: Vec<mosaicterm::config::prompt::PromptSegment>,
@@ -216,12 +240,7 @@ pub struct MosaicTermApp {
     ui_colors: mosaicterm::ui::UiColors,
     /// Tool availability detection (Phase 5)
     tool_availability: ToolAvailability,
-    /// Tmux session manager (Phase 4)
-    tmux_manager: Option<mosaicterm::session::TmuxSessionManager>,
-    /// Whether to show the session restore dialog
-    show_session_restore_dialog: bool,
-    /// Pending sessions to offer for restore
-    pending_restore_sessions: Vec<mosaicterm::session::tmux_backend::SessionInfo>,
+    sessions: persistent::SessionPanel,
 }
 
 /// Detected tool availability on the system
@@ -786,24 +805,6 @@ impl MosaicTermApp {
             tool_availability.eza
         );
 
-        let tmux_manager = if tool_availability.tmux && runtime_config.config().session.persistence
-        {
-            let mgr = mosaicterm::session::TmuxSessionManager::new();
-            let sessions = mgr.list_mosaicterm_sessions();
-            if !sessions.is_empty() {
-                info!("Found {} existing MosaicTerm tmux sessions", sessions.len());
-            }
-            Some(mgr)
-        } else {
-            None
-        };
-
-        let pending_restore_sessions = tmux_manager
-            .as_ref()
-            .map(|mgr| mgr.list_mosaicterm_sessions())
-            .unwrap_or_default();
-        let show_session_restore_dialog = !pending_restore_sessions.is_empty();
-
         Self {
             state_manager,
             pane: PaneSession {
@@ -839,9 +840,7 @@ impl MosaicTermApp {
             async_rx: result_rx,
             ui_colors,
             tool_availability,
-            tmux_manager,
-            show_session_restore_dialog,
-            pending_restore_sessions,
+            sessions: persistent::SessionPanel::default(),
         }
     }
 
@@ -907,12 +906,31 @@ impl MosaicTermApp {
     }
 
     fn request_shell(&mut self, working_dir: PathBuf) {
+        let launch = match &self.pane.persistent {
+            Some(session) => ShellLaunch::Persistent {
+                session: session.clone(),
+                create: false,
+            },
+            None if self.runtime_config.config().session.persistence => ShellLaunch::Persistent {
+                session: PersistentSession::new(self.configured_host()),
+                create: true,
+            },
+            None => ShellLaunch::Native,
+        };
+        self.launch_shell(working_dir, launch);
+    }
+
+    fn launch_shell(&mut self, working_dir: PathBuf, launch: ShellLaunch) {
         let pane_id = self.pane_tree.active_id().to_string();
         let config = Box::new(self.runtime_config.config().terminal.clone());
+        if let ShellLaunch::Persistent { session, .. } = &launch {
+            self.pane.persistent = Some(session.clone());
+        }
         let request = AsyncRequest::StartShell {
             pane_id,
             config,
             working_dir,
+            launch,
         };
         if self.async_tx.send(request).is_ok() {
             self.pane.initializing = true;
@@ -1030,7 +1048,11 @@ impl MosaicTermApp {
 
     /// Update just the git context (synchronous filesystem check)
     fn update_git_context(&mut self) {
-        let git_context = context::detect_git_context(self.pane.terminal.as_deref());
+        let git_context = if self.is_persistent_remote() {
+            None
+        } else {
+            context::detect_git_context(self.pane.terminal.as_deref())
+        };
         context::update_state_git_context(&mut self.state_manager, git_context);
     }
 
@@ -1075,12 +1097,14 @@ impl MosaicTermApp {
                     session.working_directory = cwd.clone();
                 }
 
-                if self.tool_availability.zoxide {
+                if self.tool_availability.zoxide && !self.is_persistent_remote() {
                     Self::zoxide_add_background(&cwd);
                 }
             }
         }
-        self.update_contexts();
+        if !self.is_persistent_remote() {
+            self.update_contexts();
+        }
         if let Some((_, environment)) = snapshot {
             self.parse_env_output(&environment);
         }
@@ -1266,65 +1290,6 @@ impl MosaicTermApp {
                 }
             }
         }
-    }
-
-    fn render_session_restore_dialog(&mut self, ctx: &egui::Context) {
-        egui::Window::new("Restore Session")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.label(
-                    egui::RichText::new("Previous MosaicTerm sessions found")
-                        .font(egui::FontId::monospace(13.0))
-                        .color(self.ui_colors.foreground),
-                );
-                ui.add_space(8.0);
-
-                let sessions = self.pending_restore_sessions.clone();
-                for session in &sessions {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(&session.name)
-                                .font(egui::FontId::monospace(12.0))
-                                .color(self.ui_colors.accent),
-                        );
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} windows - {}",
-                                session.windows, session.created
-                            ))
-                            .font(egui::FontId::monospace(11.0))
-                            .color(self.ui_colors.status_bar.text),
-                        );
-                    });
-                }
-
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Restore").clicked() {
-                        info!("User chose to restore tmux sessions");
-                        self.show_session_restore_dialog = false;
-                    }
-                    if ui.button("Start Fresh").clicked() {
-                        if let Some(mgr) = &self.tmux_manager {
-                            let killed = mgr.kill_all_mosaicterm_sessions();
-                            info!("Killed {} old tmux sessions", killed);
-                        }
-                        self.show_session_restore_dialog = false;
-                        self.pending_restore_sessions.clear();
-                    }
-                });
-
-                if self.runtime_config.config().session.auto_restore {
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new("(auto-restore is enabled in config)")
-                            .font(egui::FontId::monospace(10.0))
-                            .color(egui::Color32::from_rgb(120, 120, 140)),
-                    );
-                }
-            });
     }
 
     fn render_about_dialog(&mut self, ctx: &egui::Context) {
@@ -1744,9 +1709,7 @@ impl eframe::App for MosaicTermApp {
 
         if !self.state_manager.is_initialization_attempted() {
             self.state_manager.set_initialization_attempted(true);
-            self.request_shell(Self::initial_working_dir(
-                &self.runtime_config.config().terminal,
-            ));
+            self.initialize_session_layout();
         }
         self.poll_async_results();
         self.poll_panes();
@@ -1865,8 +1828,8 @@ impl eframe::App for MosaicTermApp {
         }
 
         // Session restore dialog (Phase 4)
-        if self.show_session_restore_dialog {
-            self.render_session_restore_dialog(ctx);
+        if self.sessions.open {
+            self.render_sessions(ctx);
         }
 
         // Check for native menu bar actions (set by macOS menu callbacks)
@@ -1955,6 +1918,11 @@ impl eframe::App for MosaicTermApp {
                         .inner_margin(egui::Margin::same(2)),
                 )
                 .show(ui, |ui| {
+                    if self.runtime_config.config().session.persistence
+                        && ui.button("Sessions").clicked()
+                    {
+                        self.open_sessions();
+                    }
                     self.render_panes(ui);
                 });
 
@@ -2059,6 +2027,7 @@ impl eframe::App for MosaicTermApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         info!("MosaicTerm application shutting down");
+        self.save_session_layout();
         if let Some(terminal) = self.pane.terminal.take() {
             executor::block_on(terminal.close());
         }
@@ -2535,6 +2504,10 @@ impl MosaicTermApp {
     /// Compute a ghost completion suggestion for the current input.
     /// Returns the full suggested text (including what's already typed).
     fn compute_ghost_completion(&mut self, input: &str) -> Option<String> {
+        if self.is_persistent_remote() {
+            return None;
+        }
+
         if input.is_empty() {
             return None;
         }
@@ -2570,6 +2543,10 @@ impl MosaicTermApp {
 
     /// Handle tab key press for completions
     fn handle_tab_completion(&mut self, input: &str, input_rect: egui::Rect) {
+        if self.is_persistent_remote() {
+            return;
+        }
+
         let now = std::time::Instant::now();
 
         // Check if this is a double-tab (within 500ms)
@@ -3312,8 +3289,8 @@ impl MosaicTermApp {
                 AsyncResult::ShellStarted { pane_id, result } => {
                     let active = pane_id == self.pane_tree.active_id();
                     let Some(pane) = self.pane_tree.find_pane_mut(&pane_id) else {
-                        if let Ok(terminal) = result {
-                            self.close_terminal(terminal);
+                        if let Ok(started) = result {
+                            self.close_terminal(started.terminal);
                         }
                         continue;
                     };
@@ -3323,8 +3300,11 @@ impl MosaicTermApp {
                         &mut pane.session
                     };
                     session.initializing = false;
+                    let mut snapshot = None;
                     let old_terminal = match result {
-                        Ok(terminal) => {
+                        Ok(started) => {
+                            let terminal = started.terminal;
+                            snapshot = started.snapshot;
                             if let Some(state) =
                                 self.state_manager.get_session_mut(&pane.session_id)
                             {
@@ -3351,6 +3331,10 @@ impl MosaicTermApp {
                     if let Some(terminal) = old_terminal {
                         self.close_terminal(terminal);
                     }
+                    if let Some(snapshot) = snapshot {
+                        self.apply_session_snapshot(&pane_id, snapshot);
+                        self.save_session_layout();
+                    }
                     if active {
                         self.stop_loading();
                         self.state_manager
@@ -3360,6 +3344,10 @@ impl MosaicTermApp {
                         self.update_contexts();
                         self.update_prompt();
                     }
+                }
+                AsyncResult::SessionsListed(result) => self.finish_session_listing(result),
+                AsyncResult::SessionEnded { session, result } => {
+                    self.finish_session_end(&session, result)
                 }
                 AsyncResult::InterruptSent {
                     pane_id,
@@ -3426,9 +3414,12 @@ impl MosaicTermApp {
                     mosaicterm::error::Error::PtyStreamDisconnected
                     | mosaicterm::error::Error::PtyStreamsNotFound { .. },
                 ) => {
-                    let exit_code = executor::block_on(self.pty_manager.exit_code(&handle));
+                    let persistent = self.pane.persistent.is_some();
                     self.flush_pane_output();
-                    self.finish_pending_block(exit_code, true);
+                    if !persistent {
+                        let exit_code = executor::block_on(self.pty_manager.exit_code(&handle));
+                        self.finish_pending_block(exit_code, true);
+                    }
                     self.end_ssh_session();
                     self.pane.program_statuses.clear();
                     if self.pane.tui_overlay.is_active() {
@@ -3440,7 +3431,11 @@ impl MosaicTermApp {
                     if let Some(session) = self.state_manager.active_session_mut() {
                         session.pty_handle_id = None;
                     }
-                    self.set_status_message(Some("Shell closed".to_string()));
+                    self.set_status_message(Some(if persistent {
+                        "Disconnected. Reconnect from Sessions".to_string()
+                    } else {
+                        "Shell closed".to_string()
+                    }));
                     return;
                 }
                 Err(error) => {
@@ -3556,6 +3551,17 @@ impl MosaicTermApp {
 
         if self.pane.tui_overlay.is_active() {
             self.pane.tui_overlay.add_raw_output(&data);
+            let reply = self.pane.tui_overlay.take_pty_replies();
+            if !reply.is_empty() {
+                if let Some(handle) = self
+                    .pane
+                    .terminal
+                    .as_ref()
+                    .and_then(|terminal| terminal.pty_handle())
+                {
+                    let _ = executor::block_on(self.pty_manager.send_input(handle, &reply));
+                }
+            }
             if completed {
                 self.pane.tui_overlay.mark_exited();
             } else if !self.integrated_shell_ready() {
@@ -4103,6 +4109,341 @@ mod tests {
         poll_until(&mut app, |app| {
             executor::block_on(app.pty_manager.active_count()) == 1
         });
+        executor::block_on(app.pane.terminal.take().unwrap().close());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn persistent_layout_reattaches_two_live_shells_without_restarting_them() {
+        if std::env::var_os("MOSAICTERM_TEST_PERSISTENCE").is_none() {
+            return;
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let layout_path = root.path().join("pane-layout.json");
+        let mut app = MosaicTermApp::new();
+        app.sessions.layout_path = Some(layout_path.clone());
+        app.history_manager =
+            mosaicterm::history::HistoryManager::with_path(root.path().join("history")).unwrap();
+        let config = app.runtime_config.config_mut();
+        config.session.persistence = true;
+        config.session.auto_restore = true;
+        config.terminal.shell_path = PathBuf::from("bash");
+        config.terminal.shell_args.clear();
+        config.terminal.working_directory = Some(root.path().to_path_buf());
+
+        app.initialize_session_layout();
+        poll_until(&mut app, |app| app.can_submit_command());
+        run_command(
+            &mut app,
+            "mkdir pane-one; cd pane-one; printf 'one:%s\\n' \"$$\"",
+        );
+        let first_id = app.pane.persistent.clone().unwrap();
+        let first_output = app
+            .state_manager
+            .get_command_history()
+            .last()
+            .unwrap()
+            .output[0]
+            .text
+            .clone();
+        executor::block_on(app.handle_command_input(
+            "printf 'started\\n'; sleep 0.4; printf 'offline-output\\n'".into(),
+        ))
+        .unwrap();
+        poll_until(&mut app, |app| {
+            app.state_manager
+                .get_command_history()
+                .last()
+                .unwrap()
+                .output
+                .iter()
+                .any(|line| line.text == "started")
+        });
+
+        app.handle_split_right();
+        poll_until(&mut app, |app| app.can_submit_command());
+        run_command(
+            &mut app,
+            "mkdir ../pane-two; cd ../pane-two; printf 'two:%s\\n' \"$$\"",
+        );
+        let second_id = app.pane.persistent.clone().unwrap();
+        let second_output = app
+            .state_manager
+            .get_command_history()
+            .last()
+            .unwrap()
+            .output[0]
+            .text
+            .clone();
+        eframe::App::on_exit(&mut app, None);
+        drop(app);
+
+        let mut restored = MosaicTermApp::new();
+        restored.sessions.layout_path = Some(layout_path);
+        restored.history_manager =
+            mosaicterm::history::HistoryManager::with_path(root.path().join("history")).unwrap();
+        let config = restored.runtime_config.config_mut();
+        config.session.persistence = true;
+        config.session.auto_restore = true;
+        config.terminal.shell_path = PathBuf::from("bash");
+        config.terminal.shell_args.clear();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        restored.initialize_session_layout();
+        poll_until(&mut restored, |app| app.can_submit_command());
+        assert_eq!(restored.pane_tree.pane_count(), 2);
+        assert_eq!(restored.pane.persistent.as_ref(), Some(&second_id));
+        assert_eq!(
+            restored
+                .pane
+                .terminal
+                .as_ref()
+                .unwrap()
+                .get_working_directory(),
+            root.path().join("pane-two")
+        );
+        run_command(&mut restored, "printf 'two:%s\\n' \"$$\"");
+        assert_eq!(
+            restored
+                .state_manager
+                .get_command_history()
+                .last()
+                .unwrap()
+                .output[0]
+                .text,
+            second_output
+        );
+
+        restored.handle_navigate_pane(pane_tree::Direction::Left);
+        poll_until(&mut restored, |app| app.can_submit_command());
+        assert_eq!(restored.pane.persistent.as_ref(), Some(&first_id));
+        assert_eq!(
+            restored
+                .pane
+                .terminal
+                .as_ref()
+                .unwrap()
+                .get_working_directory(),
+            root.path().join("pane-one")
+        );
+        assert!(restored
+            .state_manager
+            .get_command_history()
+            .iter()
+            .flat_map(|block| block.output.iter())
+            .any(|line| line.text == "offline-output"));
+        run_command(&mut restored, "printf 'one:%s\\n' \"$$\"");
+        assert_eq!(
+            restored
+                .state_manager
+                .get_command_history()
+                .last()
+                .unwrap()
+                .output[0]
+                .text,
+            first_output
+        );
+        eframe::App::on_exit(&mut restored, None);
+        first_id.end().unwrap();
+        second_id.end().unwrap();
+        let sessions = SessionHost::default().list().unwrap();
+        assert!(!sessions.contains(&first_id) && !sessions.contains(&second_id));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn ssh_reconnect_keeps_the_shell_and_recovers_the_exit_status() {
+        let Some(host) = std::env::var_os("MOSAICTERM_TEST_SSH_HOST") else {
+            return;
+        };
+        let drop_file = std::env::var_os("MOSAICTERM_TEST_SSH_DROP").unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let mut app = MosaicTermApp::new();
+        app.history_manager =
+            mosaicterm::history::HistoryManager::with_path(root.path().join("history")).unwrap();
+        app.runtime_config.config_mut().session.persistence = true;
+        let session = PersistentSession::new(SessionHost {
+            ssh: Some(host.into_string().unwrap()),
+        });
+        app.launch_shell(
+            root.path().to_path_buf(),
+            ShellLaunch::Persistent {
+                session: session.clone(),
+                create: true,
+            },
+        );
+        poll_until(&mut app, |app| app.can_submit_command());
+        assert!(session.host.list().unwrap().contains(&session));
+
+        run_command(
+            &mut app,
+            "mkdir -p mosaicterm-fixture; cd mosaicterm-fixture; printf 'shell:%s\\n' \"$$\"",
+        );
+        let pid = app
+            .state_manager
+            .get_command_history()
+            .last()
+            .unwrap()
+            .output[0]
+            .text
+            .clone();
+        executor::block_on(app.handle_command_input(
+            "printf 'starting\\n'; sleep 0.6; printf 'finished offline\\n'; false".into(),
+        ))
+        .unwrap();
+        poll_until(&mut app, |app| {
+            app.state_manager
+                .get_command_history()
+                .last()
+                .unwrap()
+                .output
+                .iter()
+                .any(|line| line.text == "starting")
+        });
+        std::fs::write(&drop_file, b"disconnect").unwrap();
+        poll_until(&mut app, |app| app.pane.terminal.is_none());
+        assert!(app
+            .pane
+            .status_message
+            .as_deref()
+            .unwrap()
+            .starts_with("Disconnected"));
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        app.request_shell(root.path().to_path_buf());
+        poll_until(&mut app, |app| !app.pane.initializing);
+        assert!(
+            app.can_submit_command(),
+            "reconnect: {:?}, pending: {:?}, last blocks: {:?}",
+            app.pane.status_message,
+            app.pane.pending_block,
+            app.state_manager
+                .get_command_history()
+                .iter()
+                .rev()
+                .take(3)
+                .map(|block| (&block.command, block.exit_code))
+                .collect::<Vec<_>>()
+        );
+        assert!(app
+            .pane
+            .terminal
+            .as_ref()
+            .unwrap()
+            .get_working_directory()
+            .ends_with("mosaicterm-fixture"));
+        let history = app.state_manager.get_command_history();
+        assert!(history
+            .iter()
+            .any(|block| block.exit_code == Some(1) && block.command.ends_with("false")));
+        assert!(history
+            .iter()
+            .flat_map(|block| block.output.iter())
+            .any(|line| line.text == "finished offline"));
+        run_command(&mut app, "printf 'shell:%s\\n' \"$$\"");
+        assert_eq!(
+            app.state_manager
+                .get_command_history()
+                .last()
+                .unwrap()
+                .output[0]
+                .text,
+            pid
+        );
+
+        session.end().unwrap();
+        poll_until(&mut app, |app| app.pane.terminal.is_none());
+        app.request_shell(root.path().to_path_buf());
+        poll_until(&mut app, |app| !app.pane.initializing);
+        assert!(app.pane.terminal.is_none());
+        assert!(
+            app.pane
+                .status_message
+                .as_deref()
+                .unwrap()
+                .contains("Session ended"),
+            "{:?}",
+            app.pane.status_message
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn ghostty_overlay_resizes_vim_and_returns_to_the_same_history() {
+        if std::env::var_os("MOSAICTERM_GHOSTTY_VT").is_none() || !command_exists("vim") {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("sample.txt");
+        let ready = root.path().join("ready");
+        let size = root.path().join("size");
+        std::fs::write(&source, "Unicode: 界 e\u{301}\n").unwrap();
+        let mut app = MosaicTermApp::new();
+        app.history_manager =
+            mosaicterm::history::HistoryManager::with_path(root.path().join("history")).unwrap();
+        let config = app.runtime_config.config_mut();
+        config.terminal.shell_path = PathBuf::from("bash");
+        config.terminal.shell_args.clear();
+        config.tui_apps.fullscreen_commands.push("vim".into());
+        app.request_shell(root.path().to_path_buf());
+        poll_until(&mut app, |app| app.can_submit_command());
+        run_command(&mut app, "printf 'history anchor\\n'");
+        let anchor = app
+            .state_manager
+            .get_command_history()
+            .last()
+            .unwrap()
+            .id
+            .clone();
+        executor::block_on(app.handle_command_input(format!(
+            "vim -Nu NONE -i NONE -n -c \"call writefile(['ready'], '{}')\" '{}'",
+            ready.display(),
+            source.display()
+        )))
+        .unwrap();
+        poll_until(&mut app, |_| ready.exists());
+        assert!(app.pane.tui_overlay.is_active());
+
+        let ctx = egui::Context::default();
+        for area in [egui::vec2(640.0, 420.0), egui::vec2(900.0, 660.0)] {
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, area)),
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.pane.tui_overlay.render(&ctx, ui);
+                },
+            );
+            let new_size = app.pane.tui_overlay.take_pending_resize().unwrap();
+            MosaicTermApp::resize_session(&app.pty_manager, &mut app.pane, new_size);
+        }
+        let (rows, cols) = app.pane.pty_size.unwrap();
+        let handle = app
+            .pane
+            .terminal
+            .as_ref()
+            .unwrap()
+            .pty_handle()
+            .unwrap()
+            .clone();
+        executor::block_on(
+            app.pty_manager.send_input(
+                &handle,
+                format!(
+                    ":call writefile([&lines . 'x' . &columns], '{}')\r",
+                    size.display()
+                )
+                .as_bytes(),
+            ),
+        )
+        .unwrap();
+        poll_until(&mut app, |_| {
+            std::fs::read_to_string(&size).is_ok_and(|text| text.trim() == format!("{rows}x{cols}"))
+        });
+        executor::block_on(app.pty_manager.send_input(&handle, b":q!\r")).unwrap();
+        poll_until(&mut app, |app| app.pane.pending_block.is_none());
+        assert!(app.pane.tui_overlay.has_exited());
+        let history = app.state_manager.get_command_history();
+        assert_eq!(history[history.len() - 2].id, anchor);
+        assert_eq!(history.last().unwrap().exit_code, Some(0));
         executor::block_on(app.pane.terminal.take().unwrap().close());
     }
 }

@@ -252,30 +252,55 @@ impl MosaicTermApp {
     }
 
     fn split_active_pane(&mut self, axis: super::pane_tree::SplitAxis) {
-        let previous_id = self.pane_tree.active_id().to_string();
         let config = &self.runtime_config.config().terminal;
-        let (_, shell_type) = config.shell();
+        let host = self
+            .pane
+            .persistent
+            .as_ref()
+            .map(|session| session.host.clone());
         let working_dir = self
             .pane
             .terminal
             .as_ref()
             .map(|terminal| terminal.get_working_directory())
-            .filter(|dir| dir.is_dir())
+            .filter(|dir| dir.is_dir() && !self.is_persistent_remote())
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|| Self::initial_working_dir(config));
-        let session_id = self
-            .state_manager
-            .create_session(working_dir.clone(), shell_type);
+        if self.add_split(axis, working_dir.clone()) {
+            if let Some(host) = host {
+                let session = mosaicterm::session::persistent::PersistentSession::new(host);
+                self.launch_shell(
+                    working_dir,
+                    super::ShellLaunch::Persistent {
+                        session,
+                        create: true,
+                    },
+                );
+            } else {
+                self.request_shell(working_dir);
+            }
+        }
+    }
+
+    pub(super) fn add_split(
+        &mut self,
+        axis: super::pane_tree::SplitAxis,
+        working_dir: std::path::PathBuf,
+    ) -> bool {
+        let previous_id = self.pane_tree.active_id().to_string();
+        let (_, shell_type) = self.runtime_config.config().terminal.shell();
+        let session_id = self.state_manager.create_session(working_dir, shell_type);
         if self
             .pane_tree
             .split(&previous_id, axis, session_id.clone())
             .is_some()
         {
             self.switch_pane_session(&previous_id);
-            self.request_shell(working_dir);
+            true
         } else {
             self.state_manager.remove_session(&session_id);
             self.switch_pane_session(&previous_id);
+            false
         }
     }
 
@@ -297,6 +322,7 @@ impl MosaicTermApp {
             self.state_manager.remove_session(&session_id);
             self.pane = super::PaneSession::default();
             self.switch_pane_session(&id);
+            self.save_session_layout();
         }
     }
 
