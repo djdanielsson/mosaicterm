@@ -211,6 +211,13 @@ impl Terminal {
         self.shell_integration.as_mut()
     }
 
+    /// True once this terminal's shell has announced prompt integration.
+    pub fn integration_ready(&self) -> bool {
+        self.shell_integration
+            .as_ref()
+            .is_some_and(|integration| integration.is_ready())
+    }
+
     /// Close the PTY and release its startup and state files.
     pub async fn close(mut self) {
         if let Some(handle) = self.pty_handle.take() {

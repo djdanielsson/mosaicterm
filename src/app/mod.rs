@@ -3772,7 +3772,16 @@ mod tests {
         config.shell_path = PathBuf::from("bash");
         config.shell_args = vec!["--noprofile".into(), "--noediting".into()];
         app.request_shell(dir.path().to_path_buf());
-        poll_until(&mut app, |app| app.can_submit_command());
+        // A command typed before the shell hook reports its first prompt is completed by
+        // the process-state fallback, which cannot report an exit code.
+        poll_until(&mut app, |app| {
+            app.can_submit_command()
+                && app
+                    .pane
+                    .terminal
+                    .as_ref()
+                    .is_some_and(|terminal| terminal.integration_ready())
+        });
 
         run_command(&mut app, "echo 'a b' | wc -w");
         let block = app.state_manager.get_command_history().last().unwrap();
@@ -3788,8 +3797,14 @@ mod tests {
         assert_eq!(last_output, Some("2"));
         run_command(&mut app, "cd 'name with space'");
         assert_eq!(
-            app.pane.terminal.as_ref().unwrap().get_working_directory(),
-            subdir
+            app.pane
+                .terminal
+                .as_ref()
+                .unwrap()
+                .get_working_directory()
+                .canonicalize()
+                .unwrap(),
+            subdir.canonicalize().unwrap()
         );
         run_command(&mut app, "false");
         assert_eq!(
