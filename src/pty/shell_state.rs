@@ -16,10 +16,9 @@
 //!
 //! ## Shell integration files
 //!
-//! [`create_zdotdir`] / [`create_bash_rcfile`] write temporary startup files
-//! that install a `precmd` / `PROMPT_COMMAND` hook.  Because the hook is sourced
-//! during shell startup (not typed into the PTY), it produces **zero** visible
-//! output.
+//! Private startup files install a shell hook that reports command status on
+//! the PTY after the command's output and snapshots the shell's directory and
+//! environment for the application's prompt.
 
 use std::path::PathBuf;
 
@@ -222,62 +221,6 @@ fn linux_read_environ_var(pid: u32, var_name: &str) -> Option<String> {
     None
 }
 
-// ---------------------------------------------------------------------------
-// State file (written by the precmd hook, read by Rust)
-// ---------------------------------------------------------------------------
-
-/// Path to the temp file where the shell's precmd hook writes state.
-pub fn state_file_path(shell_pid: u32) -> PathBuf {
-    std::env::temp_dir().join(format!("mosaicterm_state_{}", shell_pid))
-}
-
-/// Read the last exit code from the precmd state file.
-pub fn read_exit_code(shell_pid: u32) -> Option<i32> {
-    let path = state_file_path(shell_pid);
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::debug!(shell_pid, error = %e, "read state file failed");
-            return None;
-        }
-    };
-    for line in contents.lines() {
-        if let Some(code_str) = line.strip_prefix("EXIT:") {
-            return code_str.trim().parse().ok();
-        }
-    }
-    None
-}
-
-/// Read an environment variable from the precmd state file.
-///
-/// Falls back to [`read_environ_var`] (Linux `/proc`) if the key isn't in the
-/// state file, so this works even before the first precmd fires.
-pub fn read_state_env_var(shell_pid: u32, var_name: &str) -> Option<String> {
-    let path = state_file_path(shell_pid);
-    if let Ok(contents) = std::fs::read_to_string(&path) {
-        let prefix = format!("{}=", var_name);
-        for line in contents.lines() {
-            if let Some(rest) = line.strip_prefix(&prefix) {
-                if !rest.is_empty() {
-                    return Some(rest.to_string());
-                }
-            }
-        }
-    }
-    read_environ_var(shell_pid, var_name)
-}
-
-/// Clean up the state file when the shell exits.
-pub fn cleanup_state_file(shell_pid: u32) {
-    let path = state_file_path(shell_pid);
-    let _ = std::fs::remove_file(&path);
-}
-
-// ---------------------------------------------------------------------------
-// Shell startup files (installed via ZDOTDIR / --rcfile, NOT via PTY input)
-// ---------------------------------------------------------------------------
-
 const ENV_VARS: &[&str] = &[
     "VIRTUAL_ENV",
     "CONDA_DEFAULT_ENV",
@@ -297,208 +240,333 @@ const ENV_VARS: &[&str] = &[
     "TF_WORKSPACE",
 ];
 
-fn hook_body(state_path: &str) -> String {
-    let env_writes: String = ENV_VARS
-        .iter()
-        .map(|v| format!("  echo \"{}=${{{}}}\"", v, v))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    format!(
-        r#"__mosaicterm_precmd() {{
-  local __ec=$?
-  PS1='' PS2='' PS3='' PS4=''
-  {{
-    echo "EXIT:$__ec"
-{env_writes}
-  }} > "{state_path}" 2>/dev/null
-  return $__ec
-}}"#,
-        env_writes = env_writes,
-        state_path = state_path,
-    )
+/// A prompt boundary emitted by this session's shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellEvent {
+    Ready,
+    Completed(i32),
 }
 
-/// Create a temporary ZDOTDIR with a `.zshrc` that sources the user's real
-/// RC files and then installs the MosaicTerm precmd hook.
-///
-/// Returns the path to the temporary ZDOTDIR directory.  The caller should
-/// set `ZDOTDIR=<returned path>` in the shell's environment **before**
-/// spawning it.  This way nothing is ever typed into the PTY.
-pub fn create_zdotdir(shell_pid: u32) -> Option<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("mosaicterm_zdotdir_{}", shell_pid));
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        tracing::warn!(error = %e, "failed to create ZDOTDIR");
-        return None;
-    }
-
-    let state_path = state_file_path(shell_pid).display().to_string();
-    let body = hook_body(&state_path);
-
-    let user_home = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/"))
-        .display()
-        .to_string();
-
-    // .zshenv: source the user's real .zshenv but do NOT reset ZDOTDIR yet
-    // (ZDOTDIR must remain pointed here until .zshrc is loaded)
-    let zshenv_contents = format!(
-        r#"# MosaicTerm shell integration — .zshenv
-# Source the user's real .zshenv for environment variables
-[[ -f "{home}/.zshenv" ]] && source "{home}/.zshenv"
-"#,
-        home = user_home,
-    );
-    let _ = std::fs::write(dir.join(".zshenv"), zshenv_contents);
-
-    let zshrc_contents = format!(
-        r#"# MosaicTerm shell integration — sourced automatically via ZDOTDIR
-# Source the real user config files (before restoring ZDOTDIR)
-[[ -f "{home}/.zprofile" ]] && source "{home}/.zprofile"
-[[ -f "{home}/.zshrc" ]] && source "{home}/.zshrc"
-
-# Install MosaicTerm precmd hook (after user RC so it runs first in the chain)
-{body}
-precmd_functions=(__mosaicterm_precmd ${{precmd_functions[@]}})
-
-# Restore ZDOTDIR so nested shells and tools see the real home
-ZDOTDIR="{home}"
-"#,
-        home = user_home,
-        body = body,
-    );
-
-    let zshrc_path = dir.join(".zshrc");
-    if let Err(e) = std::fs::write(&zshrc_path, zshrc_contents) {
-        tracing::warn!(error = %e, "failed to write ZDOTDIR/.zshrc");
-        return None;
-    }
-
-    Some(dir)
+/// Owns shell integration files and recognizes this session's PTY markers.
+pub struct ShellIntegration {
+    directory: tempfile::TempDir,
+    marker: String,
+    marker_tail: Vec<u8>,
+    ready: bool,
 }
 
-/// Create a temporary bash init file that sources the user's real bashrc
-/// and installs the MosaicTerm PROMPT_COMMAND hook.
-///
-/// Returns the path to the init file.  The caller passes it to bash via
-/// `--rcfile <path>` instead of the default `~/.bashrc`.
-pub fn create_bash_rcfile(shell_pid: u32) -> Option<PathBuf> {
-    let state_path = state_file_path(shell_pid).display().to_string();
-    let body = hook_body(&state_path);
+impl ShellIntegration {
+    /// Install integration for a Bash or Zsh interactive session.
+    pub fn install(
+        shell: crate::models::ShellType,
+        args: &mut Vec<String>,
+        environment: &mut std::collections::HashMap<String, String>,
+    ) -> std::io::Result<Option<Self>> {
+        use crate::models::ShellType;
 
-    let user_home = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/"))
-        .display()
-        .to_string();
+        match shell {
+            // Bash only reads --rcfile for interactive, non-login shells.
+            // Preserve user-supplied startup and non-interactive options.
+            ShellType::Bash
+                if !args.iter().any(|arg| {
+                    matches!(
+                        arg.as_str(),
+                        "--login" | "--norc" | "--rcfile" | "--init-file"
+                    ) || (arg.starts_with('-')
+                        && !arg.starts_with("--")
+                        && (arg[1..].contains('l') || arg[1..].contains('c')))
+                }) => {}
+            ShellType::Zsh => {}
+            _ => return Ok(None),
+        }
 
-    let contents = format!(
-        r#"# MosaicTerm shell integration
+        let directory = tempfile::Builder::new().prefix("mosaicterm-").tempdir()?;
+        // Shell state carries exported environment, so keep the session directory private.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+        }
+        let marker = format!("\x1b]777;{};", uuid::Uuid::new_v4());
+        let integration = Self {
+            directory,
+            marker,
+            marker_tail: Vec::new(),
+            ready: false,
+        };
+        let directory = integration.directory.path();
+        let hook = integration.hook(shell);
+        match shell {
+            ShellType::Bash => {
+                let rcfile = directory.join("bashrc");
+                std::fs::write(
+                    &rcfile,
+                    format!(
+                        r#"
 [[ -f /etc/bash.bashrc ]] && source /etc/bash.bashrc
-[[ -f "{home}/.bashrc" ]] && source "{home}/.bashrc"
-
-{body}
-PROMPT_COMMAND="__mosaicterm_precmd${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}"
-
-PS1='' PS2='' PS3='' PS4=''
-"#,
-        home = user_home,
-        body = body,
-    );
-
-    let path = std::env::temp_dir().join(format!("mosaicterm_bashrc_{}", shell_pid));
-    if let Err(e) = std::fs::write(&path, &contents) {
-        tracing::warn!(error = %e, "failed to write bash rcfile");
-        return None;
+[[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
+{hook}
+if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )); then
+  PROMPT_COMMAND=(__mosaicterm_precmd "${{PROMPT_COMMAND[@]}}")
+else
+  PROMPT_COMMAND="__mosaicterm_precmd${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}"
+fi
+"#
+                    ),
+                )?;
+                args.splice(
+                    0..0,
+                    [
+                        "--rcfile".to_string(),
+                        rcfile.to_string_lossy().into_owned(),
+                    ],
+                );
+            }
+            ShellType::Zsh => {
+                let user_config_dir = environment
+                    .get("ZDOTDIR")
+                    .filter(|path| !path.is_empty())
+                    .map(|path| shell_quote(path))
+                    .unwrap_or_else(|| "\"$HOME\"".to_string());
+                let restore_dir =
+                    format!("ZDOTDIR={}\n", shell_quote(&directory.to_string_lossy()));
+                for name in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
+                    let source = format!(
+                        "ZDOTDIR={user_config_dir}\n[[ -f \"$ZDOTDIR/{name}\" ]] && source \"$ZDOTDIR/{name}\"\n"
+                    );
+                    let script = match name {
+                        ".zshrc" => format!(
+                            "{source}unsetopt PROMPT_SP\n{hook}\nprecmd_functions=(__mosaicterm_precmd \"${{precmd_functions[@]}}\")\n[[ -o login ]] && {restore_dir}"
+                        ),
+                        ".zshenv" | ".zprofile" => format!("{source}{restore_dir}"),
+                        _ => source,
+                    };
+                    std::fs::write(directory.join(name), script)?;
+                }
+                environment.insert("ZDOTDIR".into(), directory.to_string_lossy().into_owned());
+            }
+            _ => unreachable!(),
+        }
+        Ok(Some(integration))
     }
-    Some(path)
+
+    fn hook(&self, shell: crate::models::ShellType) -> String {
+        let state_path = shell_quote(&self.directory.path().join("state").to_string_lossy());
+        let state_fields = ENV_VARS
+            .iter()
+            .map(|var| format!(" \"{var}=${{{var}-}}\""))
+            .collect::<String>();
+        let marker = self
+            .marker
+            .strip_prefix('\x1b')
+            .expect("OSC marker starts with ESC");
+        let return_status = if shell == crate::models::ShellType::Bash {
+            "$__ec"
+        } else {
+            // Zsh skips subsequent precmd hooks when a hook returns nonzero.
+            "0"
+        };
+        format!(
+            r#"
+# Provide directory jumping without overriding commands from the user's startup files.
+if command -v zoxide >/dev/null 2>&1; then
+  __mosaicterm_zoxide_jump() {{
+    local target
+    if (( $# == 0 )); then
+      builtin cd
+      return
+    fi
+    target=$(command zoxide query -- "$@") && builtin cd -- "$target"
+  }}
+  if ! type z >/dev/null 2>&1; then
+    function z {{ __mosaicterm_zoxide_jump "$@"; }}
+  fi
+  if ! type zi >/dev/null 2>&1; then
+    function zi {{ __mosaicterm_zoxide_jump "$@"; }}
+  fi
+fi
+
+__mosaicterm_precmd() {{
+  local __ec=$? __event
+  if [[ -z "${{__mosaicterm_ready-}}" ]]; then
+    __mosaicterm_ready=1
+    __event=ready
+  else
+    __event=$__ec
+  fi
+  PS1='' PS2='' PS3='' PS4=''
+  builtin printf '%s\0' "$PWD"{state_fields} 2>/dev/null > {state_path}
+  builtin printf '\033{marker}%s\007' "$__event"
+  return {return_status}
+}}
+"#
+        )
+    }
+
+    /// True once the shell has advertised working integration.
+    pub fn is_ready(&self) -> bool {
+        self.ready
+    }
+
+    /// Read the latest directory and environment snapshot.
+    pub fn read_state(&self) -> Option<(PathBuf, String)> {
+        let data = std::fs::read(self.directory.path().join("state")).ok()?;
+        let data = String::from_utf8_lossy(&data);
+        let mut fields = data.split_terminator('\0');
+        Some((
+            PathBuf::from(fields.next()?),
+            fields.collect::<Vec<_>>().join("\n"),
+        ))
+    }
+
+    /// Look for completion markers even when a PTY read splits the sequence.
+    pub fn observe_output(&mut self, data: &[u8]) -> Option<ShellEvent> {
+        let mut bytes = std::mem::take(&mut self.marker_tail);
+        bytes.extend_from_slice(data);
+        let prefix = self.marker.as_bytes();
+        let mut event = None;
+        let mut remaining = bytes.as_slice();
+        while let Some(start) = remaining.windows(prefix.len()).position(|w| w == prefix) {
+            let value = &remaining[start + prefix.len()..];
+            if let Some(end) = value.iter().position(|&byte| byte == b'\x07') {
+                if let Ok(value) = std::str::from_utf8(&value[..end]) {
+                    if value == "ready" {
+                        self.ready = true;
+                        event = Some(ShellEvent::Ready);
+                    } else if let Ok(code) = value.parse::<i32>() {
+                        event = Some(ShellEvent::Completed(code));
+                    }
+                }
+                remaining = &remaining[start + prefix.len() + end + 1..];
+            } else if value.len() <= 5 {
+                self.marker_tail.extend_from_slice(&remaining[start..]);
+                return event;
+            } else {
+                remaining = value;
+            }
+        }
+        let suffix_len = (1..prefix.len().min(remaining.len() + 1))
+            .rev()
+            .find(|&size| remaining.ends_with(&prefix[..size]))
+            .unwrap_or(0);
+        self.marker_tail
+            .extend_from_slice(&remaining[remaining.len() - suffix_len..]);
+        event
+    }
 }
 
-/// Clean up all temporary shell files.
-pub fn cleanup_shell_files(shell_pid: u32) {
-    cleanup_state_file(shell_pid);
-    let zdotdir = std::env::temp_dir().join(format!("mosaicterm_zdotdir_{}", shell_pid));
-    let _ = std::fs::remove_dir_all(&zdotdir);
-    let bashrc = std::env::temp_dir().join(format!("mosaicterm_bashrc_{}", shell_pid));
-    let _ = std::fs::remove_file(&bashrc);
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::ShellType;
+    use std::collections::HashMap;
 
     #[test]
-    fn read_cwd_current_process_does_not_panic() {
-        let pid = std::process::id();
-        let _ = read_cwd(pid);
+    fn startup_and_state_files_are_private_to_each_session() {
+        let first = ShellIntegration::install(ShellType::Bash, &mut vec![], &mut HashMap::new())
+            .unwrap()
+            .unwrap();
+        let second = ShellIntegration::install(ShellType::Zsh, &mut vec![], &mut HashMap::new())
+            .unwrap()
+            .unwrap();
+        let directory = first.directory.path().to_owned();
+        assert_ne!(directory, second.directory.path());
+        assert!(directory.join("bashrc").is_file());
+        assert!(second.directory.path().join(".zshrc").is_file());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                directory.metadata().unwrap().permissions().mode() & 0o077,
+                0
+            );
+        }
+        drop(first);
+        assert!(!directory.exists());
+        assert!(second.directory.path().is_dir());
     }
 
     #[test]
-    fn has_foreground_children_current_process_does_not_panic() {
-        let pid = std::process::id();
-        let _ = has_foreground_children(pid);
-    }
-
-    #[test]
-    fn read_environ_var_current_process_does_not_panic() {
-        let pid = std::process::id();
-        let _ = read_environ_var(pid, "PATH");
-    }
-
-    #[test]
-    fn state_file_path_contains_pid() {
-        let path = state_file_path(12345);
-        assert!(path.to_string_lossy().contains("mosaicterm_state_12345"));
-    }
-
-    #[test]
-    fn create_zdotdir_writes_zshrc() {
-        let pid = 88888;
-        let dir = create_zdotdir(pid).expect("should create zdotdir");
-        let zshrc = dir.join(".zshrc");
-        assert!(zshrc.exists());
-        let contents = std::fs::read_to_string(&zshrc).unwrap();
-        assert!(contents.contains("__mosaicterm_precmd"));
-        assert!(contents.contains("EXIT:$__ec"));
-        assert!(contents.contains("VIRTUAL_ENV"));
-        assert!(contents.contains("source"));
-        assert!(contents.contains("PS1=''"));
-        cleanup_shell_files(pid);
-        assert!(!dir.exists());
-    }
-
-    #[test]
-    fn create_bash_rcfile_writes_file() {
-        let pid = 88887;
-        let path = create_bash_rcfile(pid).expect("should create rcfile");
-        assert!(path.exists());
-        let contents = std::fs::read_to_string(&path).unwrap();
-        assert!(contents.contains("__mosaicterm_precmd"));
-        assert!(contents.contains("PROMPT_COMMAND"));
-        assert!(contents.contains(".bashrc"));
-        cleanup_shell_files(pid);
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn read_exit_code_from_state_file() {
-        let pid = 99999;
-        let path = state_file_path(pid);
-        std::fs::write(&path, "EXIT:42\nVIRTUAL_ENV=/some/path\n").unwrap();
-        assert_eq!(read_exit_code(pid), Some(42));
-        cleanup_state_file(pid);
-        assert!(read_exit_code(pid).is_none());
-    }
-
-    #[test]
-    fn read_state_env_var_from_file() {
-        let pid = 99998;
-        let path = state_file_path(pid);
-        std::fs::write(&path, "EXIT:0\nVIRTUAL_ENV=/my/venv\nNVM_BIN=\n").unwrap();
+    fn completion_marker_can_span_pty_reads() {
+        let mut integration =
+            ShellIntegration::install(ShellType::Bash, &mut vec![], &mut HashMap::new())
+                .unwrap()
+                .unwrap();
+        let ready = format!("{}ready\x07", integration.marker);
         assert_eq!(
-            read_state_env_var(pid, "VIRTUAL_ENV"),
-            Some("/my/venv".to_string())
+            integration.observe_output(ready.as_bytes()),
+            Some(ShellEvent::Ready)
         );
-        assert_eq!(read_state_env_var(pid, "NVM_BIN"), None);
-        cleanup_state_file(pid);
+        let completion = format!("output{}42\x07", integration.marker);
+        let split_at = completion.len() - 2;
+        let (first, second) = completion.as_bytes().split_at(split_at);
+        assert_eq!(integration.observe_output(first), None);
+        assert_eq!(
+            integration.observe_output(second),
+            Some(ShellEvent::Completed(42))
+        );
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn zsh_reports_status_with_an_existing_precmd_hook() {
+        use crate::pty::PtyManager;
+
+        if crate::pty::validate_command("zsh").is_err() {
+            return;
+        }
+        let user_config = tempfile::tempdir().unwrap();
+        std::fs::write(user_config.path().join(".zshrc"), "precmd() { true; }\n").unwrap();
+        let mut environment = HashMap::from([(
+            "ZDOTDIR".to_string(),
+            user_config.path().to_string_lossy().into_owned(),
+        )]);
+        let mut args = vec!["+Z".to_string(), "--login".to_string()];
+        let mut integration =
+            ShellIntegration::install(ShellType::Zsh, &mut args, &mut environment)
+                .unwrap()
+                .unwrap();
+        let manager = PtyManager::new();
+        let handle = manager
+            .create_pty("zsh", &args, &environment, Some(user_config.path()))
+            .await
+            .unwrap();
+
+        async fn next_event(
+            manager: &PtyManager,
+            handle: &crate::pty::PtyHandle,
+            integration: &mut ShellIntegration,
+        ) -> ShellEvent {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let bytes = manager.read_output(handle, 0).await.unwrap();
+                    if let Some(event) = integration.observe_output(&bytes) {
+                        return event;
+                    }
+                }
+            })
+            .await
+            .expect("shell integration marker")
+        }
+
+        assert_eq!(
+            next_event(&manager, &handle, &mut integration).await,
+            ShellEvent::Ready
+        );
+        manager.send_input(&handle, b"false\n").await.unwrap();
+        assert_eq!(
+            next_event(&manager, &handle, &mut integration).await,
+            ShellEvent::Completed(1)
+        );
+        manager.send_input(&handle, b"cd /\n").await.unwrap();
+        assert_eq!(
+            next_event(&manager, &handle, &mut integration).await,
+            ShellEvent::Completed(0)
+        );
+        assert_eq!(integration.read_state().unwrap().0, PathBuf::from("/"));
+        manager.terminate_pty(&handle).await.unwrap();
     }
 }

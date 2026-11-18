@@ -62,6 +62,7 @@ pub fn is_interactive_command(command: &str) -> bool {
 /// Check if a command is an exit/logout command
 ///
 /// These commands terminate the current shell session.
+#[cfg(test)]
 pub fn is_exit_command(command: &str) -> bool {
     let trimmed = command.trim();
     trimmed == "exit" || trimmed == "logout" || trimmed == "quit"

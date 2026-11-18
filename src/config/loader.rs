@@ -314,13 +314,6 @@ impl ConfigLoader {
         }
 
         // Terminal validation
-        if config.terminal.shell_path.as_os_str().is_empty() {
-            return Err(Error::ConfigValidationFailed {
-                field: "terminal.shell_path".to_string(),
-                reason: "Shell path cannot be empty".to_string(),
-            });
-        }
-
         if config.terminal.scrollback_buffer == 0 {
             return Err(Error::ConfigValidationFailed {
                 field: "terminal.scrollback_buffer".to_string(),

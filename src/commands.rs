@@ -70,11 +70,7 @@ impl CommandProcessor {
                 // Check for unclosed parentheses/braces
                 let open_parens = trimmed.chars().filter(|&c| c == '(').count();
                 let close_parens = trimmed.chars().filter(|&c| c == ')').count();
-                if open_parens != close_parens {
-                    return false;
-                }
-
-                true
+                open_parens == close_parens
             }
             ShellType::Fish => {
                 // Fish has simpler syntax, mainly check for backslash

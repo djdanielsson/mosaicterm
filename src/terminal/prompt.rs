@@ -153,6 +153,13 @@ impl PromptDetector {
         self.current_shell
     }
 
+    /// Check whether text matches a prompt for the selected shell.
+    pub fn matches_current_shell(&self, text: &str) -> bool {
+        self.prompt_patterns.iter().any(|pattern| {
+            pattern.shell_type == self.current_shell && pattern.pattern.is_match(text)
+        })
+    }
+
     /// Get prompt patterns for current shell
     pub fn get_patterns_for_shell(&self, shell_type: ShellType) -> Vec<&PromptPattern> {
         self.prompt_patterns

@@ -102,10 +102,10 @@ impl Default for UiConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TerminalConfig {
-    /// Shell type
+    /// Shell type. Other selects the platform default when no path is set.
     pub shell_type: crate::models::ShellType,
 
-    /// Shell executable path
+    /// Optional shell executable override.
     pub shell_path: PathBuf,
 
     /// Shell arguments
@@ -136,12 +136,38 @@ pub struct TerminalConfig {
     pub timeout: TimeoutConfig,
 }
 
+impl TerminalConfig {
+    /// Resolve the configured shell executable and its integration type.
+    pub fn shell(&self) -> (PathBuf, crate::models::ShellType) {
+        use crate::models::ShellType;
+
+        let executable = if !self.shell_path.as_os_str().is_empty() {
+            self.shell_path.clone()
+        } else if self.shell_type == ShellType::Other {
+            crate::platform::Platform::shell().default_shell()
+        } else {
+            PathBuf::from(self.shell_type.as_str())
+        };
+
+        let detected = executable
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .map_or(ShellType::Other, ShellType::from_string);
+        let shell_type = if detected == ShellType::Other {
+            self.shell_type
+        } else {
+            detected
+        };
+        (executable, shell_type)
+    }
+}
+
 impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
-            shell_type: crate::models::ShellType::Zsh,
-            shell_path: PathBuf::from("/bin/zsh"),
-            shell_args: vec!["--login".to_string(), "-i".to_string()],
+            shell_type: crate::models::ShellType::Other,
+            shell_path: PathBuf::new(),
+            shell_args: Vec::new(),
             working_directory: None,
             dimensions: (120, 30),
             mouse_support: true,
@@ -706,7 +732,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.ui.font_family, "JetBrains Mono");
         assert_eq!(config.ui.font_size, 12);
-        assert_eq!(config.terminal.shell_type, crate::TerminalShellType::Zsh);
+        assert_eq!(config.terminal.shell_type, crate::TerminalShellType::Other);
     }
 
     #[test]
@@ -761,7 +787,26 @@ mod tests {
         let config = Config::default();
         // Basic validation - should pass with default config
         assert!(config.ui.font_size > 0);
-        assert!(!config.terminal.shell_path.as_os_str().is_empty());
+        assert_eq!(
+            config.terminal.shell().0,
+            crate::platform::Platform::shell().default_shell()
+        );
+    }
+
+    #[test]
+    fn shell_selection_honors_explicit_types_and_paths() {
+        use crate::models::ShellType;
+
+        let mut config = TerminalConfig {
+            shell_type: ShellType::Cmd,
+            ..Default::default()
+        };
+        assert_eq!(config.shell(), (PathBuf::from("cmd"), ShellType::Cmd));
+        config.shell_path = PathBuf::from("custom tools/pwsh.exe");
+        assert_eq!(
+            config.shell(),
+            (config.shell_path.clone(), ShellType::PowerShell)
+        );
     }
 
     #[test]

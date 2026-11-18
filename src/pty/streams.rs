@@ -4,6 +4,7 @@
 //! PTY master reads/writes to async code using channels.
 
 use crate::error::{Error, Result};
+use portable_pty::Child;
 use std::sync::mpsc::Sender as StdSender;
 use tokio::sync::mpsc::Receiver;
 
@@ -13,6 +14,7 @@ pub struct PtyStreams {
     output_rx: Receiver<Vec<u8>>,
     /// Sender for input bytes to the PTY (stdin)
     input_tx: StdSender<Vec<u8>>,
+    child: Option<Box<dyn Child + Send + Sync>>,
 }
 
 impl PtyStreams {
@@ -21,7 +23,25 @@ impl PtyStreams {
         Self {
             output_rx,
             input_tx,
+            child: None,
         }
+    }
+
+    pub(super) fn attach_child(&mut self, child: Box<dyn Child + Send + Sync>) {
+        self.child = Some(child);
+    }
+
+    pub(super) fn output_closed(&self) -> bool {
+        self.output_rx.is_closed()
+    }
+
+    pub(super) fn output_finished(&self) -> bool {
+        self.output_closed() && self.output_rx.is_empty()
+    }
+
+    pub(super) fn exit_code(&mut self) -> Option<i32> {
+        let status = self.child.as_mut()?.try_wait().ok()??;
+        Some(status.exit_code() as i32)
     }
 
     /// Write data to the PTY stdin
@@ -73,6 +93,19 @@ impl PtyStreams {
             count += 1;
         }
         count
+    }
+}
+
+impl Drop for PtyStreams {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            if !matches!(child.try_wait(), Ok(Some(_))) {
+                std::thread::spawn(move || {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                });
+            }
+        }
     }
 }
 

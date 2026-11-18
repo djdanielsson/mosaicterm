@@ -8,6 +8,7 @@ use crate::models::output_line::AnsiCode;
 use crate::models::OutputLine;
 use crate::terminal::ansi_parser::{AnsiParser, ParsedText};
 use chrono::{DateTime, Utc};
+use std::borrow::Cow;
 use std::collections::VecDeque;
 
 /// Tracks what kind of escape sequence we are accumulating.
@@ -36,6 +37,8 @@ pub struct OutputProcessor {
     processed_lines: VecDeque<OutputLine>,
     /// Current line being built
     current_line: String,
+    incomplete_utf8: Vec<u8>,
+    pending_carriage_return: bool,
     /// Current ANSI codes for the line
     current_ansi_codes: Vec<AnsiCode>,
     /// Line number counter
@@ -77,6 +80,8 @@ impl OutputProcessor {
             raw_buffer: Vec::new(),
             processed_lines: VecDeque::new(),
             current_line: String::new(),
+            incomplete_utf8: Vec::new(),
+            pending_carriage_return: false,
             current_ansi_codes: Vec::new(),
             line_counter: 0,
             escape_state: EscapeState::None,
@@ -141,7 +146,25 @@ impl OutputProcessor {
         timestamp: DateTime<Utc>,
         stream_type: StreamType,
     ) -> Result<()> {
-        let text = String::from_utf8_lossy(data);
+        let bytes = if self.incomplete_utf8.is_empty() {
+            Cow::Borrowed(data)
+        } else {
+            let mut bytes = std::mem::take(&mut self.incomplete_utf8);
+            bytes.extend_from_slice(data);
+            Cow::Owned(bytes)
+        };
+        let trailing = bytes
+            .utf8_chunks()
+            .last()
+            .map_or(&[][..], |chunk| chunk.invalid());
+        let complete_len =
+            if std::str::from_utf8(trailing).is_err_and(|error| error.error_len().is_none()) {
+                self.incomplete_utf8.extend_from_slice(trailing);
+                bytes.len() - trailing.len()
+            } else {
+                bytes.len()
+            };
+        let text = String::from_utf8_lossy(&bytes[..complete_len]);
 
         let chars: Vec<char> = text.chars().collect();
         let len = chars.len();
@@ -149,6 +172,10 @@ impl OutputProcessor {
 
         while i < len {
             let ch = chars[i];
+            if std::mem::take(&mut self.pending_carriage_return) && ch != '\n' {
+                self.current_line.clear();
+                self.current_ansi_codes.clear();
+            }
 
             match self.escape_state {
                 // ----- Normal text -----
@@ -159,13 +186,7 @@ impl OutputProcessor {
                         self.escape_buf.push(ch);
                     }
                     '\n' => self.emit_line(timestamp, stream_type)?,
-                    '\r' => {
-                        let next_is_newline = i + 1 < len && chars[i + 1] == '\n';
-                        if !next_is_newline {
-                            self.current_line.clear();
-                            self.current_ansi_codes.clear();
-                        }
-                    }
+                    '\r' => self.pending_carriage_return = true,
                     '\x07' => {} // BEL outside of escape — ignore
                     _ => self.current_line.push(ch),
                 },
@@ -301,6 +322,13 @@ impl OutputProcessor {
         self.escape_state = EscapeState::None;
         self.escape_buf.clear();
 
+        self.pending_carriage_return = false;
+        if !self.incomplete_utf8.is_empty() {
+            self.current_line
+                .push_str(&String::from_utf8_lossy(&self.incomplete_utf8));
+            self.incomplete_utf8.clear();
+        }
+
         // Add any remaining content as a line
         if !self.current_line.is_empty() {
             let parsed = self
@@ -359,6 +387,8 @@ impl OutputProcessor {
         self.raw_buffer.clear();
         self.processed_lines.clear();
         self.current_line.clear();
+        self.incomplete_utf8.clear();
+        self.pending_carriage_return = false;
         self.current_ansi_codes.clear();
         self.line_counter = 0;
         self.escape_state = EscapeState::None;
@@ -462,6 +492,31 @@ pub enum SegmentType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preserves_multibyte_text_and_crlf_split_across_pty_reads() {
+        let mut processor = OutputProcessor::new();
+        for bytes in [&b"caf\xc3"[..], &b"\xa9\r"[..]] {
+            let lines = processor
+                .process_chunk(OutputChunk {
+                    data: bytes.to_vec(),
+                    timestamp: Utc::now(),
+                    stream_type: StreamType::Stdout,
+                    is_complete: false,
+                })
+                .unwrap();
+            assert!(lines.is_empty());
+        }
+        let lines = processor
+            .process_chunk(OutputChunk {
+                data: b"\n".to_vec(),
+                timestamp: Utc::now(),
+                stream_type: StreamType::Stdout,
+                is_complete: false,
+            })
+            .unwrap();
+        assert_eq!(lines[0].text, "café");
+    }
 
     #[test]
     fn test_output_processor_creation() {
