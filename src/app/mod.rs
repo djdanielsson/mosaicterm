@@ -3738,9 +3738,9 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn poll_until(app: &mut MosaicTermApp, done: impl Fn(&MosaicTermApp) -> bool) {
+    fn poll_until(app: &mut MosaicTermApp, mut done: impl FnMut(&mut MosaicTermApp) -> bool) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !done(app) {
+        while !done(&mut *app) {
             app.poll_async_results();
             app.poll_panes();
             assert!(
@@ -3759,6 +3759,23 @@ mod tests {
         poll_until(app, |app| app.pane.pending_block.is_none());
     }
 
+    /// macOS bash announces that zsh is the default shell every time it starts.
+    #[cfg(unix)]
+    fn without_shell_banner(lines: &[mosaicterm::models::OutputLine]) -> Vec<String> {
+        const BANNER: [&str; 3] = [
+            "The default interactive shell is now zsh",
+            "To update your account to use zsh",
+            "For more details, please see https",
+        ];
+        lines
+            .iter()
+            .map(|line| line.text.trim().to_string())
+            .filter(|text| {
+                !text.is_empty() && !BANNER.iter().any(|banner| text.starts_with(banner))
+            })
+            .collect()
+    }
+
     #[cfg(unix)]
     #[test]
     fn prompt_commands_keep_shell_syntax_and_panes_keep_separate_sessions() {
@@ -3775,26 +3792,13 @@ mod tests {
         // A command typed before the shell hook reports its first prompt is completed by
         // the process-state fallback, which cannot report an exit code.
         poll_until(&mut app, |app| {
-            app.can_submit_command()
-                && app
-                    .pane
-                    .terminal
-                    .as_ref()
-                    .is_some_and(|terminal| terminal.integration_ready())
+            app.can_submit_command() && app.integrated_shell_ready()
         });
 
         run_command(&mut app, "echo 'a b' | wc -w");
         let block = app.state_manager.get_command_history().last().unwrap();
         assert_eq!(block.exit_code, Some(0));
-        // macOS bash prints a "default interactive shell is now zsh" banner on startup,
-        // so the command's own output is the last non-empty line rather than the first.
-        let last_output = block
-            .output
-            .iter()
-            .rev()
-            .map(|line| line.text.trim())
-            .find(|text| !text.is_empty());
-        assert_eq!(last_output, Some("2"));
+        assert_eq!(without_shell_banner(&block.output), ["2"]);
         run_command(&mut app, "cd 'name with space'");
         assert_eq!(
             app.pane
@@ -3871,13 +3875,14 @@ mod tests {
         );
         assert!(app.state_manager.get_command_history().is_empty());
         run_command(&mut app, "printf '%s' \"$LOCAL_VALUE\"");
-        assert!(app
-            .state_manager
-            .get_command_history()
-            .last()
-            .unwrap()
-            .output
-            .is_empty());
+        let independent = without_shell_banner(
+            &app.state_manager
+                .get_command_history()
+                .last()
+                .unwrap()
+                .output,
+        );
+        assert!(independent.is_empty(), "unexpected output: {independent:?}");
         poll_until(&mut app, |app| {
             app.state_manager
                 .get_session(&first_session)
