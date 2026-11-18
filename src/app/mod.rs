@@ -27,7 +27,7 @@
 //! ### Main Components
 //!
 //! - `MosaicTermApp`: Core application state and lifecycle
-//! - `handle_async_operations()`: Processes PTY output in the update loop
+//! - `poll_panes()`: Processes PTY output in the update loop
 //! - `poll_async_results()`: Receives results from background async tasks
 //! - `render_*()`: UI rendering methods for input, history, popups
 //!
@@ -53,7 +53,7 @@
 //! - **Conditional Repaints:** Only repaints when needed (running command, pending output)
 //! - **Output Batching:** Processes multiple lines at once to reduce UI updates
 //! - **Size Limits:** Enforces max lines per command (10K) and chars per line (10K)
-//! - **Async I/O:** Background task handles terminal init and direct command execution
+//! - **Async I/O:** Background task handles terminal lifecycle requests
 
 // Submodules
 mod async_ops;
@@ -69,18 +69,17 @@ use arboard::Clipboard;
 use eframe::egui;
 use futures::executor;
 use mosaicterm::completion::CompletionProvider;
-use mosaicterm::config::{prompt::PromptFormatter, RuntimeConfig};
+use mosaicterm::config::{prompt::PromptFormatter, RuntimeConfig, TerminalConfig};
 use mosaicterm::context::ContextDetector;
 use mosaicterm::error::Result;
-use mosaicterm::execution::DirectExecutor;
 use mosaicterm::models::{CommandBlock, ExecutionStatus};
-use mosaicterm::models::{ShellType as ModelShellType, TerminalSession};
-use mosaicterm::pty::PtyManager;
+use mosaicterm::pty::{shell_state::ShellEvent, PtyHandle, PtyManager};
 use mosaicterm::state_manager::StateManager;
 use mosaicterm::terminal::{Terminal, TerminalFactory};
 use mosaicterm::ui::{
     CommandBlocks, CompletionPopup, InputPrompt, MetricsPanel, ScrollableHistory,
 };
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -88,6 +87,19 @@ use tracing::{debug, error, info, warn};
 // Output size limits to prevent memory leaks
 const MAX_OUTPUT_LINES_PER_COMMAND: usize = 10_000;
 const MAX_LINE_LENGTH: usize = 10_000;
+
+fn trim_output_tail(buffer: &mut String) {
+    const MAX_PROMPT_BYTES: usize = 2048;
+    let start = buffer.ceil_char_boundary(buffer.len().saturating_sub(MAX_PROMPT_BYTES));
+    buffer.drain(..start);
+}
+
+fn truncate_output_line(line: &mut String) {
+    if line.len() > MAX_LINE_LENGTH {
+        line.truncate(line.floor_char_boundary(MAX_LINE_LENGTH));
+        line.push_str("... [truncated]");
+    }
+}
 
 // Atomic flags for native macOS menu bar actions
 #[cfg(target_os = "macos")]
@@ -97,65 +109,62 @@ static NATIVE_MENU_DEV: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 #[cfg(target_os = "macos")]
 static NATIVE_MENU_PERF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Async operation request sent from UI to background task
-#[derive(Debug, Clone)]
+/// Operations on a specific pane's terminal.
 pub(crate) enum AsyncRequest {
-    /// Execute a command
-    ExecuteCommand(String, std::path::PathBuf), // command and working directory
-    /// Initialize terminal
-    InitTerminal,
-    /// Restart PTY session
-    RestartPty,
-    /// Send interrupt signal
-    SendInterrupt(String), // PTY handle ID
+    StartShell {
+        pane_id: String,
+        config: Box<TerminalConfig>,
+        working_dir: PathBuf,
+    },
+    CloseTerminal(Box<Terminal>),
+    SendInterrupt {
+        pane_id: String,
+        handle: PtyHandle,
+    },
 }
 
-/// Async operation result sent from background task to UI
-#[derive(Debug, Clone)]
 pub(crate) enum AsyncResult {
-    /// Command execution started (initial block added to history)
-    #[allow(dead_code)]
-    CommandStarted(CommandBlock),
-    /// Command execution completed (update existing block)
-    #[allow(dead_code)]
-    CommandCompleted {
-        index: usize,
-        status: ExecutionStatus,
-        exit_code: Option<i32>,
+    ShellStarted {
+        pane_id: String,
+        result: Result<Box<Terminal>>,
     },
-    /// Direct command execution completed (non-PTY)
-    DirectCommandCompleted(CommandBlock),
-    /// Direct command execution failed
-    DirectCommandFailed { command: String, error: String },
-    /// Terminal initialized successfully
-    TerminalInitialized,
-    /// Terminal initialization failed
-    TerminalInitFailed(String),
-    /// PTY restarted successfully
-    PtyRestarted,
-    /// PTY restart failed
-    PtyRestartFailed(String),
-    /// Interrupt signal sent
-    InterruptSent,
-    /// Interrupt signal failed
-    InterruptFailed(String),
+    InterruptSent {
+        pane_id: String,
+        result: Result<()>,
+    },
+}
+
+#[derive(Default)]
+struct PaneSession {
+    terminal: Option<Box<Terminal>>,
+    initializing: bool,
+    status_message: Option<String>,
+    input_prompt: InputPrompt,
+    prompt_segments: Vec<mosaicterm::config::prompt::PromptSegment>,
+    pending_block: Option<String>,
+    expect_command_echo: bool,
+    interrupted: bool,
+    clear_pending_block: bool,
+    shell_had_children: bool,
+    tui_overlay: mosaicterm::ui::TuiOverlay,
+    ssh_prompt_overlay: mosaicterm::ui::SshPromptOverlay,
+    ssh_prompt_buffer: String,
+    ssh_session_active: bool,
+    ssh_session_command: Option<String>,
+    ssh_remote_prompt: Option<String>,
 }
 
 /// Main MosaicTerm application
 pub struct MosaicTermApp {
     /// Centralized state manager - single source of truth
     state_manager: StateManager,
-    /// Terminal emulator instance (primary/single-pane mode)
-    terminal: Option<Terminal>,
-    /// Multi-pane tree (Phase 3)
-    pane_tree: Option<pane_tree::PaneTree>,
+    pane: PaneSession,
+    pane_tree: pane_tree::PaneTree,
+    pane_focus_requested: bool,
     /// PTY manager for process management (with per-terminal locking)
     pty_manager: Arc<PtyManager>,
-    /// Terminal factory for creating terminals
-    terminal_factory: TerminalFactory,
     /// UI components
     command_blocks: CommandBlocks,
-    input_prompt: InputPrompt,
     scrollable_history: ScrollableHistory,
     completion_popup: CompletionPopup,
     metrics_panel: MetricsPanel,
@@ -167,8 +176,6 @@ pub struct MosaicTermApp {
     history_manager: mosaicterm::history::HistoryManager,
     /// Ghost completion text (shown dimmed after cursor, accepted with Tab or Right arrow)
     ghost_completion: Option<String>,
-    /// Cached prompt segments for colored rendering
-    prompt_segments: Vec<mosaicterm::config::prompt::PromptSegment>,
     /// Whether custom fonts have been loaded
     fonts_loaded: bool,
     /// Whether to show the About dialog
@@ -189,8 +196,6 @@ pub struct MosaicTermApp {
     prompt_formatter: PromptFormatter,
     /// Context detector for environment tracking (venv, nvm, conda, etc.)
     context_detector: ContextDetector,
-    /// Tracks whether the shell had foreground children last frame (for command completion)
-    shell_had_children: bool,
     /// Tokio runtime for async operations
     #[allow(dead_code)]
     runtime: tokio::runtime::Runtime,
@@ -198,18 +203,6 @@ pub struct MosaicTermApp {
     async_tx: mpsc::UnboundedSender<AsyncRequest>,
     /// Channel for receiving async results from background to UI
     async_rx: mpsc::UnboundedReceiver<AsyncResult>,
-    /// Fullscreen TUI overlay for interactive apps
-    tui_overlay: mosaicterm::ui::TuiOverlay,
-    /// SSH prompt overlay for interactive authentication
-    ssh_prompt_overlay: mosaicterm::ui::SshPromptOverlay,
-    /// Buffer for accumulating output to detect SSH prompts
-    ssh_prompt_buffer: String,
-    /// Whether we're currently in an SSH session
-    ssh_session_active: bool,
-    /// The SSH command that started the session (e.g., "ssh user@host")
-    ssh_session_command: Option<String>,
-    /// The remote prompt captured from SSH output
-    ssh_remote_prompt: Option<String>,
     /// UI color theme (cached egui colors from config)
     ui_colors: mosaicterm::ui::UiColors,
     /// Tool availability detection (Phase 5)
@@ -244,12 +237,6 @@ impl ToolAvailability {
             eza: command_exists("eza"),
         }
     }
-}
-
-/// Shell-quote a string using single quotes to prevent injection.
-/// Any embedded single quotes are escaped as `'\''`.
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Search system font directories for a font matching `family_name`.
@@ -648,41 +635,6 @@ pub fn setup_native_menu_bar() {
     }
 }
 
-/// Strip ANSI escape sequences from a string for plain-text analysis
-fn strip_ansi_codes(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            // Skip ESC [ ... (letter) sequences
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                while let Some(&c) = chars.peek() {
-                    chars.next();
-                    if c.is_ascii_alphabetic() || c == '~' {
-                        break;
-                    }
-                }
-            } else if chars.peek() == Some(&']') {
-                // OSC sequences: ESC ] ... ST (or BEL)
-                chars.next();
-                while let Some(&c) = chars.peek() {
-                    chars.next();
-                    if c == '\x07' || c == '\\' {
-                        break;
-                    }
-                }
-            } else {
-                // Other ESC sequences: skip one more char
-                chars.next();
-            }
-        } else {
-            result.push(ch);
-        }
-    }
-    result
-}
-
 fn command_exists(cmd: &str) -> bool {
     #[cfg(unix)]
     {
@@ -780,8 +732,6 @@ impl MosaicTermApp {
 
         // Clone handles for background task
         let pty_manager_clone = pty_manager.clone();
-        let terminal_factory_clone = terminal_factory.clone();
-        let runtime_config_clone = runtime_config.clone();
 
         // Spawn background task to handle async operations
         runtime.spawn(async move {
@@ -789,8 +739,7 @@ impl MosaicTermApp {
                 &mut request_rx,
                 result_tx,
                 pty_manager_clone,
-                terminal_factory_clone,
-                runtime_config_clone,
+                terminal_factory,
             )
             .await;
         });
@@ -798,6 +747,12 @@ impl MosaicTermApp {
         // Initialize StateManager and add demo commands directly
         let mut state_manager = StateManager::new();
         Self::add_demo_commands(&mut state_manager);
+        let session_id = state_manager
+            .active_session()
+            .expect("default session")
+            .id
+            .clone();
+        let pane_tree = pane_tree::PaneTree::new(pane_tree::Pane::new("pane-0".into(), session_id));
 
         // Create UI colors from theme before moving runtime_config
         let theme = &runtime_config.config().ui.theme;
@@ -842,12 +797,14 @@ impl MosaicTermApp {
 
         Self {
             state_manager,
-            terminal: None,
-            pane_tree: None,
+            pane: PaneSession {
+                input_prompt,
+                ..Default::default()
+            },
+            pane_tree,
+            pane_focus_requested: true,
             pty_manager,
-            terminal_factory,
             command_blocks,
-            input_prompt,
             scrollable_history,
             completion_popup,
             metrics_panel,
@@ -858,7 +815,6 @@ impl MosaicTermApp {
                 mosaicterm::history::HistoryManager::default()
             }),
             ghost_completion: None,
-            prompt_segments: vec![],
             fonts_loaded: false,
             show_about_dialog: false,
             show_dev_panel: false,
@@ -869,16 +825,9 @@ impl MosaicTermApp {
             history_search_needs_focus: false,
             prompt_formatter,
             context_detector: ContextDetector::new(),
-            shell_had_children: false,
             runtime,
             async_tx: request_tx,
             async_rx: result_rx,
-            tui_overlay: mosaicterm::ui::TuiOverlay::new(),
-            ssh_prompt_overlay: mosaicterm::ui::SshPromptOverlay::new(),
-            ssh_prompt_buffer: String::new(),
-            ssh_session_active: false,
-            ssh_session_command: None,
-            ssh_remote_prompt: None,
             ui_colors,
             tool_availability,
             tmux_manager,
@@ -933,329 +882,89 @@ impl MosaicTermApp {
         }
     }
 
-    /// Initialize the terminal session
-    pub async fn initialize_terminal(&mut self) -> Result<()> {
-        info!("Initializing terminal session");
-
-        // Convert config shell type to model shell type
-        let shell_type = match self.runtime_config.config().terminal.shell_type {
-            ModelShellType::Bash => ModelShellType::Bash,
-            ModelShellType::Zsh => ModelShellType::Zsh,
-            ModelShellType::Fish => ModelShellType::Fish,
-            // Map other shell types to supported ones or use Other variant
-            ModelShellType::Ksh
-            | ModelShellType::Csh
-            | ModelShellType::Tcsh
-            | ModelShellType::Dash
-            | ModelShellType::PowerShell
-            | ModelShellType::Cmd => ModelShellType::Bash, // Default to bash
-            ModelShellType::Other => ModelShellType::Bash, // Default to bash for unknown shells
-        };
-
-        // Prefer configured working_directory, then CWD (if not /), then $HOME.
-        let working_dir = self
-            .runtime_config
-            .config()
-            .terminal
+    fn initial_working_dir(config: &TerminalConfig) -> PathBuf {
+        config
             .working_directory
             .as_ref()
-            .filter(|d| d.is_dir())
+            .filter(|dir| dir.is_dir())
             .cloned()
             .or_else(|| {
                 std::env::current_dir()
                     .ok()
-                    .filter(|p| p != std::path::Path::new("/"))
+                    .filter(|dir| dir != std::path::Path::new("/"))
             })
             .or_else(dirs::home_dir)
-            .unwrap_or_else(|| std::path::PathBuf::from("/"));
-
-        // Create environment with prompt suppression
-        let mut environment: std::collections::HashMap<String, String> = std::env::vars().collect();
-
-        // Use xterm-256color so TUI apps work correctly; suppress shell prompts
-        // via environment variables. MosaicTerm renders its own prompt, so we need
-        // the underlying shell to be quiet.
-        environment.insert("TERM".to_string(), "xterm-256color".to_string());
-
-        // Tell MosaicTerm-aware shell init to suppress itself
-        environment.insert("MOSAICTERM".to_string(), "1".to_string());
-
-        match shell_type {
-            ModelShellType::Bash => {
-                environment.insert("PS1".to_string(), "".to_string());
-                environment.insert("PS2".to_string(), "".to_string());
-                environment.insert("PS3".to_string(), "".to_string());
-                environment.insert("PS4".to_string(), "".to_string());
-            }
-            ModelShellType::Zsh => {
-                environment.insert("PS1".to_string(), "".to_string());
-                environment.insert("PS2".to_string(), "".to_string());
-                environment.insert("PS3".to_string(), "".to_string());
-                environment.insert("PS4".to_string(), "".to_string());
-                // Disable prompt themes in zsh
-                environment.insert("ZSH_THEME".to_string(), "".to_string());
-                // Prevent p10k instant prompt
-                environment.insert("POWERLEVEL9K_INSTANT_PROMPT".to_string(), "off".to_string());
-                // Suppress zsh partial-line marker (the % at end of unterminated lines)
-                environment.insert("PROMPT_EOL_MARK".to_string(), "".to_string());
-            }
-            ModelShellType::Fish => {
-                environment.insert("fish_prompt".to_string(), "".to_string());
-            }
-            ModelShellType::Ksh => {
-                environment.insert("PS1".to_string(), "".to_string());
-            }
-            ModelShellType::Csh | ModelShellType::Tcsh => {
-                environment.insert("prompt".to_string(), "".to_string());
-            }
-            ModelShellType::Dash => {
-                environment.insert("PS1".to_string(), "".to_string());
-            }
-            ModelShellType::PowerShell => {
-                environment.insert("PROMPT".to_string(), "".to_string());
-            }
-            ModelShellType::Cmd | ModelShellType::Other => {
-                environment.insert("PS1".to_string(), "".to_string());
-                environment.insert("PS2".to_string(), "".to_string());
-                environment.insert("PS3".to_string(), "".to_string());
-                environment.insert("PS4".to_string(), "".to_string());
-            }
-        }
-
-        // Install shell integration via startup files (not PTY input).
-        // We use the app PID as a stable identifier since the shell PID
-        // isn't known until after spawn.
-        let integration_pid = std::process::id();
-
-        match shell_type {
-            ModelShellType::Zsh => {
-                if let Some(zdotdir) = mosaicterm::pty::shell_state::create_zdotdir(integration_pid)
-                {
-                    environment.insert("ZDOTDIR".to_string(), zdotdir.display().to_string());
-                    info!("Set ZDOTDIR to {:?} for shell integration", zdotdir);
-                }
-            }
-            ModelShellType::Bash => {
-                if let Some(rcfile) =
-                    mosaicterm::pty::shell_state::create_bash_rcfile(integration_pid)
-                {
-                    // We need to remove --noediting and add --rcfile
-                    // This is handled below when building the session
-                    environment.insert(
-                        "MOSAICTERM_BASH_RCFILE".to_string(),
-                        rcfile.display().to_string(),
-                    );
-                    info!("Created bash rcfile at {:?} for shell integration", rcfile);
-                }
-            }
-            _ => {}
-        }
-
-        let session = TerminalSession::with_environment(shell_type, working_dir, environment);
-
-        // Create and initialize terminal (shell is spawned here)
-        let terminal = self.terminal_factory.create_and_initialize(session).await?;
-        self.terminal = Some(terminal);
-
-        // Update state manager
-        self.state_manager.set_terminal_ready(true);
-
-        // Update contexts and prompt after terminal initialization
-        self.update_contexts();
-        self.update_prompt();
-
-        info!("Terminal session initialized successfully with environment support");
-        Ok(())
+            .unwrap_or_else(|| PathBuf::from("."))
     }
 
-    /// Handle command input from the UI
-    pub async fn handle_command_input(&mut self, command: String) -> Result<()> {
-        if command.trim().is_empty() {
-            return Ok(());
-        }
-
-        info!("Processing command: {}", command);
-
-        // Add command to persistent history
-        if let Err(e) = self.history_manager.add(command.clone()) {
-            warn!("Failed to add command to history: {}", e);
-        }
-
-        // Intercept `z` and `zi` commands when zoxide is available
-        let command = if self.tool_availability.zoxide {
-            let parts: Vec<&str> = command.split_whitespace().collect();
-            if let Some(&cmd) = parts.first() {
-                if cmd == "z" || cmd == "zi" {
-                    if parts.len() >= 2 {
-                        let query = parts[1..].join(" ");
-                        if let Some(resolved) = Self::zoxide_query(&query) {
-                            info!("zoxide resolved '{} {}' -> 'cd {}'", cmd, query, resolved);
-                            // Shell-quote the resolved path to prevent injection
-                            let quoted = shell_quote(&resolved);
-                            format!("cd {}", quoted)
-                        } else {
-                            warn!("zoxide found no match for '{}', passing through", query);
-                            command
-                        }
-                    } else {
-                        // Bare `z` goes home, matching zoxide default behavior
-                        info!("Bare 'z' -> 'cd ~'");
-                        "cd ~".to_string()
-                    }
-                } else {
-                    command
-                }
-            } else {
-                command
-            }
-        } else {
-            command
+    fn request_shell(&mut self, working_dir: PathBuf) {
+        let pane_id = self.pane_tree.active_id().to_string();
+        let config = Box::new(self.runtime_config.config().terminal.clone());
+        let request = AsyncRequest::StartShell {
+            pane_id,
+            config,
+            working_dir,
         };
-
-        // Check if this is a TUI command that should open in fullscreen overlay
-        if self.is_tui_command(&command) {
-            info!(
-                "TUI command detected, opening fullscreen overlay: {}",
-                command
-            );
-            return self.handle_tui_command(command).await;
+        if self.async_tx.send(request).is_ok() {
+            self.pane.initializing = true;
+            self.start_loading("Starting shell...");
+        } else {
+            self.set_status_message(Some("Could not start shell".into()));
         }
+    }
 
-        // Check if this is an SSH command - track it for session management
-        if self.is_ssh_command(&command) {
-            info!("SSH command detected, will track session: {}", command);
-            let host = self.extract_ssh_host(&command);
-            mosaicterm::security_audit::log_ssh_connection(&host);
-            self.ssh_session_command = Some(command.clone());
-            // Session will be activated after successful authentication
-        }
+    fn can_submit_command(&self) -> bool {
+        self.pane.terminal.is_some() && !self.pane.initializing && self.pane.pending_block.is_none()
+    }
 
-        // Check if this is an exit command while in SSH session
-        if self.ssh_session_active && self.is_exit_command(&command) {
-            info!("Exit command detected in SSH session, will end session");
-            // Session will be deactivated when we detect the connection closed
-        }
-
-        // Check if this is an interactive command and warn the user
-        // Skip warning for SSH since we handle it specially
-        if self.is_interactive_command(&command) && !self.is_ssh_command(&command) {
-            warn!("Interactive command detected: {}", command);
-            self.set_status_message(Some(format!(
-                "⚠️  '{}' is an interactive program and may not work correctly in block mode",
-                self.get_command_name(&command)
-            )));
-        }
-
-        // Check if this is a clear command and handle it specially
-        let trimmed_command = command.trim();
-        if trimmed_command == "clear" || trimmed_command == "clear\n" {
-            info!("Clear command detected, clearing screen");
-            self.state_manager.clear_command_history();
-            self.set_status_message(Some("Screen cleared".to_string()));
-            // Still send the command to the shell so it clears its own state
-            if let Some(_terminal) = &mut self.terminal {
-                if let Some(handle) = _terminal.pty_handle() {
-                    // PtyManager is already async and thread-safe, no lock needed
-                    let pty_manager = &*self.pty_manager;
-                    let cmd = format!("{}\n", command);
-                    if let Err(e) = pty_manager.send_input(handle, cmd.as_bytes()).await {
-                        warn!("Failed to send clear command to PTY: {}", e);
-                    }
-                }
-            }
+    /// Submit the original command to the shell that owns this pane.
+    pub async fn handle_command_input(&mut self, command: String) -> Result<()> {
+        if command.trim().is_empty() || !self.can_submit_command() {
             return Ok(());
         }
 
-        // Check if we should use direct execution (faster, cleaner)
-        // IMPORTANT: Skip direct execution when in SSH session - all commands must go through PTY
-        if !self.ssh_session_active && DirectExecutor::check_direct_execution(&command) {
-            info!("Using direct execution for command: {}", command);
+        let Some(terminal) = self.pane.terminal.as_mut() else {
+            return Ok(());
+        };
+        let Some(handle) = terminal.pty_handle().cloned() else {
+            return Ok(());
+        };
+        let working_dir = terminal.get_working_directory().to_path_buf();
+        terminal.clear_pending_output();
 
-            // Create command block and mark as running
-            let working_dir = self
-                .terminal
-                .as_ref()
-                .map(|t| t.get_working_directory().to_path_buf())
-                .unwrap_or_else(|| {
-                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"))
-                });
-            let command_for_block = command.clone();
-            let mut command_block = CommandBlock::new(command_for_block, working_dir.clone());
-            command_block.mark_running();
-
-            // Add to state manager first
-            self.state_manager.add_command_block(command_block);
-
-            // Record command execution time
-            self.state_manager.set_last_command_time();
-
-            // Clone command and working directory before sending to async loop (they will be moved)
-            let command_for_async = command.clone();
-            let working_dir_for_async = working_dir.clone();
-            // Send to async loop for execution
-            if let Err(e) = self.async_tx.send(AsyncRequest::ExecuteCommand(
-                command_for_async,
-                working_dir_for_async,
-            )) {
-                error!(
-                    "Failed to send direct execution request: {}, falling back to PTY",
-                    e
-                );
-                // Fall back to PTY execution - continue with normal flow below
-            } else {
-                // Direct execution is now handled asynchronously
-                return Ok(());
-            }
-        }
-
-        info!("Using PTY execution for command: {}", command);
-
-        // Create command block and add to history first
-        let working_dir = self
-            .terminal
-            .as_ref()
-            .map(|t| t.get_working_directory().to_path_buf())
-            .unwrap_or_else(|| {
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"))
-            });
-        // Clone command once since it's used later, but move working_dir
-        let command_for_block = command.clone();
-        let mut command_block = CommandBlock::new(command_for_block, working_dir);
-        command_block.mark_running();
-
-        // Add to state manager (single source of truth) - move instead of clone
-        self.state_manager.add_command_block(command_block);
-
-        // DEPRECATED: Also update old field during migration
-        // Command block is now managed through StateManager only
-
-        // Record command execution time for timeout detection
-        self.state_manager.set_last_command_time();
-
-        // UI will be updated automatically on the next frame
-
-        if let Some(_terminal) = &mut self.terminal {
-            if let Some(handle) = _terminal.pty_handle() {
-                let pty_manager = &*self.pty_manager;
-
-                let cmd = format!("{}\n", command);
-                if let Err(e) = pty_manager.send_input(handle, cmd.as_bytes()).await {
-                    warn!("Failed to send input to PTY: {}", e);
-                }
-            }
-
-            // Leave the block in Running; async loop will collect output and we can mark done later
-            self.state_manager
-                .set_status_message(Some(format!("Running: {}", command)));
-
-            info!("Command '{}' queued", command);
+        let mut command_block = CommandBlock::new(command.clone(), working_dir);
+        let is_tui = !self.pane.ssh_session_active && self.is_tui_command(&command);
+        if is_tui {
+            command_block.mark_tui_mode();
         } else {
-            warn!("Terminal not initialized, cannot execute command");
-
-            self.state_manager
-                .set_status_message(Some("Terminal not ready".to_string()));
+            command_block.mark_running();
         }
 
+        let enter = if cfg!(windows) { "\r" } else { "\n" };
+        let input = format!("{command}{enter}");
+        self.pty_manager
+            .send_input(&handle, input.as_bytes())
+            .await?;
+
+        if let Err(error) = self.history_manager.add(command.clone()) {
+            warn!("Failed to add command to history: {error}");
+        }
+
+        if !self.pane.ssh_session_active && self.is_ssh_command(&command) {
+            mosaicterm::security_audit::log_ssh_connection(&self.extract_ssh_host(&command));
+            self.pane.ssh_session_command = Some(command.clone());
+        }
+
+        self.pane.pending_block = Some(command_block.id.clone());
+        self.pane.expect_command_echo = true;
+        self.pane.shell_had_children = false;
+        self.state_manager.add_command_block(command_block);
+        self.state_manager.set_last_command_time();
+        self.set_status_message(None);
+
+        if is_tui {
+            self.pane.tui_overlay.start(command, handle.id);
+        }
         Ok(())
     }
 
@@ -1266,20 +975,21 @@ impl MosaicTermApp {
 
     /// Update the prompt display based on current working directory
     fn update_prompt(&mut self) {
-        self.prompt_segments = prompt::build_prompt_segments(
-            self.terminal.as_ref(),
+        self.pane.prompt_segments = prompt::build_prompt_segments(
+            self.pane.terminal.as_deref(),
             &self.state_manager,
             &self.prompt_formatter,
-            self.ssh_session_active,
-            self.ssh_remote_prompt.as_deref(),
-            self.ssh_session_command.as_deref(),
+            self.pane.ssh_session_active,
+            self.pane.ssh_remote_prompt.as_deref(),
+            self.pane.ssh_session_command.as_deref(),
         );
         let prompt_str: String = self
+            .pane
             .prompt_segments
             .iter()
             .map(|s| s.text.clone())
             .collect();
-        self.input_prompt.set_prompt(&prompt_str);
+        self.pane.input_prompt.set_prompt(&prompt_str);
     }
 
     /// Update active environment contexts based on current shell environment
@@ -1293,13 +1003,14 @@ impl MosaicTermApp {
 
     /// Update just the git context (synchronous filesystem check)
     fn update_git_context(&mut self) {
-        let git_context = context::detect_git_context(self.terminal.as_ref());
+        let git_context = context::detect_git_context(self.pane.terminal.as_deref());
         context::update_state_git_context(&mut self.state_manager, git_context);
     }
 
     /// Parse environment output and update contexts
     fn parse_env_output(&mut self, output: &str) {
         let working_dir = self
+            .pane
             .terminal
             .as_ref()
             .map(|t| t.get_working_directory().to_path_buf());
@@ -1314,64 +1025,37 @@ impl MosaicTermApp {
 
     /// Sync shell state (CWD, environment) directly from the OS after a command completes.
     fn sync_shell_state(&mut self) {
-        let shell_pid = self
-            .terminal
+        let Some(terminal) = self.pane.terminal.as_mut() else {
+            return;
+        };
+        let pid = terminal.pty_handle().and_then(|handle| handle.pid);
+        let snapshot = terminal
+            .shell_integration()
+            .and_then(|integration| integration.read_state());
+        let cwd = snapshot
             .as_ref()
-            .and_then(|t| t.pty_handle())
-            .and_then(|h| h.pid);
+            .map(|(cwd, _)| cwd.clone())
+            .or_else(|| pid.and_then(mosaicterm::pty::shell_state::read_cwd));
 
-        // Update CWD from OS
-        if let Some(pid) = shell_pid {
-            if let Some(os_cwd) = mosaicterm::pty::shell_state::read_cwd(pid) {
-                if let Some(terminal) = &mut self.terminal {
-                    let current = terminal.get_working_directory().to_path_buf();
-                    if os_cwd != current {
-                        info!("CWD updated from OS: {:?} -> {:?}", current, os_cwd);
-                        terminal.set_working_directory(os_cwd.clone());
-                        self.state_manager.set_previous_directory(Some(current));
+        if let Some(cwd) = cwd {
+            let previous = terminal.get_working_directory().to_path_buf();
+            if cwd != previous {
+                terminal.set_working_directory(cwd.clone());
+                self.state_manager.set_previous_directory(Some(previous));
+                if let Some(session) = self.state_manager.active_session_mut() {
+                    session.working_directory = cwd.clone();
+                }
 
-                        if self.tool_availability.zoxide {
-                            Self::zoxide_add_background(&os_cwd);
-                        }
-                    }
+                if self.tool_availability.zoxide {
+                    Self::zoxide_add_background(&cwd);
                 }
             }
         }
-
         self.update_contexts();
-
-        // Read env vars from the precmd state file (keyed by app PID)
-        let app_pid = std::process::id();
-        let state_path = mosaicterm::pty::shell_state::state_file_path(app_pid);
-        if let Ok(contents) = std::fs::read_to_string(&state_path) {
-            let env_lines: String = contents
-                .lines()
-                .filter(|l| !l.starts_with("EXIT:"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if !env_lines.is_empty() {
-                self.parse_env_output(&env_lines);
-            }
+        if let Some((_, environment)) = snapshot {
+            self.parse_env_output(&environment);
         }
-
         self.update_prompt();
-    }
-
-    fn zoxide_query(query: &str) -> Option<String> {
-        let output = std::process::Command::new("zoxide")
-            .args(["query", "--", query])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()?;
-
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Some(path);
-            }
-        }
-        None
     }
 
     fn zoxide_add_background(dir: &std::path::Path) {
@@ -1385,65 +1069,12 @@ impl MosaicTermApp {
         });
     }
 
-    /// Check if a command is a TUI app that should open in fullscreen overlay
     fn is_tui_command(&self, command: &str) -> bool {
         commands::is_tui_command(command, self.runtime_config.config())
     }
 
-    /// Handle a TUI command by opening the fullscreen overlay
-    async fn handle_tui_command(&mut self, command: String) -> Result<()> {
-        info!("Handling TUI command: {}", command);
-
-        // Create command block (mark it as TUI mode)
-        let working_dir = self
-            .terminal
-            .as_ref()
-            .map(|t| t.get_working_directory().to_path_buf())
-            .unwrap_or_else(|| {
-                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"))
-            });
-        // Clone command since it's used later, but move working_dir
-        let command_for_block = command.clone();
-        let mut command_block = CommandBlock::new(command_for_block, working_dir);
-        command_block.mark_tui_mode(); // Special marker for TUI commands
-
-        // Add to state manager - move instead of clone
-        self.state_manager.add_command_block(command_block);
-
-        // Create a new PTY for the TUI app
-        if let Some(_terminal) = &mut self.terminal {
-            if let Some(handle) = _terminal.pty_handle() {
-                // Store handle ID before mutable borrow
-                let handle_id = handle.id.clone();
-
-                // Send the TUI command to PTY (TERM is already set in the environment)
-                {
-                    let pty_manager = &*self.pty_manager;
-                    let cmd = format!("{}\n", command);
-                    if let Err(e) = pty_manager.send_input(handle, cmd.as_bytes()).await {
-                        warn!("Failed to send TUI command to PTY: {}", e);
-                        return Err(e);
-                    }
-                }
-
-                self.tui_overlay.start(command.clone(), handle_id);
-                self.set_status_message(Some(format!("Running TUI app: {}", command)));
-
-                info!("TUI overlay started for command: {}", command);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Check if a command is interactive (TUI-based) and may not work well in block mode
     fn is_interactive_command(&self, command: &str) -> bool {
         commands::is_interactive_command(command)
-    }
-
-    /// Check if a command is an exit/logout command
-    fn is_exit_command(&self, command: &str) -> bool {
-        commands::is_exit_command(command)
     }
 
     /// Extract the command name from a command line
@@ -1451,27 +1082,9 @@ impl MosaicTermApp {
         commands::get_command_name(command)
     }
 
-    /// Handle TUI app exit - mark command block as completed without output
-    fn handle_tui_exit(&mut self, command: String) {
-        info!("TUI app exited: {}", command);
-
-        // Find the command block and mark it as completed
-        if let Some(history) = self.state_manager.command_history_mut() {
-            if let Some(block) = history.iter_mut().rev().find(|b| {
-                b.command == command && b.status == mosaicterm::models::ExecutionStatus::TuiMode
-            }) {
-                // Mark as completed (no output will be shown)
-                block.mark_completed(std::time::Duration::from_secs(0));
-                info!("TUI command block marked as completed: {}", command);
-            }
-        }
-
-        self.set_status_message(Some(format!("TUI app exited: {}", command)));
-    }
-
     /// Update application state
     pub fn update_state(&mut self) {
-        let terminal_ready = self.terminal.is_some();
+        let terminal_ready = self.pane.terminal.is_some();
         self.state_manager.set_terminal_ready(terminal_ready);
 
         // Update UI components if needed
@@ -1487,7 +1100,8 @@ impl MosaicTermApp {
 
     /// Set status message
     pub fn set_status_message(&mut self, message: Option<String>) {
-        self.state_manager.set_status_message(message.clone());
+        self.pane.status_message = message.clone();
+        self.state_manager.set_status_message(message);
     }
 
     /// Start loading indicator with message
@@ -1734,7 +1348,7 @@ impl MosaicTermApp {
                     ("Font", cfg.ui.font_family.as_str()),
                     ("Font size", &cfg.ui.font_size.to_string()),
                     ("Prompt style", &format!("{:?}", cfg.prompt.style)),
-                    ("Shell", &cfg.terminal.shell_path.display().to_string()),
+                    ("Shell", &cfg.terminal.shell().0.display().to_string()),
                 ] {
                     ui.horizontal(|ui| {
                         ui.label(
@@ -1878,6 +1492,7 @@ impl MosaicTermApp {
                     .map(|h| h.len())
                     .unwrap_or(0);
                 let working_dir = self
+                    .pane
                     .terminal
                     .as_ref()
                     .map(|t| t.get_working_directory().display().to_string())
@@ -1890,10 +1505,10 @@ impl MosaicTermApp {
                     ),
                     ("Working dir", working_dir),
                     ("Command count", cmd_count.to_string()),
-                    ("TUI overlay", self.tui_overlay.is_active().to_string()),
+                    ("TUI overlay", self.pane.tui_overlay.is_active().to_string()),
                     (
                         "SSH session",
-                        self.ssh_prompt_overlay.is_active().to_string(),
+                        self.pane.ssh_prompt_overlay.is_active().to_string(),
                     ),
                     (
                         "Prompt style",
@@ -1961,11 +1576,10 @@ impl MosaicTermApp {
                                     .iter()
                                     .map(|line| line.text.clone())
                                     .collect::<Vec<_>>(),
-                                block.working_directory.clone(),
                             )
                         })
                 };
-                if let Some((command, status, output_lines, working_dir)) = block_data {
+                if let Some((command, status, output_lines)) = block_data {
                     // Create context menu
                     let mut menu_open = true;
                     egui::Window::new("Context Menu")
@@ -1976,15 +1590,20 @@ impl MosaicTermApp {
                         .show(ctx, |ui| {
                             ui.set_min_width(150.0);
 
-                            // Rerun command
-                            if ui.button("🔄 Rerun Command").clicked() {
-                                let command_to_rerun = command.clone();
-                                let working_dir_to_rerun = working_dir.clone();
-                                self.input_prompt.add_to_history(command_to_rerun.clone());
-                                let _ = self.async_tx.send(AsyncRequest::ExecuteCommand(
-                                    command_to_rerun.clone(),
-                                    working_dir_to_rerun,
-                                ));
+                            if ui
+                                .add_enabled(
+                                    self.can_submit_command(),
+                                    egui::Button::new("🔄 Rerun Command"),
+                                )
+                                .clicked()
+                            {
+                                match executor::block_on(self.handle_command_input(command.clone()))
+                                {
+                                    Ok(()) => {
+                                        self.pane.input_prompt.add_to_history(command.clone())
+                                    }
+                                    Err(error) => self.set_status_message(Some(error.to_string())),
+                                }
                                 menu_open = false;
                             }
 
@@ -2074,36 +1693,6 @@ impl eframe::App for MosaicTermApp {
             debug!("Failed to refresh completion cache: {}", e);
         }
 
-        // Periodic cleanup of terminated PTY processes (every 30 seconds)
-        {
-            use std::sync::Mutex;
-            static LAST_CLEANUP_TIME: Mutex<Option<std::time::Instant>> = Mutex::new(None);
-            let now = std::time::Instant::now();
-            if let Ok(mut last_time) = LAST_CLEANUP_TIME.lock() {
-                let should_cleanup = match *last_time {
-                    None => true,
-                    Some(prev) => now.duration_since(prev).as_secs() >= 30,
-                };
-
-                if should_cleanup {
-                    // PtyManager is already async and thread-safe, no lock needed
-                    {
-                        let pty_manager = &*self.pty_manager;
-                        let cleaned =
-                            executor::block_on(async { pty_manager.cleanup_terminated().await });
-
-                        if cleaned > 0 {
-                            info!("Cleaned up {} terminated PTY process(es)", cleaned);
-                        }
-
-                        *last_time = Some(now);
-                    }
-                }
-            } else {
-                debug!("Cleanup time mutex is poisoned, skipping cleanup");
-            }
-        }
-
         // Update memory statistics periodically (every 5 seconds)
         {
             use std::sync::Mutex;
@@ -2124,29 +1713,14 @@ impl eframe::App for MosaicTermApp {
             }
         }
 
-        // Initialize terminal on first startup
-        if self.terminal.is_none()
-            && !self.state_manager.is_terminal_ready()
-            && !self.state_manager.is_initialization_attempted()
-        {
+        if !self.state_manager.is_initialization_attempted() {
             self.state_manager.set_initialization_attempted(true);
-
-            info!("Initializing terminal session...");
-
-            // Show loading indicator
-            self.start_loading("Initializing terminal...");
-
-            // Send async request to initialize terminal (non-blocking)
-            if let Err(e) = self.async_tx.send(AsyncRequest::InitTerminal) {
-                error!("Failed to send InitTerminal request: {}", e);
-                self.stop_loading();
-                self.state_manager.show_error(
-                    "Initialization Error",
-                    format!("Failed to initialize terminal: {}", e),
-                    true, // critical
-                );
-            }
+            self.request_shell(Self::initial_working_dir(
+                &self.runtime_config.config().terminal,
+            ));
         }
+        self.poll_async_results();
+        self.poll_panes();
 
         // Update application state
         self.update_state();
@@ -2290,7 +1864,12 @@ impl eframe::App for MosaicTermApp {
             if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::A)) {
                 self.show_about_dialog = !self.show_about_dialog;
             }
-            if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::D)) {
+            if ctx.input(|i| {
+                i.modifiers.ctrl
+                    && i.modifiers.alt
+                    && i.modifiers.shift
+                    && i.key_pressed(egui::Key::D)
+            }) {
                 self.show_dev_panel = !self.show_dev_panel;
             }
         }
@@ -2304,17 +1883,17 @@ impl eframe::App for MosaicTermApp {
 
         // When the TUI overlay is active, it takes over the entire UI area.
         // Otherwise, render the normal terminal layout.
-        if self.tui_overlay.is_active() {
+        if self.pane.tui_overlay.is_active() {
             // Handle input for TUI app BEFORE rendering
-            if let Some(input_data) = self.tui_overlay.handle_input(ctx) {
+            if let Some(input_data) = self.pane.tui_overlay.handle_input(ctx) {
                 debug!(
                     "TUI overlay: Sending {} bytes of input to PTY",
                     input_data.len()
                 );
                 // Send input to PTY
-                if let Some(_handle_id) = self.tui_overlay.pty_handle() {
+                if let Some(_handle_id) = self.pane.tui_overlay.pty_handle() {
                     let pty_manager = &*self.pty_manager;
-                    if let Some(terminal) = &self.terminal {
+                    if let Some(terminal) = &self.pane.terminal {
                         if let Some(pty_handle) = terminal.pty_handle() {
                             if let Err(e) = executor::block_on(async {
                                 pty_manager.send_input(pty_handle, &input_data).await
@@ -2327,8 +1906,8 @@ impl eframe::App for MosaicTermApp {
             }
 
             // Apply pending PTY resize if the overlay detected a size change
-            if let Some((rows, cols)) = self.tui_overlay.take_pending_resize() {
-                if let Some(terminal) = &self.terminal {
+            if let Some((rows, cols)) = self.pane.tui_overlay.take_pending_resize() {
+                if let Some(terminal) = &self.pane.terminal {
                     if let Some(pty_handle) = terminal.pty_handle() {
                         let pty_manager = &*self.pty_manager;
                         if let Err(e) = executor::block_on(async {
@@ -2341,40 +1920,12 @@ impl eframe::App for MosaicTermApp {
             }
 
             // Render overlay UI (takes the full root ui)
-            let overlay_closed = self.tui_overlay.render(ctx, ui);
-            if overlay_closed || self.tui_overlay.has_exited() {
-                info!("TUI overlay closing");
-
-                // Send Ctrl+C to kill the TUI process and reset terminal
-                if let Some(terminal) = &self.terminal {
-                    if let Some(pty_handle) = terminal.pty_handle() {
-                        let pty_manager = &*self.pty_manager;
-
-                        executor::block_on(async {
-                            let _ = pty_manager.send_input(pty_handle, &[3]).await;
-                        });
-
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-
-                        executor::block_on(async {
-                            let _ = pty_manager.send_input(pty_handle, b"\n").await;
-                        });
-
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-
-                        executor::block_on(async {
-                            let _ = pty_manager.drain_output(pty_handle).await;
-                        });
-
-                        info!("Sent Ctrl+C and cleared PTY buffer after TUI exit");
-                    }
+            let overlay_closed = self.pane.tui_overlay.render(ctx, ui);
+            if overlay_closed || self.pane.tui_overlay.has_exited() {
+                if overlay_closed && self.pane.pending_block.is_some() {
+                    self.handle_interrupt_command();
                 }
-
-                if let Some(cmd) = self.tui_overlay.command() {
-                    self.handle_tui_exit(cmd.to_string());
-                }
-
-                self.tui_overlay.stop();
+                self.pane.tui_overlay.stop();
             }
         } else {
             // Main layout with scrollable history and pinned input
@@ -2385,30 +1936,7 @@ impl eframe::App for MosaicTermApp {
                         .inner_margin(egui::Margin::same(2)),
                 )
                 .show(ui, |ui| {
-                    let available_height = ui.available_height();
-                    let input_height = 60.0;
-                    let history_height = (available_height - input_height).max(100.0);
-
-                    // Layout from bottom to top: input at bottom, then history above it
-                    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                        // FIXED INPUT AREA AT BOTTOM - This stays static
-                        ui.allocate_ui_with_layout(
-                            egui::Vec2::new(ui.available_width(), input_height),
-                            egui::Layout::left_to_right(egui::Align::LEFT),
-                            |ui| {
-                                self.render_fixed_input_area(ui);
-                            },
-                        );
-
-                        // HISTORY AREA ABOVE INPUT - Scrollable, with commands stacking from newest to oldest
-                        ui.allocate_ui_with_layout(
-                            egui::Vec2::new(ui.available_width(), history_height),
-                            egui::Layout::top_down(egui::Align::LEFT),
-                            |ui| {
-                                self.render_command_history_area(ui);
-                            },
-                        );
-                    });
+                    self.render_panes(ui);
                 });
 
             // Render context menu if active (only in normal mode)
@@ -2423,14 +1951,14 @@ impl eframe::App for MosaicTermApp {
         }
 
         // Render SSH prompt overlay if active
-        if self.ssh_prompt_overlay.is_active() {
-            let should_close = self.ssh_prompt_overlay.render(ctx);
+        if self.pane.ssh_prompt_overlay.is_active() {
+            let should_close = self.pane.ssh_prompt_overlay.render(ctx);
 
             if should_close {
                 // Check if user submitted input or cancelled
-                if self.ssh_prompt_overlay.was_cancelled() {
+                if self.pane.ssh_prompt_overlay.was_cancelled() {
                     // User cancelled - send Ctrl+C to abort SSH
-                    if let Some(terminal) = &self.terminal {
+                    if let Some(terminal) = &self.pane.terminal {
                         if let Some(pty_handle) = terminal.pty_handle() {
                             let pty_manager = &*self.pty_manager;
                             executor::block_on(async {
@@ -2440,10 +1968,10 @@ impl eframe::App for MosaicTermApp {
                             info!("SSH prompt cancelled, sent Ctrl+C");
                         }
                     }
-                    self.ssh_prompt_overlay.hide();
-                } else if let Some(input) = self.ssh_prompt_overlay.take_input() {
+                    self.pane.ssh_prompt_overlay.hide();
+                } else if let Some(input) = self.pane.ssh_prompt_overlay.take_input() {
                     // Send user input to PTY with newline
-                    if let Some(terminal) = &self.terminal {
+                    if let Some(terminal) = &self.pane.terminal {
                         if let Some(pty_handle) = terminal.pty_handle() {
                             let pty_manager = &*self.pty_manager;
                             let input_with_newline = format!("{}\n", input);
@@ -2458,13 +1986,15 @@ impl eframe::App for MosaicTermApp {
 
                                 // After successful authentication response, activate SSH session
                                 // The session will capture the remote prompt from output
-                                if self.ssh_session_command.is_some() && !self.ssh_session_active {
+                                if self.pane.ssh_session_command.is_some()
+                                    && !self.pane.ssh_session_active
+                                {
                                     info!("Activating SSH session after authentication");
-                                    self.ssh_session_active = true;
-                                    self.ssh_prompt_buffer.clear();
+                                    self.pane.ssh_session_active = true;
+                                    self.pane.ssh_prompt_buffer.clear();
 
                                     // Update status to show we're connected
-                                    if let Some(cmd) = &self.ssh_session_command {
+                                    if let Some(cmd) = &self.pane.ssh_session_command {
                                         let host = self.extract_ssh_host(cmd);
                                         mosaicterm::security_audit::log_ssh_session_start(&host);
                                         self.set_status_message(Some(format!(
@@ -2476,35 +2006,30 @@ impl eframe::App for MosaicTermApp {
                             }
                         }
                     }
-                    self.ssh_prompt_overlay.hide();
+                    self.pane.ssh_prompt_overlay.hide();
                 }
             }
         }
-
-        // Handle async operations
-        self.handle_async_operations(ctx);
-
-        // Poll for async operation results (non-blocking)
-        self.poll_async_results();
 
         // Only repaint when needed to save CPU
         // Repaint if: command is running, has pending output, user input changed, or overlays active
         let needs_repaint = self.state_manager.last_command_time().is_some()
             || (self
+                .pane
                 .terminal
                 .as_ref()
                 .map(|t| t.has_pending_output())
                 .unwrap_or(false))
             || self.completion_popup.is_visible()
-            || self.tui_overlay.is_active()
-            || self.ssh_prompt_overlay.is_active();
+            || self.pane.tui_overlay.is_active()
+            || self.pane.ssh_prompt_overlay.is_active();
 
         if needs_repaint {
             // Repaint immediately for active operations
             ctx.request_repaint();
 
             // For TUI overlay or SSH prompt, request very fast repaints (16ms = ~60fps) for smooth updates
-            if self.tui_overlay.is_active() || self.ssh_prompt_overlay.is_active() {
+            if self.pane.tui_overlay.is_active() || self.pane.ssh_prompt_overlay.is_active() {
                 ctx.request_repaint_after(std::time::Duration::from_millis(16));
             }
         } else {
@@ -2515,7 +2040,14 @@ impl eframe::App for MosaicTermApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         info!("MosaicTerm application shutting down");
-        mosaicterm::pty::shell_state::cleanup_shell_files(std::process::id());
+        if let Some(terminal) = self.pane.terminal.take() {
+            executor::block_on(terminal.close());
+        }
+        self.pane_tree.for_each_pane_mut(|pane| {
+            if let Some(terminal) = pane.session.terminal.take() {
+                executor::block_on(terminal.close());
+            }
+        });
     }
 }
 
@@ -2691,7 +2223,7 @@ impl MosaicTermApp {
                 // Render prompt segments with Powerline arrow separators
                 ui.spacing_mut().item_spacing.x = 0.0;
                 let font_size = self.runtime_config.config().ui.font_size as f32;
-                let segments = self.prompt_segments.clone();
+                let segments = self.pane.prompt_segments.clone();
                 let bg_color = self.ui_colors.background;
                 for (i, seg) in segments.iter().enumerate() {
                     if let Some(seg_bg) = seg.bg {
@@ -2728,7 +2260,7 @@ impl MosaicTermApp {
                 }
                 ui.spacing_mut().item_spacing.x = 4.0;
 
-                let old_input = self.input_prompt.current_input().to_string();
+                let old_input = self.pane.input_prompt.current_input().to_string();
                 let mut current_input = old_input.clone();
 
                 let tab_pressed = ui.input(|i| i.key_pressed(egui::Key::Tab));
@@ -2789,6 +2321,10 @@ impl MosaicTermApp {
                     }
                 }
 
+                if std::mem::take(&mut self.pane_focus_requested) {
+                    input_response.request_focus();
+                }
+
                 // Focus management: the input should have focus unless the
                 // user is selecting text in an output block.
                 //
@@ -2800,7 +2336,7 @@ impl MosaicTermApp {
                 //   - starts typing (any printable character)
                 //   - nothing at all has focus (startup / after overlay close)
                 if !self.history_search_active
-                    && !self.ssh_prompt_overlay.is_active()
+                    && !self.pane.ssh_prompt_overlay.is_active()
                     && !input_response.has_focus()
                 {
                     let nothing_focused = ui.ctx().memory(|mem| mem.focused().is_none());
@@ -2818,7 +2354,7 @@ impl MosaicTermApp {
 
                 // Update the input prompt with the current input (but avoid resetting if completion was just applied)
                 if !self.state_manager.completion_just_applied() {
-                    self.input_prompt.set_input(current_input.clone());
+                    self.pane.input_prompt.set_input(current_input.clone());
                 } else {
                     // Completion was just applied, force cursor to end
                     if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), input_response.id)
@@ -2846,6 +2382,7 @@ impl MosaicTermApp {
                         } else if input_changed {
                             // Update completions when typing
                             let working_dir = self
+                                .pane
                                 .terminal
                                 .as_ref()
                                 .map(|t| t.get_working_directory().to_path_buf())
@@ -2888,16 +2425,16 @@ impl MosaicTermApp {
 
                         if accept_ghost {
                             if let Some(ghost) = self.ghost_completion.take() {
-                                self.input_prompt.set_input(ghost);
+                                self.pane.input_prompt.set_input(ghost);
                                 self.state_manager.set_completion_just_applied(true);
                             }
                         } else if tab_pressed {
                             self.handle_tab_completion(&current_input, input_rect);
                         } else if up_pressed {
-                            self.input_prompt.navigate_history_previous();
+                            self.pane.input_prompt.navigate_history_previous();
                             self.ghost_completion = None;
                         } else if down_pressed {
-                            self.input_prompt.navigate_history_next();
+                            self.pane.input_prompt.navigate_history_next();
                             self.ghost_completion = None;
                         } else if escape_pressed {
                             self.ghost_completion = None;
@@ -2928,16 +2465,17 @@ impl MosaicTermApp {
                                 // Flag for cursor positioning
                             }
                             self.completion_popup.hide();
-                        } else if !current_input.trim().is_empty() {
+                        } else if !current_input.trim().is_empty() && self.can_submit_command() {
                             let command = current_input.clone();
-                            self.input_prompt.add_to_history(command.clone());
-                            self.input_prompt.clear_input();
-                            self.ghost_completion = None;
-
-                            // Handle the command (non-blocking)
-                            if let Err(e) = executor::block_on(self.handle_command_input(command)) {
-                                error!("Command execution failed: {}", e);
-                                self.set_status_message(Some(format!("Error: {}", e)));
+                            match executor::block_on(self.handle_command_input(command.clone())) {
+                                Ok(()) => {
+                                    self.pane.input_prompt.add_to_history(command);
+                                    self.pane.input_prompt.clear_input();
+                                    self.ghost_completion = None;
+                                }
+                                Err(error) => {
+                                    self.set_status_message(Some(self.user_friendly_error(&error)))
+                                }
                             }
                         }
                     }
@@ -2972,6 +2510,7 @@ impl MosaicTermApp {
         }
 
         let working_dir = self
+            .pane
             .terminal
             .as_ref()
             .map(|t| t.get_working_directory().to_path_buf())
@@ -3020,6 +2559,7 @@ impl MosaicTermApp {
         // Show completions on double-tab
         if is_double_tab {
             let working_dir = self
+                .pane
                 .terminal
                 .as_ref()
                 .map(|t| t.get_working_directory().to_path_buf())
@@ -3058,7 +2598,7 @@ impl MosaicTermApp {
 
     /// Apply a completion to the input
     fn apply_completion(&mut self, completion: &str) {
-        let current_input = self.input_prompt.current_input();
+        let current_input = self.pane.input_prompt.current_input();
         let parts: Vec<&str> = current_input.split_whitespace().collect();
 
         let new_input = if parts.len() <= 1 {
@@ -3092,7 +2632,7 @@ impl MosaicTermApp {
             new_parts.join(" ")
         };
 
-        self.input_prompt.set_input(new_input);
+        self.pane.input_prompt.set_input(new_input);
     }
 
     /// Render the history search popup (Ctrl+R)
@@ -3225,7 +2765,7 @@ impl MosaicTermApp {
                                 {
                                     // Select the highlighted command
                                     if let Some(command) = results.get(selected_idx) {
-                                        self.input_prompt.set_input(command.clone());
+                                        self.pane.input_prompt.set_input(command.clone());
                                         self.history_search_active = false;
                                         self.state_manager.set_history_search_selected(0);
                                         ctx.input_mut(|i| i.events.clear()); // Consume event
@@ -3278,7 +2818,7 @@ impl MosaicTermApp {
 
                                             if response.clicked() {
                                                 // Apply the selected command to input
-                                                self.input_prompt.set_input(command.clone());
+                                                self.pane.input_prompt.set_input(command.clone());
                                                 self.history_search_active = false;
                                                 self.state_manager.set_history_search_selected(0);
                                             }
@@ -3300,8 +2840,109 @@ impl MosaicTermApp {
         }
     }
 
+    fn activate_pane(&mut self, id: &str) {
+        let previous = self.pane_tree.active_id().to_string();
+        if id != previous {
+            self.pane_tree.set_active(id);
+            self.switch_pane_session(&previous);
+        }
+    }
+
+    fn switch_pane_session(&mut self, previous: &str) {
+        if let Some(pane) = self.pane_tree.find_pane_mut(previous) {
+            pane.session = std::mem::take(&mut self.pane);
+        }
+        let active = self.pane_tree.active_pane_mut().expect("active pane");
+        self.pane = std::mem::take(&mut active.session);
+        self.state_manager
+            .set_active_session(active.session_id.clone());
+        self.state_manager
+            .set_terminal_ready(self.pane.terminal.is_some());
+        self.state_manager
+            .set_status_message(self.pane.status_message.clone());
+        if self.pane.initializing {
+            self.start_loading("Starting shell...");
+        } else {
+            self.stop_loading();
+        }
+        self.update_prompt();
+        self.pane_focus_requested = true;
+        self.ghost_completion = None;
+        self.completion_popup.hide();
+        self.history_search_active = false;
+        self.command_blocks
+            .interaction_state_mut()
+            .context_menu_block = None;
+    }
+
+    fn render_panes(&mut self, ui: &mut egui::Ui) {
+        let panes = self.pane_tree.layout(ui.available_rect_before_wrap());
+        if let Some(position) = ui.input(|i| {
+            i.pointer
+                .any_pressed()
+                .then(|| i.pointer.interact_pos())
+                .flatten()
+        }) {
+            if let Some((id, _)) = panes.iter().find(|(_, rect)| rect.contains(position)) {
+                self.activate_pane(id);
+            }
+        }
+
+        for (id, rect) in panes {
+            let active = id == self.pane_tree.active_id();
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(&id)
+                    .max_rect(rect)
+                    .layout(egui::Layout::bottom_up(egui::Align::LEFT)),
+            );
+            child.set_clip_rect(rect.intersect(ui.clip_rect()));
+            if self.pane_tree.pane_count() > 1 {
+                let color = if active {
+                    self.ui_colors.accent
+                } else {
+                    self.ui_colors.status_bar.background
+                };
+                ui.painter().rect_stroke(
+                    rect,
+                    0.0,
+                    egui::Stroke::new(1.0, color),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            let input_height: f32 = 60.0;
+            child.allocate_ui_with_layout(
+                egui::vec2(rect.width(), input_height.min(rect.height())),
+                egui::Layout::left_to_right(egui::Align::LEFT),
+                |ui| {
+                    if active {
+                        self.render_fixed_input_area(ui);
+                    } else if let Some(pane) = self.pane_tree.find_pane(&id) {
+                        ui.label(pane.session.input_prompt.prompt_text());
+                        let draft = pane.session.input_prompt.current_input();
+                        if !draft.is_empty() {
+                            ui.label(draft);
+                        }
+                    }
+                },
+            );
+            child.allocate_ui_with_layout(
+                egui::vec2(rect.width(), (rect.height() - input_height).max(0.0)),
+                egui::Layout::top_down(egui::Align::LEFT),
+                |ui| self.render_command_history_area(ui, &id, active),
+            );
+        }
+    }
+
     /// Render the command history area above the input
-    fn render_command_history_area(&mut self, ui: &mut egui::Ui) {
+    fn render_command_history_area(&mut self, ui: &mut egui::Ui, pane_id: &str, active: bool) {
+        let pane = self.pane_tree.find_pane(pane_id).expect("rendered pane");
+        let session = self
+            .state_manager
+            .get_session(&pane.session_id)
+            .expect("pane session");
+        let command_history = &session.command_history;
+        let status = if active { &self.pane } else { &pane.session };
         let colors = self.ui_colors.clone();
 
         ui.vertical(|ui| {
@@ -3312,9 +2953,16 @@ impl MosaicTermApp {
             status_frame.show(ui, |ui| {
                 ui.set_height(16.0);
                 ui.horizontal(|ui| {
-                    let (status_text, status_color) = match self.state_manager.status_message() {
+                    let (status_text, status_color) = match status.status_message.as_deref() {
                         Some(msg) => (msg, colors.status_bar.ssh_indicator),
-                        None => ("Ready".to_string(), colors.status_bar.text),
+                        None if status.initializing => ("Starting shell…", colors.status_bar.text),
+                        None if status.terminal.is_none() => {
+                            ("Shell closed", colors.status_bar.text)
+                        }
+                        None if status.pending_block.is_some() => {
+                            ("Running", colors.status_bar.text)
+                        }
+                        None => ("Ready", colors.status_bar.text),
                     };
                     ui.label(
                         egui::RichText::new(status_text)
@@ -3323,24 +2971,13 @@ impl MosaicTermApp {
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let history_len = self.state_manager.get_command_history().len();
+                        let history_len = command_history.len();
                         if history_len > 0 {
                             ui.label(
                                 egui::RichText::new(format!("{} cmds", history_len))
                                     .font(egui::FontId::monospace(11.0))
                                     .color(colors.status_bar.text),
                             );
-                        }
-                        if let Some(tree) = &self.pane_tree {
-                            let count = tree.pane_count();
-                            if count > 1 {
-                                ui.separator();
-                                ui.label(
-                                    egui::RichText::new(format!("pane {}", tree.active_id()))
-                                        .font(egui::FontId::monospace(11.0))
-                                        .color(colors.accent),
-                                );
-                            }
                         }
                     });
                 });
@@ -3357,12 +2994,13 @@ impl MosaicTermApp {
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         // Commands appear in execution order: oldest at top, newest at bottom
-                        let command_history = self.state_manager.get_command_history();
                         for (i, block) in command_history.iter().enumerate() {
                             if let Some((block_id, pos)) =
                                 Self::render_single_command_block_static(ui, block, i, &colors)
                             {
-                                // Right-click detected, show context menu
+                                if !active {
+                                    continue;
+                                }
                                 self.command_blocks
                                     .interaction_state_mut()
                                     .context_menu_block = Some(block_id);
@@ -3571,920 +3209,486 @@ impl MosaicTermApp {
         None
     }
 
-    /// Poll for async operation results (non-blocking)
+    fn close_terminal(&self, terminal: Box<Terminal>) {
+        if let Err(error) = self.async_tx.send(AsyncRequest::CloseTerminal(terminal)) {
+            if let AsyncRequest::CloseTerminal(terminal) = error.0 {
+                executor::block_on(terminal.close());
+            }
+        }
+    }
+
+    /// Install the completed launch in the pane that requested it.
     fn poll_async_results(&mut self) {
-        // Try to receive all pending results without blocking
         while let Ok(result) = self.async_rx.try_recv() {
             match result {
-                AsyncResult::TerminalInitialized => {
-                    info!("Terminal initialized successfully (async)");
-                    // We need to actually create the terminal in this thread
-                    // For now, we'll call the blocking initialize
-                    match executor::block_on(self.initialize_terminal()) {
-                        Ok(()) => {
-                            self.stop_loading();
-                            // terminal_ready is already set in initialize_terminal()
+                AsyncResult::ShellStarted { pane_id, result } => {
+                    let active = pane_id == self.pane_tree.active_id();
+                    let Some(pane) = self.pane_tree.find_pane_mut(&pane_id) else {
+                        if let Ok(terminal) = result {
+                            self.close_terminal(terminal);
                         }
-                        Err(e) => {
-                            error!("Failed to finalize terminal init: {}", e);
-                            self.stop_loading();
-                            let user_msg = self.user_friendly_error(&e);
-                            self.set_status_message(Some(user_msg));
-                        }
-                    }
-                }
-                AsyncResult::TerminalInitFailed(msg) => {
-                    error!("Terminal initialization failed: {}", msg);
-                    self.stop_loading();
-                    self.state_manager.show_error(
-                        "Terminal Initialization Failed",
-                        format!("Failed to initialize terminal: {}\n\nPlease check your shell configuration and try restarting the application.", msg),
-                        true, // critical
-                    );
-                }
-                AsyncResult::PtyRestarted => {
-                    info!("PTY restarted successfully");
-                    self.stop_loading();
-                    // Reinitialize terminal
-                    match executor::block_on(self.initialize_terminal()) {
-                        Ok(()) => {
-                            self.set_status_message(Some("Shell session restarted".to_string()));
-                        }
-                        Err(e) => {
-                            error!("Failed to reinitialize after restart: {}", e);
-                            let user_msg = self.user_friendly_error(&e);
-                            self.set_status_message(Some(user_msg));
-                        }
-                    }
-                }
-                AsyncResult::PtyRestartFailed(msg) => {
-                    error!("PTY restart failed: {}", msg);
-                    self.stop_loading();
-                    self.state_manager.show_error(
-                        "Restart Failed",
-                        format!("Failed to restart shell session: {}\n\nYou may need to restart the application.", msg),
-                        false, // not critical - can continue using old session
-                    );
-                }
-                AsyncResult::InterruptSent => {
-                    info!("Interrupt signal sent successfully");
-                    self.set_status_message(Some("Process interrupted".to_string()));
-                }
-                AsyncResult::InterruptFailed(msg) => {
-                    warn!("Interrupt signal failed: {}", msg);
-                    self.state_manager.show_error(
-                        "Interrupt Failed",
-                        format!("Failed to interrupt the running command: {}\n\nThe process may still be running.", msg),
-                        false, // not critical
-                    );
-                }
-                AsyncResult::DirectCommandCompleted(command_block) => {
-                    info!(
-                        "Direct command execution completed: {}",
-                        command_block.command
-                    );
-                    // Find the matching command block in history and update it
-                    let command_history = self.state_manager.get_command_history();
-                    if let Some(existing_block) = command_history.iter().find(|b| {
-                        b.command == command_block.command && b.status == ExecutionStatus::Running
-                    }) {
-                        let block_id = existing_block.id.clone();
-                        // Update status
-                        self.state_manager
-                            .update_command_block_status(&block_id, command_block.status);
-                        // Update output lines
-                        for output_line in command_block.output {
-                            self.state_manager.add_output_line(&block_id, output_line);
-                        }
-                        // Update exit code if available
-                        if let Some(exit_code) = command_block.exit_code {
-                            if let Some(session) = self.state_manager.active_session_mut() {
-                                if let Some(block) = session
-                                    .command_history
-                                    .iter_mut()
-                                    .find(|b| b.id == block_id)
-                                {
-                                    block.exit_code = Some(exit_code);
-                                }
-                            }
-                        }
-                        info!(
-                            "Updated command block {} with direct execution results",
-                            block_id
-                        );
+                        continue;
+                    };
+                    let session = if active {
+                        &mut self.pane
                     } else {
-                        // If not found, add it (shouldn't happen, but handle gracefully)
-                        warn!("Direct command completed but block not found in history, adding new block");
-                        self.state_manager.add_command_block(command_block);
-                    }
-                }
-                AsyncResult::DirectCommandFailed { command, error } => {
-                    error!("Direct command execution failed: {} - {}", command, error);
-                    // Find the matching command block and mark it as failed
-                    let command_history = self.state_manager.get_command_history();
-                    if let Some(block) = command_history
-                        .iter()
-                        .find(|b| b.command == command && b.status == ExecutionStatus::Running)
-                    {
-                        let block_id = block.id.clone();
-                        self.state_manager
-                            .update_command_block_status(&block_id, ExecutionStatus::Failed);
-                        self.state_manager.add_output_line(
-                            &block_id,
-                            mosaicterm::models::OutputLine::new(format!("Error: {}", error)),
-                        );
-                        // Set exit code to 1
-                        if let Some(session) = self.state_manager.active_session_mut() {
-                            if let Some(block) = session
-                                .command_history
-                                .iter_mut()
-                                .find(|b| b.id == block_id)
+                        &mut pane.session
+                    };
+                    session.initializing = false;
+                    let old_terminal = match result {
+                        Ok(terminal) => {
+                            if let Some(state) =
+                                self.state_manager.get_session_mut(&pane.session_id)
                             {
-                                block.exit_code = Some(1);
+                                state.working_directory =
+                                    terminal.get_working_directory().to_path_buf();
+                                state.shell_type = terminal.detected_shell();
+                                state.pty_handle_id =
+                                    terminal.pty_handle().map(|handle| handle.id.clone());
                             }
+                            session.status_message = None;
+                            session.terminal.replace(terminal)
                         }
+                        Err(error) => {
+                            session.status_message =
+                                Some(format!("Failed to start shell: {error}"));
+                            None
+                        }
+                    };
+                    if let Some(terminal) = old_terminal {
+                        self.close_terminal(terminal);
+                    }
+                    if active {
+                        self.stop_loading();
+                        self.state_manager
+                            .set_terminal_ready(self.pane.terminal.is_some());
+                        self.state_manager
+                            .set_status_message(self.pane.status_message.clone());
+                        self.update_contexts();
+                        self.update_prompt();
                     }
                 }
-                AsyncResult::CommandStarted(command_block) => {
-                    // Command block already added to history when command was sent
-                    // This is just a notification, no action needed
-                    debug!("Command started: {}", command_block.command);
-                }
-                AsyncResult::CommandCompleted {
-                    index,
-                    status,
-                    exit_code,
+                AsyncResult::InterruptSent {
+                    pane_id,
+                    result: Err(error),
                 } => {
-                    // Update command block at the given index
-                    if let Some(command_history) = self.state_manager.command_history_mut() {
-                        if let Some(block) = command_history.get_mut(index) {
-                            block.status = status;
-                            block.exit_code = exit_code;
-                            debug!(
-                                "Command at index {} completed with status {:?}",
-                                index, status
-                            );
-                        } else {
-                            warn!("CommandCompleted for invalid index: {}", index);
-                        }
+                    let message = Some(format!("Failed to interrupt command: {error}"));
+                    if pane_id == self.pane_tree.active_id() {
+                        self.set_status_message(message);
+                    } else if let Some(pane) = self.pane_tree.find_pane_mut(&pane_id) {
+                        pane.session.status_message = message;
                     }
                 }
+                AsyncResult::InterruptSent { result: Ok(()), .. } => {}
             }
         }
     }
 
-    /// Check output lines for well-known shell error patterns.
-    /// Returns an inferred exit code if an error pattern is found.
-    fn detect_error_in_output(lines: &[mosaicterm::models::OutputLine]) -> Option<i32> {
-        for line in lines {
-            let t = line.text.trim();
-            if t.is_empty() {
+    fn poll_panes(&mut self) {
+        self.poll_pane();
+        let active_id = self.pane_tree.active_id().to_string();
+        let active_session_id = self
+            .pane_tree
+            .active_pane()
+            .expect("active pane")
+            .session_id
+            .clone();
+        for id in self.pane_tree.all_pane_ids() {
+            if id == active_id {
                 continue;
             }
-            let lower = t.to_ascii_lowercase();
-            // zsh / bash: "command not found"
-            if lower.contains("command not found") {
-                return Some(127);
+            let pane = self.pane_tree.find_pane_mut(&id).expect("pane in tree");
+            if pane.session.terminal.is_none() {
+                continue;
             }
-            // bash: "No such file or directory" (when running a script path)
-            if lower.contains("no such file or directory") {
-                return Some(127);
-            }
-            // zsh/bash: "permission denied"
-            if lower.contains("permission denied") {
-                return Some(126);
-            }
-            // zsh/bash: "is a directory"
-            if lower.ends_with("is a directory") {
-                return Some(126);
-            }
-            // common: "syntax error"
-            if lower.contains("syntax error") {
-                return Some(2);
-            }
-            // zsh: "bad option" / "unknown option"
-            if lower.contains("bad option") || lower.contains("unknown option") {
-                return Some(1);
-            }
-            // git: "'foo' is not a git command"
-            if lower.contains("is not a") && lower.contains("command") {
-                return Some(1);
-            }
-            // segfault
-            if lower.contains("segmentation fault") || lower.contains("killed") {
-                return Some(139);
-            }
+            self.state_manager
+                .set_active_session(pane.session_id.clone());
+            std::mem::swap(&mut self.pane, &mut pane.session);
+            self.poll_pane();
+            let pane = self.pane_tree.find_pane_mut(&id).expect("pane in tree");
+            std::mem::swap(&mut self.pane, &mut pane.session);
         }
-        None
+        self.state_manager.set_active_session(active_session_id);
+        self.state_manager
+            .set_status_message(self.pane.status_message.clone());
     }
 
-    /// Handle async operations (called from update) - SIMPLIFIED VERSION
-    fn handle_async_operations(&mut self, _ctx: &egui::Context) {
-        let bg_notification_threshold_ms: u128 = 10_000;
-        // SIMPLIFIED: Poll PTY output and add to current command (no complex prompt detection)
-        let mut should_update_contexts = false;
-        let mut timeout_kill_status_message: Option<String> = None;
-        let mut ssh_session_ended = false; // Track if SSH session ended
-        let mut ssh_session_should_activate = false; // Track if SSH session should be activated
-        let mut new_remote_prompt: Option<String> = None; // Track new remote prompt
+    fn poll_pane(&mut self) {
+        let Some(handle) = self
+            .pane
+            .terminal
+            .as_ref()
+            .and_then(|terminal| terminal.pty_handle())
+            .cloned()
+        else {
+            return;
+        };
 
-        if let Some(_terminal) = &mut self.terminal {
-            if let Some(handle) = _terminal.pty_handle() {
-                // PtyManager is async and thread-safe, use async read
-                // Use blocking executor since we're in a sync context
-                let pty_manager = &*self.pty_manager;
-                if let Ok(data) =
-                    executor::block_on(async { pty_manager.try_read_output_now(handle).await })
+        // Bound per-frame work so a noisy process cannot starve other panes or the UI.
+        for _ in 0..64 {
+            match executor::block_on(self.pty_manager.try_read_output_now(&handle)) {
+                Ok(data) if data.is_empty() => break,
+                Ok(data) => self.process_pane_output(data),
+                Err(
+                    mosaicterm::error::Error::PtyStreamDisconnected
+                    | mosaicterm::error::Error::PtyStreamsNotFound { .. },
+                ) => {
+                    let exit_code = executor::block_on(self.pty_manager.exit_code(&handle));
+                    self.flush_pane_output();
+                    self.finish_pending_block(exit_code, true);
+                    self.end_ssh_session();
+                    if self.pane.tui_overlay.is_active() {
+                        self.pane.tui_overlay.mark_exited();
+                    }
+                    if let Some(terminal) = self.pane.terminal.take() {
+                        self.close_terminal(terminal);
+                    }
+                    if let Some(session) = self.state_manager.active_session_mut() {
+                        session.pty_handle_id = None;
+                    }
+                    self.set_status_message(Some("Shell closed".to_string()));
+                    return;
+                }
+                Err(error) => {
+                    warn!("Could not read pane output: {error}");
+                    return;
+                }
+            }
+        }
+
+        if self.pane.pending_block.is_some()
+            && !self.integrated_shell_ready()
+            && !self.pane.ssh_session_active
+        {
+            if let Some(pid) = handle.pid {
+                let busy = mosaicterm::pty::shell_state::has_foreground_children(pid);
+                if std::mem::replace(&mut self.pane.shell_had_children, busy) && !busy {
+                    self.flush_pane_output();
+                    let exit_code = self.fallback_exit_code();
+                    self.finish_pending_block(exit_code, false);
+                    self.sync_shell_state();
+                }
+            }
+        }
+
+        self.check_command_timeout(&handle);
+    }
+
+    fn integrated_shell_ready(&mut self) -> bool {
+        self.pane
+            .terminal
+            .as_mut()
+            .and_then(|terminal| terminal.shell_integration())
+            .is_some_and(|integration| integration.is_ready())
+    }
+
+    fn process_pane_output(&mut self, data: Vec<u8>) {
+        let Some(terminal) = self.pane.terminal.as_mut() else {
+            return;
+        };
+        let event = terminal
+            .shell_integration()
+            .and_then(|integration| integration.observe_output(&data));
+        let completed = matches!(event, Some(ShellEvent::Completed(_)));
+
+        if self.pane.tui_overlay.is_active() {
+            self.pane.tui_overlay.add_raw_output(&data);
+            if completed {
+                self.pane.tui_overlay.mark_exited();
+            } else if !self.integrated_shell_ready() {
+                if data.windows(8).any(|window| window == b"\x1b[?1049h")
+                    || data.windows(6).any(|window| window == b"\x1b[?47h")
                 {
-                    if !data.is_empty() {
-                        // If TUI overlay is active, send RAW output there (don't process it!)
-                        if self.tui_overlay.is_active() {
-                            debug!("Routing {} bytes to TUI overlay", data.len());
-
-                            // Send raw bytes directly to overlay - TUI apps need ANSI codes!
-                            self.tui_overlay.add_raw_output(&data);
-
-                            // Track alternate screen enter (TUI app starting)
-                            let has_alt_screen_enter = data.windows(8).any(|w| w == b"\x1b[?1049h")
-                                || data.windows(6).any(|w| w == b"\x1b[?47h");
-                            if has_alt_screen_enter {
-                                self.tui_overlay.note_alt_screen_enter();
-                            }
-
-                            // Only check for exit after the grace period
-                            if !self.tui_overlay.in_grace_period() {
-                                let has_alt_screen_exit =
-                                    data.windows(8).any(|w| w == b"\x1b[?1049l")
-                                        || data.windows(6).any(|w| w == b"\x1b[?47l");
-
-                                // Only treat alt screen exit as app exit if we saw the enter first
-                                if has_alt_screen_exit && self.tui_overlay.saw_alt_screen() {
-                                    debug!("Detected alternate screen exit - TUI app exited");
-                                    self.tui_overlay.mark_exited();
-                                } else if !has_alt_screen_exit {
-                                    let data_str = String::from_utf8_lossy(&data);
-                                    let stripped = strip_ansi_codes(&data_str);
-                                    let trimmed = stripped.trim();
-                                    if let Some(last_line) = trimmed.lines().last() {
-                                        let line = last_line.trim();
-                                        let looks_like_prompt = line.ends_with("$ ")
-                                            || line.ends_with("% ")
-                                            || line.ends_with("# ")
-                                            || line.ends_with("$")
-                                            || line.ends_with("%")
-                                            || line.ends_with("> ");
-                                        if looks_like_prompt && line.len() < 200 {
-                                            debug!(
-                                                "Detected shell prompt after TUI exit: '{}'",
-                                                line
-                                            );
-                                            self.tui_overlay.mark_exited();
-                                        }
-                                    }
-                                }
-                            }
-
-                            return; // Don't process output for command blocks
-                        }
-
-                        // Check for SSH prompts that need user interaction
-                        let data_str = String::from_utf8_lossy(&data);
-
-                        // Accumulate output in buffer for SSH prompt detection
-                        // Keep only last 2KB to avoid memory issues
-                        self.ssh_prompt_buffer.push_str(&data_str);
-                        if self.ssh_prompt_buffer.len() > 2048 {
-                            let start = self.ssh_prompt_buffer.len() - 2048;
-                            self.ssh_prompt_buffer = self.ssh_prompt_buffer[start..].to_string();
-                        }
-
-                        // Check for SSH prompts if overlay is not already active
-                        if !self.ssh_prompt_overlay.is_active() {
-                            if let Some((prompt_type, message)) =
-                                mosaicterm::ui::SshPromptOverlay::detect_ssh_prompt(
-                                    &self.ssh_prompt_buffer,
-                                )
-                            {
-                                info!("Detected SSH prompt: {:?}", prompt_type);
-                                self.ssh_prompt_overlay.show(prompt_type, message);
-                                self.ssh_prompt_buffer.clear();
-                                return; // Wait for user input before processing more
-                            }
-                        }
-
-                        // SSH session management
-                        if self.ssh_session_active {
-                            // Check for SSH connection closed
-                            if Self::detect_ssh_session_end_static(&data_str) {
-                                info!("SSH session ended (detected end message)");
-                                ssh_session_ended = true;
-                            } else if let Some(prompt) =
-                                Self::detect_remote_prompt_static(&data_str)
-                            {
-                                // Check if this prompt looks like the local prompt (different from remote)
-                                // This helps detect when SSH exited and we're back to local shell
-                                if Self::is_local_prompt_static(
-                                    self.ssh_remote_prompt.as_ref(),
-                                    &prompt,
-                                ) {
-                                    info!("SSH session ended (detected local prompt)");
-                                    ssh_session_ended = true;
-                                } else if self.ssh_remote_prompt.as_ref() != Some(&prompt) {
-                                    // Same SSH session, just update the prompt (path might have changed)
-                                    info!("Updated remote prompt: '{}'", prompt);
-                                    new_remote_prompt = Some(prompt);
-                                }
-                            }
-                        } else if self.ssh_session_command.is_some()
-                            && !self.ssh_prompt_overlay.is_active()
-                        {
-                            // SSH command started but session not active yet (passwordless auth)
-                            // Activate session if we detect a remote prompt
-                            if let Some(prompt) = Self::detect_remote_prompt_static(&data_str) {
-                                info!("Detected remote prompt for passwordless SSH, activating session");
-                                ssh_session_should_activate = true;
-                                new_remote_prompt = Some(prompt);
-                            }
-                        }
-
-                        // Check for ANSI clear screen sequences (\x1b[H\x1b[2J or \x1b[2J)
-                        let data_str = String::from_utf8_lossy(&data);
-                        let is_clear_sequence = data_str.contains("\x1b[H\x1b[2J")
-                            || data_str.contains("\x1b[2J")
-                            || (data_str.contains("\x1b[H") && data_str.len() < 20); // Short sequences with just cursor home
-
-                        if is_clear_sequence {
-                            info!("Detected ANSI clear screen sequence, clearing command history");
-                            self.state_manager.clear_command_history();
-                            // Skip processing this output as it's just a clear command
-                        } else {
-                            debug!("PTY read {} bytes", data.len(),);
-
-                            // --- All output goes through the OutputProcessor ---
-                            // This ensures OSC / CSI sequences are properly
-                            // stripped before any text reaches the UI.
-                            let ready_lines = futures::executor::block_on(async {
-                                _terminal
-                                    .process_output(&data, mosaicterm::terminal::StreamType::Stdout)
-                                    .await
-                                    .unwrap_or_else(|e| {
-                                        debug!("Error processing output: {}", e);
-                                        Vec::new()
-                                    })
-                            });
-
-                            // Peek at the partial (un-newlined) text the
-                            // processor is accumulating — used for prompt
-                            // detection below.
-                            let partial_line_text: Option<String> =
-                                _terminal.peek_partial_line().map(|s| s.to_owned());
-
-                            debug!(
-                                "Got {} lines from terminal, partial: {:?}",
-                                ready_lines.len(),
-                                partial_line_text.as_deref().unwrap_or("")
-                            );
-
-                            let last_command_time = self.state_manager.last_command_time();
-                            let mut lines_count = 0;
-                            let mut should_clear_command_time = false;
-
-                            if let Some(command_history) = self.state_manager.command_history_mut()
-                            {
-                                if let Some(last_block) = command_history.last_mut() {
-                                    if last_block.status
-                                        == mosaicterm::models::ExecutionStatus::TuiMode
-                                    {
-                                        debug!("Skipping output for TUI mode command");
-                                        return;
-                                    }
-
-                                    let command_text = last_block.command.trim().to_string();
-                                    let current_output_count = last_block.output.len();
-
-                                    // ---- Add ready (newline-terminated) lines ----
-                                    let mut lines_to_add = Vec::with_capacity(ready_lines.len());
-
-                                    for (idx, line) in ready_lines.iter().enumerate() {
-                                        let line_text = line.text.trim();
-                                        let is_first_few = current_output_count + idx < 5;
-
-                                        let ends_with_prompt_char = line_text.ends_with("$ ")
-                                            || line_text.ends_with("$")
-                                            || line_text.ends_with("% ")
-                                            || line_text.ends_with("%")
-                                            || line_text.ends_with("> ")
-                                            || line_text.ends_with(">")
-                                            || line_text.ends_with("# ")
-                                            || line_text.ends_with("#");
-
-                                        // Classic prompt: "user@host:path$ " or "user@host path% "
-                                        let classic_prompt = ends_with_prompt_char
-                                            && (line_text.contains("@")
-                                                || line_text.contains(":")
-                                                || line_text.len() < 50
-                                                || (self.ssh_session_active
-                                                    && line_text.len() < 100));
-                                        // Oh My Zsh / Powerline prompt: " user@host  ~  " (no trailing $/%,
-                                        // but has user@host and ends with a path-like segment + whitespace)
-                                        let ohmyzsh_prompt = line_text.contains("@")
-                                            && line_text.len() < 120
-                                            && (line_text.trim_end().ends_with("~")
-                                                || line_text.trim_end().ends_with("/"));
-                                        let looks_like_prompt = classic_prompt || ohmyzsh_prompt;
-
-                                        // Detect user@host pattern (prompt from zsh/Oh My Zsh themes)
-                                        let has_user_at_host =
-                                            line_text.contains("@") && line_text.len() < 200;
-                                        // Prompt line with command echo:
-                                        //   " user@host  ~  eza -l"
-                                        let is_prompt_command_echo = has_user_at_host
-                                            && !command_text.is_empty()
-                                            && line_text.ends_with(&command_text);
-
-                                        // Filter prompts in BOTH local and SSH modes
-                                        let should_skip = line_text == command_text
-                                            || (is_first_few
-                                                && !line_text.is_empty()
-                                                && command_text.starts_with(line_text)
-                                                && line_text.len() <= 3)
-                                            || line_text.contains("^C")
-                                            || line_text.is_empty()
-                                            || looks_like_prompt
-                                            || is_prompt_command_echo;
-
-                                        // If we see a prompt and command is still running,
-                                        // mark completed with proper exit code
-                                        if looks_like_prompt
-                                            && last_block.status
-                                                == mosaicterm::models::ExecutionStatus::Running
-                                        {
-                                            let elapsed = last_command_time
-                                                .map(|s| s.elapsed())
-                                                .unwrap_or_default();
-                                            let mut exit_code =
-                                                mosaicterm::pty::shell_state::read_exit_code(
-                                                    std::process::id(),
-                                                )
-                                                .unwrap_or(0);
-                                            if exit_code == 0 {
-                                                if let Some(err_code) =
-                                                    Self::detect_error_in_output(&last_block.output)
-                                                {
-                                                    exit_code = err_code;
-                                                }
-                                            }
-                                            last_block.mark_completed_with_code(elapsed, exit_code);
-                                            should_clear_command_time = true;
-                                            debug!(
-                                                "Command completed (prompt in line batch, exit {}): {}",
-                                                exit_code, last_block.command
-                                            );
-                                        }
-
-                                        if !should_skip {
-                                            let mut line_to_add = line.clone();
-                                            if line_to_add.text.len() > MAX_LINE_LENGTH {
-                                                line_to_add.text.truncate(MAX_LINE_LENGTH);
-                                                line_to_add.text.push_str("... [truncated]");
-                                            }
-                                            lines_to_add.push(line_to_add);
-                                        }
-                                    }
-
-                                    if !lines_to_add.is_empty() {
-                                        last_block.add_output_lines(lines_to_add.clone());
-                                        lines_count = lines_to_add.len();
-
-                                        // Eagerly detect shell errors in the new output.
-                                        // If the output contains "command not found" or similar,
-                                        // mark the block as failed right now.
-                                        if last_block.status
-                                            == mosaicterm::models::ExecutionStatus::Running
-                                        {
-                                            if let Some(err_code) =
-                                                Self::detect_error_in_output(&lines_to_add)
-                                            {
-                                                let elapsed = last_command_time
-                                                    .map(|s| s.elapsed())
-                                                    .unwrap_or_default();
-                                                last_block
-                                                    .mark_completed_with_code(elapsed, err_code);
-                                                should_clear_command_time = true;
-                                                debug!(
-                                                    "Command failed (error pattern in output, exit {}): {}",
-                                                    err_code, last_block.command
-                                                );
-                                            }
-                                        }
-                                    }
-
-                                    if last_block.output.len() > MAX_OUTPUT_LINES_PER_COMMAND {
-                                        let to_remove = last_block.output.len()
-                                            - MAX_OUTPUT_LINES_PER_COMMAND
-                                            + 1000;
-                                        last_block.output.drain(0..to_remove);
-                                        let truncation_notice =
-                                            mosaicterm::models::OutputLine::new(format!(
-                                                "... [truncated {} lines due to size limit] ...",
-                                                to_remove
-                                            ));
-                                        last_block.output.insert(0, truncation_notice);
-                                        warn!(
-                                            "Truncated {} lines from command output (limit: {})",
-                                            to_remove, MAX_OUTPUT_LINES_PER_COMMAND
-                                        );
-                                    }
-
-                                    // ---- Prompt-based completion detection ----
-                                    // Use the partial line from the OutputProcessor
-                                    // (already has OSC stripped) for prompt detection.
-                                    let prompt_detected =
-                                        if let Some(ref partial) = partial_line_text {
-                                            let pt = partial.trim();
-                                            if pt.is_empty() {
-                                                false
-                                            } else {
-                                                let classic = pt.ends_with("$ ")
-                                                    || pt.ends_with("$")
-                                                    || pt.ends_with("% ")
-                                                    || pt.ends_with("%")
-                                                    || pt.ends_with("> ")
-                                                    || pt.ends_with(">")
-                                                    || pt.ends_with("# ")
-                                                    || pt.ends_with("#")
-                                                    || (pt.contains("@")
-                                                        && (pt.contains("$")
-                                                            || pt.contains("%")
-                                                            || pt.contains("#")));
-                                                let ohmyzsh = pt.contains("@")
-                                                    && pt.len() < 120
-                                                    && (pt.trim_end().ends_with("~")
-                                                        || pt.trim_end().ends_with("/"));
-                                                classic || ohmyzsh
-                                            }
-                                        } else {
-                                            false
-                                        };
-
-                                    if prompt_detected
-                                        && last_block.status
-                                            == mosaicterm::models::ExecutionStatus::Running
-                                    {
-                                        let elapsed = last_command_time
-                                            .map(|s| s.elapsed())
-                                            .unwrap_or_default();
-                                        let mut exit_code =
-                                            mosaicterm::pty::shell_state::read_exit_code(
-                                                std::process::id(),
-                                            )
-                                            .unwrap_or(0);
-                                        if exit_code == 0 {
-                                            if let Some(err_code) =
-                                                Self::detect_error_in_output(&last_block.output)
-                                            {
-                                                exit_code = err_code;
-                                            }
-                                        }
-                                        last_block.mark_completed_with_code(elapsed, exit_code);
-                                        should_clear_command_time = true;
-                                        debug!(
-                                            "Command completed (prompt in partial, exit {}): {}",
-                                            exit_code, last_block.command
-                                        );
-                                    }
-
-                                    // Also check completed lines for prompt-based completion
-                                    if !should_clear_command_time {
-                                        if let Some(start_time) = last_command_time {
-                                            let elapsed_ms = start_time.elapsed().as_millis();
-                                            let elapsed_secs = (elapsed_ms / 1000) as u64;
-
-                                            let output_lines_clone: Vec<_> =
-                                                last_block.output.clone();
-                                            let command_clone = last_block.command.clone();
-
-                                            let is_complete = if !output_lines_clone.is_empty() {
-                                                let recent_lines = if output_lines_clone.len() > 3 {
-                                                    &output_lines_clone
-                                                        [output_lines_clone.len() - 3..]
-                                                } else {
-                                                    &output_lines_clone
-                                                };
-                                                let detector = mosaicterm::terminal::prompt::CommandCompletionDetector::new();
-                                                detector.is_command_complete(recent_lines)
-                                            } else {
-                                                false
-                                            };
-
-                                            let is_interactive_command =
-                                                last_block.command.contains("top")
-                                                    || last_block.command.contains("htop")
-                                                    || last_block.command.contains("vim")
-                                                    || last_block.command.contains("nano")
-                                                    || last_block.command.contains("less")
-                                                    || last_block.command.contains("man")
-                                                    || last_block.command.starts_with("ssh ")
-                                                    || last_block.command.contains(" | ")
-                                                    || last_block.command.contains(" > ")
-                                                    || last_block.command.contains(" >> ");
-
-                                            let timeout_config =
-                                                &self.runtime_config.config().terminal.timeout;
-                                            let timeout_secs = if is_interactive_command {
-                                                timeout_config.interactive_command_timeout_secs
-                                            } else {
-                                                timeout_config.regular_command_timeout_secs
-                                            };
-
-                                            if is_complete {
-                                                let mut exit_code =
-                                                    mosaicterm::pty::shell_state::read_exit_code(
-                                                        std::process::id(),
-                                                    )
-                                                    .unwrap_or(0);
-                                                if exit_code == 0 {
-                                                    if let Some(err_code) =
-                                                        Self::detect_error_in_output(
-                                                            &output_lines_clone,
-                                                        )
-                                                    {
-                                                        exit_code = err_code;
-                                                    }
-                                                }
-                                                last_block.mark_completed_with_code(
-                                                    std::time::Duration::from_millis(
-                                                        elapsed_ms.try_into().unwrap_or(1000),
-                                                    ),
-                                                    exit_code,
-                                                );
-                                                should_clear_command_time = true;
-                                                debug!(
-                                                    "Command completed based on prompt detection (exit {}): {}",
-                                                    exit_code, command_clone
-                                                );
-                                            } else if timeout_secs > 0
-                                                && elapsed_secs >= timeout_secs
-                                            {
-                                                warn!(
-                                                    "Command exceeded timeout of {}s: {}",
-                                                    timeout_secs, command_clone
-                                                );
-                                                let timeout_notice =
-                                                    mosaicterm::models::OutputLine::new(format!(
-                                                        "\n[Timeout: Command exceeded {}s limit]",
-                                                        timeout_secs
-                                                    ));
-                                                last_block.output.push(timeout_notice);
-                                                last_block.mark_completed(
-                                                    std::time::Duration::from_secs(timeout_secs),
-                                                );
-                                                should_clear_command_time = true;
-
-                                                if timeout_config.kill_on_timeout {
-                                                    info!(
-                                                        "Killing timed-out command: {}",
-                                                        command_clone
-                                                    );
-                                                    let kill_result = if let Some(terminal) =
-                                                        &self.terminal
-                                                    {
-                                                        if let Some(handle) = terminal.pty_handle()
-                                                        {
-                                                            let handle_id = handle.id.clone();
-                                                            self.async_tx
-                                                                .send(AsyncRequest::SendInterrupt(
-                                                                    handle_id.clone(),
-                                                                ))
-                                                                .map_err(|e| e.to_string())
-                                                        } else {
-                                                            Err("No PTY handle available"
-                                                                .to_string())
-                                                        }
-                                                    } else {
-                                                        Err("No terminal available".to_string())
-                                                    };
-
-                                                    match kill_result {
-                                                        Ok(_) => {
-                                                            info!("Kill signal sent for timed-out command");
-                                                            timeout_kill_status_message = Some(format!(
-                                                                "Command timed out and was killed after {}s",
-                                                                timeout_secs
-                                                            ));
-                                                        }
-                                                        Err(e) => {
-                                                            error!("Failed to send kill request for timeout: {}", e);
-                                                            timeout_kill_status_message = Some(format!(
-                                                                "Failed to kill timed-out command: {}",
-                                                                e
-                                                            ));
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            if lines_count > 0 {
-                                self.state_manager.statistics_mut().total_output_lines +=
-                                    lines_count;
-                            }
-
-                            if should_clear_command_time {
-                                self.state_manager.clear_last_command_time();
-                                should_update_contexts = true;
-                            }
-                        }
-                    }
+                    self.pane.tui_overlay.note_alt_screen_enter();
+                }
+                if !self.pane.tui_overlay.in_grace_period()
+                    && self.pane.tui_overlay.saw_alt_screen()
+                    && (data.windows(8).any(|window| window == b"\x1b[?1049l")
+                        || data.windows(6).any(|window| window == b"\x1b[?47l"))
+                {
+                    self.finish_pending_block(None, false);
+                    self.pane.tui_overlay.mark_exited();
                 }
             }
-        }
-
-        // Set timeout kill status message after all borrows are released
-        if let Some(msg) = timeout_kill_status_message {
-            self.set_status_message(Some(msg));
-        }
-
-        // Apply SSH session state changes after borrows are released
-        if ssh_session_ended {
-            self.end_ssh_session();
         } else {
-            // Activate SSH session if detected (passwordless auth path)
-            if ssh_session_should_activate {
-                self.ssh_session_active = true;
-                self.ssh_prompt_buffer.clear();
-                if let Some(cmd) = &self.ssh_session_command {
-                    let host = self.extract_ssh_host(cmd);
-                    self.set_status_message(Some(format!("🔗 Connected to {}", host)));
+            let text = String::from_utf8_lossy(&data);
+            if !completed && self.handle_ssh_authentication(&text) {
+                return;
+            }
+            let remote_prompt = if completed || self.pane.ssh_session_command.is_none() {
+                None
+            } else {
+                Self::detect_remote_prompt_static(&text)
+            };
+            let remote_closed = self.pane.ssh_session_active
+                && (Self::detect_ssh_session_end_static(&text)
+                    || remote_prompt.as_ref().is_some_and(|prompt| {
+                        Self::is_local_prompt_static(self.pane.ssh_remote_prompt.as_ref(), prompt)
+                    }));
+            if text.contains("\x1b[2J") {
+                let pending = self.pane.pending_block.as_deref();
+                if let Some(history) = self.state_manager.command_history_mut() {
+                    history.retain(|block| Some(block.id.as_str()) == pending);
+                    self.pane.clear_pending_block = history
+                        .last()
+                        .is_some_and(|block| block.command.trim() == "clear");
                 }
             }
 
-            // Update remote prompt if captured
-            if let Some(prompt) = new_remote_prompt {
-                self.ssh_remote_prompt = Some(prompt);
+            let fallback = !self.integrated_shell_ready();
+            let terminal = self
+                .pane
+                .terminal
+                .as_mut()
+                .expect("output belongs to a terminal");
+            let mut lines = terminal
+                .process_block_output(data, completed)
+                .unwrap_or_default();
+            let mut saw_prompt = false;
+            let is_prompt = |text: &str| {
+                remote_prompt
+                    .as_ref()
+                    .is_some_and(|prompt| text.trim() == prompt.trim())
+                    || fallback && terminal.is_shell_prompt(text)
+            };
+            if lines.last().is_some_and(|line| is_prompt(&line.text)) {
+                lines.pop();
+                saw_prompt = true;
+            }
+            if terminal.peek_partial_line().is_some_and(is_prompt) {
+                terminal.clear_pending_output();
+                saw_prompt = true;
+            }
+            self.append_output_lines(lines);
+
+            if remote_closed {
+                // Integrated shells will report the local ssh command's status.
+                self.end_ssh_session();
+            } else if let Some(prompt) = remote_prompt {
+                self.pane.ssh_session_active = true;
+                self.pane.ssh_remote_prompt = Some(prompt);
+                self.pane.ssh_prompt_buffer.clear();
+                self.finish_pending_block(None, false);
                 self.update_prompt();
+            } else if saw_prompt {
+                let exit_code = self.fallback_exit_code();
+                self.finish_pending_block(exit_code, false);
+                self.sync_shell_state();
             }
         }
 
-        // Idle prompt detection: check the OutputProcessor's partial line
-        // for a shell prompt even when no new data has arrived.  This catches
-        // fast-failing commands (typos, command-not-found) where the error +
-        // prompt arrive in one burst and no subsequent data triggers the
-        // in-data-handler check.
-        if !should_update_contexts && !self.ssh_session_active {
-            if let Some(terminal) = &self.terminal {
-                if let Some(partial) = terminal.peek_partial_line() {
-                    let pt = partial.trim();
-                    let prompt_detected = if pt.is_empty() {
-                        false
+        match event {
+            Some(ShellEvent::Ready) => self.sync_shell_state(),
+            Some(ShellEvent::Completed(code)) => {
+                self.finish_pending_block(Some(code), false);
+                self.end_ssh_session();
+                self.pane.ssh_session_command = None;
+                self.sync_shell_state();
+            }
+            None => {}
+        }
+    }
+
+    /// Returns true when the output was consumed by the authentication overlay.
+    fn handle_ssh_authentication(&mut self, text: &str) -> bool {
+        if self.pane.ssh_session_command.is_none() {
+            return false;
+        }
+
+        self.pane.ssh_prompt_buffer.push_str(text);
+        trim_output_tail(&mut self.pane.ssh_prompt_buffer);
+        if !self.pane.ssh_prompt_overlay.is_active() {
+            if let Some((prompt_type, message)) =
+                mosaicterm::ui::SshPromptOverlay::detect_ssh_prompt(&self.pane.ssh_prompt_buffer)
+            {
+                self.pane.ssh_prompt_overlay.show(prompt_type, message);
+                self.pane.ssh_prompt_buffer.clear();
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn flush_pane_output(&mut self) {
+        if let Some(terminal) = self.pane.terminal.as_mut() {
+            let lines = terminal.flush_output();
+            self.append_output_lines(lines);
+        }
+    }
+
+    fn append_output_lines(&mut self, mut lines: Vec<mosaicterm::models::OutputLine>) {
+        let Some(pending) = self.pane.pending_block.as_deref() else {
+            return;
+        };
+        let block = self
+            .state_manager
+            .command_history_mut()
+            .and_then(|history| history.iter_mut().rev().find(|block| block.id == pending));
+        let Some(block) = block else {
+            return;
+        };
+
+        if !lines.is_empty()
+            && std::mem::take(&mut self.pane.expect_command_echo)
+            && lines[0].text.trim() == block.command.trim()
+        {
+            lines.remove(0);
+        }
+        for line in &mut lines {
+            truncate_output_line(&mut line.text);
+        }
+        let count = lines.len();
+        block.add_output_lines(lines);
+        if block.output.len() > MAX_OUTPUT_LINES_PER_COMMAND {
+            let removed = block.output.len() - MAX_OUTPUT_LINES_PER_COMMAND + 1000;
+            block.output.drain(0..removed);
+            block.output.insert(
+                0,
+                mosaicterm::models::OutputLine::new(format!(
+                    "... [truncated {removed} lines due to size limit] ..."
+                )),
+            );
+        }
+        self.state_manager.statistics_mut().total_output_lines += count;
+    }
+
+    fn fallback_exit_code(&self) -> Option<i32> {
+        let pending = self.pane.pending_block.as_deref()?;
+        let block = self
+            .state_manager
+            .get_command_history()
+            .iter()
+            .rev()
+            .find(|block| block.id == pending)?;
+        block.output.iter().find_map(|line| {
+            let text = line.text.to_ascii_lowercase();
+            if text.contains("command not found")
+                || text.contains("no such file or directory")
+                || text.contains("is not recognized")
+            {
+                Some(127)
+            } else if text.contains("permission denied") || text.ends_with("is a directory") {
+                Some(126)
+            } else if text.contains("syntax error") {
+                Some(2)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn finish_pending_block(&mut self, exit_code: Option<i32>, shell_closed: bool) {
+        let Some(id) = self.pane.pending_block.take() else {
+            return;
+        };
+        let elapsed = self
+            .state_manager
+            .last_command_time()
+            .map(|time| time.elapsed())
+            .unwrap_or_default();
+        self.state_manager.clear_last_command_time();
+        self.pane.expect_command_echo = false;
+        self.pane.shell_had_children = false;
+        let interrupted = std::mem::take(&mut self.pane.interrupted);
+        self.set_status_message(None);
+
+        if let Some(history) = self.state_manager.command_history_mut() {
+            if std::mem::take(&mut self.pane.clear_pending_block) {
+                history.retain(|block| block.id != id);
+            }
+            if let Some(block) = history.iter_mut().rev().find(|block| block.id == id) {
+                if !matches!(
+                    block.status,
+                    ExecutionStatus::Running | ExecutionStatus::TuiMode
+                ) {
+                    block.exit_code = exit_code;
+                    return;
+                }
+                if interrupted && matches!(exit_code, None | Some(130)) {
+                    block.mark_cancelled();
+                    block.exit_code = exit_code;
+                    block.execution_time = Some(elapsed);
+                } else if let Some(code) = exit_code {
+                    block.mark_completed_with_code(elapsed, code);
+                } else {
+                    block.status = if shell_closed {
+                        ExecutionStatus::Failed
                     } else {
-                        let classic = pt.ends_with("$ ")
-                            || pt.ends_with("$")
-                            || pt.ends_with("% ")
-                            || pt.ends_with("%")
-                            || pt.ends_with("> ")
-                            || pt.ends_with(">")
-                            || pt.ends_with("# ")
-                            || pt.ends_with("#")
-                            || (pt.contains("@")
-                                && (pt.contains("$") || pt.contains("%") || pt.contains("#")));
-                        let ohmyzsh = pt.contains("@")
-                            && pt.len() < 120
-                            && (pt.trim_end().ends_with("~") || pt.trim_end().ends_with("/"));
-                        classic || ohmyzsh
+                        ExecutionStatus::Completed
                     };
-
-                    if prompt_detected {
-                        let last_command_time = self.state_manager.last_command_time();
-                        let mut did_complete = false;
-                        if let Some(history) = self.state_manager.command_history_mut() {
-                            if let Some(last_block) = history.last_mut() {
-                                if last_block.status == mosaicterm::models::ExecutionStatus::Running
-                                {
-                                    let elapsed =
-                                        last_command_time.map(|t| t.elapsed()).unwrap_or_default();
-                                    let mut exit_code =
-                                        mosaicterm::pty::shell_state::read_exit_code(
-                                            std::process::id(),
-                                        )
-                                        .unwrap_or(0);
-                                    if exit_code == 0 {
-                                        if let Some(err_code) =
-                                            Self::detect_error_in_output(&last_block.output)
-                                        {
-                                            exit_code = err_code;
-                                        }
-                                    }
-                                    last_block.mark_completed_with_code(elapsed, exit_code);
-                                    did_complete = true;
-                                    debug!(
-                                        "Command completed (idle prompt check, exit {}): {}",
-                                        exit_code, last_block.command
-                                    );
-                                }
-                            }
-                        }
-                        if did_complete {
-                            self.state_manager.clear_last_command_time();
-                            should_update_contexts = true;
-                        }
-                    }
+                    block.execution_time = Some(elapsed);
+                }
+                if !self.window_has_focus && elapsed.as_secs() >= 10 {
+                    let command = &block.command;
+                    let short = command.floor_char_boundary(40);
+                    let suffix = if short < command.len() { "..." } else { "" };
+                    let status = if block.status == ExecutionStatus::Completed {
+                        "completed"
+                    } else {
+                        "failed"
+                    };
+                    send_system_notification(
+                        "MosaicTerm",
+                        &format!(
+                            "Command {status} ({}s): {}{suffix}",
+                            elapsed.as_secs(),
+                            &command[..short]
+                        ),
+                    );
                 }
             }
         }
+    }
 
-        // Process-tree-based command completion: poll whether the shell
-        // still has child processes.  When children disappear the command is done.
-        if !should_update_contexts && !self.ssh_session_active {
-            if let Some(terminal) = &self.terminal {
-                if let Some(handle) = terminal.pty_handle() {
-                    if let Some(shell_pid) = handle.pid {
-                        let has_children =
-                            mosaicterm::pty::shell_state::has_foreground_children(shell_pid);
-
-                        if self.shell_had_children && !has_children {
-                            // Transition: children → no children → command finished
-                            debug!(
-                                "Shell {} children gone, marking command complete",
-                                shell_pid
-                            );
-
-                            let last_command_time = self.state_manager.last_command_time();
-                            if let Some(history) = self.state_manager.command_history_mut() {
-                                if let Some(last_block) = history.last_mut() {
-                                    if last_block.status
-                                        == mosaicterm::models::ExecutionStatus::Running
-                                    {
-                                        let elapsed = last_command_time
-                                            .map(|t| t.elapsed())
-                                            .unwrap_or_default();
-                                        let elapsed_ms = elapsed.as_millis();
-
-                                        let mut exit_code =
-                                            mosaicterm::pty::shell_state::read_exit_code(
-                                                std::process::id(),
-                                            )
-                                            .unwrap_or(0);
-                                        if exit_code == 0 {
-                                            if let Some(err_code) =
-                                                Self::detect_error_in_output(&last_block.output)
-                                            {
-                                                exit_code = err_code;
-                                            }
-                                        }
-
-                                        if exit_code == 0 {
-                                            last_block.mark_completed(elapsed);
-                                        } else {
-                                            last_block.mark_failed(elapsed, exit_code);
-                                        }
-                                        debug!(
-                                            "Command '{}' finished via process tree (exit {})",
-                                            last_block.command, exit_code
-                                        );
-
-                                        if !self.window_has_focus
-                                            && elapsed_ms >= bg_notification_threshold_ms
-                                        {
-                                            let cmd_short = if last_block.command.len() > 40 {
-                                                format!("{}...", &last_block.command[..40])
-                                            } else {
-                                                last_block.command.clone()
-                                            };
-                                            let status_str = if exit_code == 0 {
-                                                "completed"
-                                            } else {
-                                                "failed"
-                                            };
-                                            send_system_notification(
-                                                "MosaicTerm",
-                                                &format!(
-                                                    "Command {} ({}s): {}",
-                                                    status_str,
-                                                    elapsed_ms / 1000,
-                                                    cmd_short
-                                                ),
-                                            );
-                                        }
-
-                                        self.state_manager.clear_last_command_time();
-                                        should_update_contexts = true;
-                                    }
-                                }
-                            }
-                        }
-                        self.shell_had_children = has_children;
-                    }
-                }
-            }
+    fn check_command_timeout(&mut self, handle: &PtyHandle) {
+        let Some(elapsed) = self
+            .state_manager
+            .last_command_time()
+            .map(|time| time.elapsed())
+        else {
+            return;
+        };
+        let Some(id) = self.pane.pending_block.as_deref() else {
+            return;
+        };
+        let config = &self.runtime_config.config().terminal.timeout;
+        let Some(block) = self
+            .state_manager
+            .get_command_history()
+            .iter()
+            .rev()
+            .find(|block| block.id == id)
+        else {
+            return;
+        };
+        let interactive = self.is_interactive_command(&block.command)
+            || self.is_ssh_command(&block.command)
+            || block.status == ExecutionStatus::TuiMode
+            || [" | ", " > ", " >> "]
+                .iter()
+                .any(|separator| block.command.contains(separator));
+        let seconds = if interactive {
+            config.interactive_command_timeout_secs
+        } else {
+            config.regular_command_timeout_secs
+        };
+        if seconds == 0 || elapsed.as_secs() < seconds {
+            return;
         }
-
-        // After command completes, sync CWD and env context from the OS
-        if should_update_contexts {
-            self.sync_shell_state();
+        let kill_on_timeout = config.kill_on_timeout && !self.pane.ssh_session_active;
+        let id = id.to_string();
+        self.state_manager.clear_last_command_time();
+        self.state_manager.add_output_line(
+            &id,
+            mosaicterm::models::OutputLine::new(format!(
+                "[Timeout: Command exceeded {seconds}s limit]"
+            )),
+        );
+        self.state_manager
+            .update_command_block_status(&id, ExecutionStatus::Failed);
+        if kill_on_timeout {
+            let _ = executor::block_on(self.pty_manager.send_input(handle, &[3]));
         }
     }
 }
@@ -4496,7 +3700,7 @@ mod tests {
     #[test]
     fn test_app_creation() {
         let app = MosaicTermApp::new();
-        assert!(app.terminal.is_none()); // Terminal starts as None
+        assert!(app.pane.terminal.is_none()); // Terminal starts as None
         assert!(!app.state_manager.is_terminal_ready());
     }
 
@@ -4518,5 +3722,166 @@ mod tests {
 
         app.set_status_message(None);
         assert!(app.state_manager.app_state().status_message.is_none());
+    }
+    #[test]
+    fn output_caps_keep_utf8_character_boundaries() {
+        let mut prompt = format!("é{}", "x".repeat(2047));
+        trim_output_tail(&mut prompt);
+        assert_eq!(prompt, "x".repeat(2047));
+
+        let mut line = format!("{}éending", "x".repeat(MAX_LINE_LENGTH - 1));
+        truncate_output_line(&mut line);
+        assert_eq!(
+            line,
+            format!("{}... [truncated]", "x".repeat(MAX_LINE_LENGTH - 1))
+        );
+    }
+
+    #[cfg(unix)]
+    fn poll_until(app: &mut MosaicTermApp, done: impl Fn(&MosaicTermApp) -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !done(app) {
+            app.poll_async_results();
+            app.poll_panes();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out: {:?}",
+                app.pane.status_message
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[cfg(unix)]
+    fn run_command(app: &mut MosaicTermApp, command: &str) {
+        assert!(app.can_submit_command());
+        executor::block_on(app.handle_command_input(command.to_string())).unwrap();
+        poll_until(app, |app| app.pane.pending_block.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prompt_commands_keep_shell_syntax_and_panes_keep_separate_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("name with space");
+        std::fs::create_dir(&subdir).unwrap();
+        let mut app = MosaicTermApp::new();
+        app.history_manager =
+            mosaicterm::history::HistoryManager::with_path(dir.path().join("history")).unwrap();
+        let config = &mut app.runtime_config.config_mut().terminal;
+        config.shell_path = PathBuf::from("bash");
+        config.shell_args = vec!["--noprofile".into(), "--noediting".into()];
+        app.request_shell(dir.path().to_path_buf());
+        poll_until(&mut app, |app| app.can_submit_command());
+
+        run_command(&mut app, "echo 'a b' | wc -w");
+        let block = app.state_manager.get_command_history().last().unwrap();
+        assert_eq!(block.exit_code, Some(0));
+        assert_eq!(block.output[0].text.trim(), "2");
+        run_command(&mut app, "cd 'name with space'");
+        assert_eq!(
+            app.pane.terminal.as_ref().unwrap().get_working_directory(),
+            subdir
+        );
+        run_command(&mut app, "false");
+        assert_eq!(
+            app.state_manager
+                .get_command_history()
+                .last()
+                .unwrap()
+                .exit_code,
+            Some(1)
+        );
+        run_command(
+            &mut app,
+            "alias echo='printf \"alias:%s\"'; LOCAL_VALUE=kept",
+        );
+        run_command(&mut app, "echo \"$LOCAL_VALUE\" > redirected");
+        assert_eq!(
+            std::fs::read_to_string(subdir.join("redirected")).unwrap(),
+            "alias:kept"
+        );
+        run_command(&mut app, "printf 'command not found\\n'");
+        assert_eq!(
+            app.state_manager
+                .get_command_history()
+                .last()
+                .unwrap()
+                .exit_code,
+            Some(0)
+        );
+
+        executor::block_on(app.handle_command_input("printf 'started\\n'; sleep 30".into()))
+            .unwrap();
+        poll_until(&mut app, |app| {
+            let block = app.state_manager.get_command_history().last().unwrap();
+            block.output.iter().any(|line| line.text == "started")
+        });
+        app.handle_interrupt_command();
+        poll_until(&mut app, |app| app.can_submit_command());
+        assert_eq!(
+            app.state_manager
+                .get_command_history()
+                .last()
+                .unwrap()
+                .status,
+            ExecutionStatus::Cancelled
+        );
+
+        let first_pane = app.pane_tree.active_id().to_owned();
+        let first_session = app.pane_tree.active_pane().unwrap().session_id.clone();
+        let first_handle = app
+            .pane
+            .terminal
+            .as_ref()
+            .unwrap()
+            .pty_handle()
+            .unwrap()
+            .id
+            .clone();
+        executor::block_on(app.handle_command_input("sleep 0.15; printf original".into())).unwrap();
+        app.handle_split_right();
+        poll_until(&mut app, |app| app.can_submit_command());
+        assert_ne!(
+            app.pane.terminal.as_ref().unwrap().pty_handle().unwrap().id,
+            first_handle
+        );
+        assert!(app.state_manager.get_command_history().is_empty());
+        run_command(&mut app, "printf '%s' \"$LOCAL_VALUE\"");
+        assert!(app
+            .state_manager
+            .get_command_history()
+            .last()
+            .unwrap()
+            .output
+            .is_empty());
+        poll_until(&mut app, |app| {
+            app.state_manager
+                .get_session(&first_session)
+                .unwrap()
+                .command_history
+                .last()
+                .unwrap()
+                .exit_code
+                .is_some()
+        });
+        let background = app
+            .state_manager
+            .get_session(&first_session)
+            .unwrap()
+            .command_history
+            .last()
+            .unwrap();
+        assert_eq!(background.output[0].text, "original");
+        app.handle_close_pane();
+        assert_eq!(app.pane_tree.active_id(), first_pane);
+        assert_eq!(
+            app.pane.terminal.as_ref().unwrap().pty_handle().unwrap().id,
+            first_handle
+        );
+        poll_until(&mut app, |app| {
+            executor::block_on(app.pty_manager.active_count()) == 1
+        });
+        executor::block_on(app.pane.terminal.take().unwrap().close());
     }
 }

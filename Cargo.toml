@@ -50,6 +50,7 @@ arboard = "3.6"
 hostname = "0.4"
 notify = "8.2"
 zeroize = "1.8"
+tempfile = "3.27"
 
 # macOS-specific dependencies (for native menu bar)
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -69,7 +70,6 @@ windows-sys = { version = "0.61", features = [
 [dev-dependencies]
 # Testing
 tokio-test = "0.4"
-tempfile = "3.27"
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1.11"
 

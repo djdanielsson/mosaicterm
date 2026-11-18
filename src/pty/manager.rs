@@ -173,7 +173,7 @@ impl PtyManager {
         let terminals = self.terminals.read().await;
         if let Some(entry_lock) = terminals.get(&handle.id) {
             let entry = entry_lock.read().await;
-            entry.process.is_running()
+            entry.process.is_running() && !entry.streams.output_closed()
         } else {
             false
         }
@@ -184,27 +184,9 @@ impl PtyManager {
         let process_id = handle.id.clone();
 
         // Remove from active processes
-        let mut terminals = self.terminals.write().await;
-        if let Some(entry_lock) = terminals.remove(&process_id) {
-            let mut entry = entry_lock.write().await;
-            // Kill the OS child process if we have a PID
-            if let Some(_pid) = entry.process.pid {
-                #[cfg(unix)]
-                {
-                    let pid = _pid;
-                    use nix::sys::signal::{kill, Signal};
-                    use nix::unistd::Pid;
-                    if let Err(e) = kill(Pid::from_raw(pid as i32), Signal::SIGTERM) {
-                        tracing::warn!("Failed to SIGTERM PID {}: {}", pid, e);
-                    }
-                }
-            }
-            if entry.process.is_running() {
-                entry.process.mark_terminated(0);
-            }
-            // Dropping `entry` closes the streams, which will cause the
-            // reader/writer threads to exit when their channels disconnect.
-        }
+        let entry = self.terminals.write().await.remove(&process_id);
+        // Dropping the streams terminates and reaps the owned child.
+        drop(entry);
 
         // Publish termination event
         self.publish_event(PtyEvent::Terminated {
@@ -229,7 +211,7 @@ impl PtyManager {
                     .clone()
                     .unwrap_or_else(|| std::path::PathBuf::from(".")),
                 start_time: entry.process.start_time.unwrap_or_else(Utc::now),
-                is_alive: entry.process.is_running(),
+                is_alive: entry.process.is_running() && !entry.streams.output_closed(),
             })
         } else {
             Err(Error::PtyHandleNotFound {
@@ -357,42 +339,37 @@ impl PtyManager {
         terminals.len()
     }
 
-    /// Clean up terminated processes
-    ///
-    /// Checks both the process state flag and the output stream.
-    /// A disconnected output channel (reader EOF) indicates the process
-    /// has exited even if mark_terminated was never called.
-    pub async fn cleanup_terminated(&self) -> usize {
+    /// Read the shell's exit status if it has exited.
+    pub async fn exit_code(&self, handle: &PtyHandle) -> Option<i32> {
         let terminals = self.terminals.read().await;
+        let entry = terminals.get(&handle.id)?;
+        let mut entry = entry.write().await;
+        entry.streams.exit_code()
+    }
 
+    /// Remove sessions only after the PTY reader has closed and callers have
+    /// consumed the queued output through the normal read methods.
+    pub async fn cleanup_terminated(&self) -> usize {
+        let mut terminals = self.terminals.write().await;
         let mut terminated = Vec::new();
-        for (id, entry_lock) in terminals.iter() {
-            let mut entry = entry_lock.write().await;
-            // Probe the output channel: a Disconnected error means the
-            // reader thread has exited (process died).
-            let stream_dead = matches!(
-                entry.streams.try_read_now(),
-                Err(crate::error::Error::PtyStreamDisconnected)
-            );
-            if !entry.process.is_running() || stream_dead {
-                if stream_dead && entry.process.is_running() {
-                    entry.process.mark_terminated(0);
-                }
+        terminals.retain(|id, entry| {
+            if entry
+                .try_read()
+                .is_ok_and(|entry| entry.streams.output_finished())
+            {
                 terminated.push(id.clone());
+                false
+            } else {
+                true
             }
-        }
-
-        let count = terminated.len();
+        });
         drop(terminals);
-
-        if !terminated.is_empty() {
-            let mut terminals = self.terminals.write().await;
-            for id in terminated {
-                terminals.remove(&id);
-            }
+        for handle_id in &terminated {
+            self.publish_event(PtyEvent::Terminated {
+                handle_id: handle_id.clone(),
+            });
         }
-
-        count
+        terminated.len()
     }
 }
 
@@ -445,6 +422,41 @@ mod tests {
 
         // In a real test, we'd spawn multiple terminals and verify they
         // can operate concurrently without blocking each other
+        assert_eq!(manager.active_count().await, 0);
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cleanup_keeps_output_from_an_exited_process_until_read() {
+        let manager = PtyManager::new();
+        let handle = manager
+            .create_pty(
+                "/bin/sh",
+                &["-c".to_string(), "printf 'final output'".to_string()],
+                &HashMap::new(),
+                None,
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while manager.is_alive(&handle).await {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("child exits");
+        assert_eq!(manager.cleanup_terminated().await, 0);
+        assert_eq!(manager.active_count().await, 1);
+
+        let mut output = Vec::new();
+        loop {
+            match manager.try_read_output_now(&handle).await {
+                Ok(chunk) => output.extend(chunk),
+                Err(Error::PtyStreamDisconnected) => break,
+                Err(error) => panic!("{error}"),
+            }
+        }
+        assert_eq!(output, b"final output");
+        assert_eq!(manager.cleanup_terminated().await, 1);
         assert_eq!(manager.active_count().await, 0);
     }
 }

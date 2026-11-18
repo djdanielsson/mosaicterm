@@ -26,7 +26,7 @@
 //! work regardless of focus state because they are critical operations.
 
 use eframe::egui;
-use tracing::{error, info, warn};
+use tracing::info;
 
 use super::{AsyncRequest, MosaicTermApp};
 
@@ -39,12 +39,7 @@ impl MosaicTermApp {
     ) {
         // Ctrl+C works ALWAYS, even when input is focused - kills running command
         if ctx.input(|i| i.key_pressed(egui::Key::C) && i.modifiers.ctrl && !i.modifiers.shift) {
-            // Check if there's a running command
-            let has_running_command = self
-                .state_manager
-                .get_command_history()
-                .iter()
-                .any(|block| block.is_running());
+            let has_running_command = self.pane.pending_block.is_some();
 
             if has_running_command {
                 // Ctrl+C to interrupt current command
@@ -117,7 +112,9 @@ impl MosaicTermApp {
         }
 
         // Pane management shortcuts
-        if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl && i.modifiers.shift) {
+        if ctx.input(|i| {
+            i.key_pressed(egui::Key::D) && i.modifiers.ctrl && i.modifiers.shift && !i.modifiers.alt
+        }) {
             self.handle_split_right();
         }
 
@@ -150,126 +147,37 @@ impl MosaicTermApp {
         }
     }
 
-    /// Handle command interruption (Ctrl+C)
     pub(super) fn handle_interrupt_command(&mut self) {
-        if let Some(terminal) = &mut self.terminal {
-            // Get the current PTY handle from the terminal
-            if let Some(pty_handle) = terminal.pty_handle() {
-                let handle_id = pty_handle.id.clone();
+        let Some(block_id) = self.pane.pending_block.clone() else {
+            return;
+        };
+        self.handle_interrupt_specific_command(block_id);
+    }
 
-                // Send interrupt signal to the PTY process (non-blocking)
-                info!("Sending interrupt signal for handle: {}", handle_id);
-                if let Err(e) = self
-                    .async_tx
-                    .send(AsyncRequest::SendInterrupt(handle_id.clone()))
-                {
-                    error!("Failed to send interrupt request: {}", e);
-                    self.set_status_message(Some("Failed to interrupt command".to_string()));
-                } else {
-                    self.set_status_message(Some("Interrupting command...".to_string()));
-                }
-
-                // Mark current command as cancelled (result will come from async)
-                // Check if the command is interactive first (before mutable borrow)
-                let command_history = self.state_manager.get_command_history();
-                let is_interactive = command_history
-                    .last()
-                    .map(|block| self.is_interactive_command(&block.command))
-                    .unwrap_or(false);
-
-                // Mark the last command as cancelled in state manager
-                let history = self.state_manager.get_command_history();
-                if let Some(last_block) = history.last() {
-                    let block_id = last_block.id.clone();
-                    self.state_manager.update_command_block_status(
-                        &block_id,
-                        mosaicterm::models::ExecutionStatus::Cancelled,
-                    );
-                }
-
-                // Clear the command time so new commands can be submitted
-                self.state_manager.set_last_command_time();
-
-                // For interactive programs, we need to restart the PTY session
-                // because the shell can get into a corrupted state
-                if is_interactive {
-                    info!("Restarting PTY session after interactive program cancel");
-                    self.start_loading("Restarting shell session...");
-
-                    // Restart the PTY in a background task (non-blocking)
-                    if let Err(e) = self.async_tx.send(AsyncRequest::RestartPty) {
-                        error!("Failed to send RestartPty request: {}", e);
-                        self.stop_loading();
-                        self.set_status_message(Some("Failed to restart session".to_string()));
-                    }
-
-                    // Result will be handled in poll_async_results
-                }
-            } else {
-                warn!("No active PTY process to interrupt");
-                self.set_status_message(Some("No running command to interrupt".to_string()));
-            }
-        } else {
-            warn!("Terminal not available for interrupt");
-            self.set_status_message(Some("Terminal not ready".to_string()));
+    pub(super) fn handle_interrupt_specific_command(&mut self, block_id: String) {
+        if self.pane.pending_block.as_deref() != Some(&block_id) {
+            return;
+        }
+        let Some(handle) = self
+            .pane
+            .terminal
+            .as_ref()
+            .and_then(|terminal| terminal.pty_handle())
+            .cloned()
+        else {
+            return;
+        };
+        if self.interrupt_pty(handle) {
+            self.pane.interrupted = true;
+            self.set_status_message(Some("Interrupting command…".to_string()));
         }
     }
 
-    /// Handle interruption of a specific command block (right-click kill)
-    pub(super) fn handle_interrupt_specific_command(&mut self, block_id: String) {
-        if let Some(terminal) = &mut self.terminal {
-            // Get the current PTY handle from the terminal
-            if let Some(pty_handle) = terminal.pty_handle() {
-                let handle_id = pty_handle.id.clone();
-
-                // Send interrupt signal to the PTY process (non-blocking)
-                info!("Sending interrupt signal for block {}", block_id);
-                if let Err(e) = self
-                    .async_tx
-                    .send(AsyncRequest::SendInterrupt(handle_id.clone()))
-                {
-                    error!("Failed to send interrupt request: {}", e);
-                    self.set_status_message(Some("Failed to interrupt command".to_string()));
-                } else {
-                    self.set_status_message(Some("Interrupting command...".to_string()));
-                }
-
-                // Mark the specific command block as cancelled
-                self.state_manager.update_command_block_status(
-                    &block_id,
-                    mosaicterm::models::ExecutionStatus::Cancelled,
-                );
-
-                // Clear the command time so new commands can be submitted
-                self.state_manager.set_last_command_time();
-
-                // Check if the command being killed is interactive
-                let command_history = self.state_manager.get_command_history();
-                let is_interactive = command_history
-                    .iter()
-                    .find(|block| block.id == block_id)
-                    .map(|block| self.is_interactive_command(&block.command))
-                    .unwrap_or(false);
-
-                // For interactive programs, restart the PTY session
-                if is_interactive {
-                    info!("Restarting PTY session after interactive program cancel");
-                    self.start_loading("Restarting shell session...");
-
-                    if let Err(e) = self.async_tx.send(AsyncRequest::RestartPty) {
-                        error!("Failed to send RestartPty request: {}", e);
-                        self.stop_loading();
-                        self.set_status_message(Some("Failed to restart session".to_string()));
-                    }
-                }
-            } else {
-                warn!("No active PTY process to interrupt");
-                self.set_status_message(Some("No running command to interrupt".to_string()));
-            }
-        } else {
-            warn!("Terminal not available for interrupt");
-            self.set_status_message(Some("Terminal not ready".to_string()));
-        }
+    pub(super) fn interrupt_pty(&self, handle: mosaicterm::pty::PtyHandle) -> bool {
+        let pane_id = self.pane_tree.active_id().to_string();
+        self.async_tx
+            .send(AsyncRequest::SendInterrupt { pane_id, handle })
+            .is_ok()
     }
 
     /// Handle screen clearing (Ctrl+L)
@@ -284,7 +192,7 @@ impl MosaicTermApp {
     /// Handle exit (Ctrl+D)
     pub(super) fn handle_exit(&mut self) {
         // Send EOF to shell (Ctrl+D)
-        if let Some(_terminal) = &mut self.terminal {
+        if let Some(_terminal) = &mut self.pane.terminal {
             std::mem::drop(_terminal.process_input("\x04")); // EOF character
         }
         info!("Exit requested (Ctrl+D)");
@@ -344,66 +252,59 @@ impl MosaicTermApp {
     }
 
     fn split_active_pane(&mut self, axis: super::pane_tree::SplitAxis) {
-        use super::pane_tree::{Pane, PaneTree};
-
-        if self.pane_tree.is_none() {
-            let initial_pane = Pane::new("pane-0".to_string(), self.terminal.take());
-            self.pane_tree = Some(PaneTree::new(initial_pane));
-        }
-
-        let msg = if let Some(tree) = &mut self.pane_tree {
-            let active_id = tree.active_id().to_string();
-            if let Some(new_id) = tree.split(&active_id, axis, None) {
-                info!(
-                    "Split pane: {} -> new pane {} (terminal will be initialized asynchronously)",
-                    active_id, new_id
-                );
-
-                // TODO(#split-pane-terminal): New pane needs its own Terminal + PTY.
-                // Currently the pane is created without a Terminal instance.
-                // A full fix requires async PTY initialization per pane.
-                // Request terminal init for the new pane.
-                if let Err(e) = self.async_tx.send(AsyncRequest::InitTerminal) {
-                    error!("Failed to request terminal for new pane: {}", e);
-                }
-
-                Some(format!("Split pane ({} panes)", tree.pane_count()))
-            } else {
-                None
-            }
+        let previous_id = self.pane_tree.active_id().to_string();
+        let config = &self.runtime_config.config().terminal;
+        let (_, shell_type) = config.shell();
+        let working_dir = self
+            .pane
+            .terminal
+            .as_ref()
+            .map(|terminal| terminal.get_working_directory())
+            .filter(|dir| dir.is_dir())
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| Self::initial_working_dir(config));
+        let session_id = self
+            .state_manager
+            .create_session(working_dir.clone(), shell_type);
+        if self
+            .pane_tree
+            .split(&previous_id, axis, session_id.clone())
+            .is_some()
+        {
+            self.switch_pane_session(&previous_id);
+            self.request_shell(working_dir);
         } else {
-            None
-        };
-        if let Some(msg) = msg {
-            self.set_status_message(Some(msg));
+            self.state_manager.remove_session(&session_id);
+            self.switch_pane_session(&previous_id);
         }
     }
 
     pub(super) fn handle_close_pane(&mut self) {
-        let msg = if let Some(tree) = &mut self.pane_tree {
-            if tree.pane_count() <= 1 {
-                Some("Cannot close last pane".to_string())
-            } else {
-                let active = tree.active_id().to_string();
-                if tree.close(&active) {
-                    info!("Closed pane: {}", active);
-                    Some(format!("Closed pane ({} remaining)", tree.pane_count()))
-                } else {
-                    None
-                }
+        let id = self.pane_tree.active_id().to_string();
+        if self.pane_tree.pane_count() <= 1 {
+            return;
+        }
+        let session_id = self
+            .pane_tree
+            .active_pane()
+            .expect("active pane")
+            .session_id
+            .clone();
+        if self.pane_tree.close(&id) {
+            if let Some(terminal) = self.pane.terminal.take() {
+                self.close_terminal(terminal);
             }
-        } else {
-            None
-        };
-        if let Some(msg) = msg {
-            self.set_status_message(Some(msg));
+            self.state_manager.remove_session(&session_id);
+            self.pane = super::PaneSession::default();
+            self.switch_pane_session(&id);
         }
     }
 
     pub(super) fn handle_navigate_pane(&mut self, direction: super::pane_tree::Direction) {
-        if let Some(tree) = &mut self.pane_tree {
-            tree.navigate(direction);
-            info!("Navigate to pane: {}", tree.active_id());
+        let previous = self.pane_tree.active_id().to_string();
+        self.pane_tree.navigate(direction);
+        if previous != self.pane_tree.active_id() {
+            self.switch_pane_session(&previous);
         }
     }
 }

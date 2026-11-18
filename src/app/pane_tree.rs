@@ -1,6 +1,5 @@
-use mosaicterm::models::command_block::CommandBlock;
-use mosaicterm::terminal::Terminal;
-use mosaicterm::ui::input::InputPrompt;
+use super::PaneSession;
+use eframe::egui;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SplitAxis {
@@ -18,20 +17,17 @@ pub enum Direction {
 
 pub struct Pane {
     pub id: String,
-    pub terminal: Option<Terminal>,
-    pub command_history: Vec<CommandBlock>,
-    pub input_state: InputPrompt,
-    pub scroll_offset: f32,
+    pub session_id: String,
+    // The selected pane's state is temporarily held by the app for input and rendering.
+    pub(super) session: PaneSession,
 }
 
 impl Pane {
-    pub fn new(id: String, terminal: Option<Terminal>) -> Self {
+    pub fn new(id: String, session_id: String) -> Self {
         Self {
             id,
-            terminal,
-            command_history: Vec::new(),
-            input_state: InputPrompt::new(),
-            scroll_offset: 0.0,
+            session_id,
+            session: PaneSession::default(),
         }
     }
 }
@@ -97,15 +93,10 @@ impl PaneTree {
         Self::find_in_node_mut(&mut self.root, id)
     }
 
-    pub fn split(
-        &mut self,
-        pane_id: &str,
-        axis: SplitAxis,
-        new_terminal: Option<Terminal>,
-    ) -> Option<String> {
+    pub fn split(&mut self, pane_id: &str, axis: SplitAxis, session_id: String) -> Option<String> {
         let new_id = format!("pane-{}", self.next_id);
         self.next_id += 1;
-        let new_pane = Pane::new(new_id.clone(), new_terminal);
+        let new_pane = Pane::new(new_id.clone(), session_id);
         let mut pane_slot = Some(new_pane);
 
         if Self::split_node(&mut self.root, pane_id, axis, &mut pane_slot) {
@@ -161,81 +152,39 @@ impl PaneTree {
         Self::visit_leaves_mut(&mut self.root, &mut f);
     }
 
-    /// Render the pane tree into the UI, calling `render_fn` for each pane leaf
-    pub fn render<F>(&self, ui: &mut eframe::egui::Ui, render_fn: &mut F)
-    where
-        F: FnMut(&mut eframe::egui::Ui, &Pane, bool),
-    {
-        let rect = ui.available_rect_before_wrap();
-        Self::render_node(ui, &self.root, rect, &self.active_id, render_fn);
+    /// Resolve each pane's rectangle using its parent split and share of the available space.
+    pub fn layout(&self, rect: egui::Rect) -> Vec<(String, egui::Rect)> {
+        let mut panes = Vec::new();
+        Self::layout_node(&self.root, rect, &mut panes);
+        panes
     }
 
-    fn render_node<F>(
-        ui: &mut eframe::egui::Ui,
-        node: &PaneNode,
-        rect: eframe::egui::Rect,
-        active_id: &str,
-        render_fn: &mut F,
-    ) where
-        F: FnMut(&mut eframe::egui::Ui, &Pane, bool),
-    {
+    fn layout_node(node: &PaneNode, rect: egui::Rect, panes: &mut Vec<(String, egui::Rect)>) {
         match node {
-            PaneNode::Leaf(pane) => {
-                let is_active = pane.id == active_id;
-                let mut child_ui = ui.new_child(
-                    eframe::egui::UiBuilder::new()
-                        .max_rect(rect)
-                        .layout(eframe::egui::Layout::top_down(eframe::egui::Align::LEFT)),
-                );
-                render_fn(&mut child_ui, pane, is_active);
-            }
+            PaneNode::Leaf(pane) => panes.push((pane.id.clone(), rect)),
             PaneNode::Branch { axis, children } => {
-                let total_flex: f32 = children.iter().map(|(f, _)| *f).sum();
-                if total_flex <= 0.0 {
-                    return;
-                }
-                let divider_width = 2.0;
-                let total_divider_space = divider_width * (children.len() as f32 - 1.0).max(0.0);
-
-                let available = match axis {
-                    SplitAxis::Horizontal => rect.width() - total_divider_space,
-                    SplitAxis::Vertical => rect.height() - total_divider_space,
+                let total_flex: f32 = children.iter().map(|(flex, _)| *flex).sum();
+                let length = match axis {
+                    SplitAxis::Horizontal => rect.width(),
+                    SplitAxis::Vertical => rect.height(),
                 };
-
+                let available = (length - 2.0 * children.len().saturating_sub(1) as f32).max(0.0);
                 let mut offset = 0.0;
-                for (i, (flex, child)) in children.iter().enumerate() {
-                    let size = available * (flex / total_flex);
-                    let child_rect = match axis {
-                        SplitAxis::Horizontal => eframe::egui::Rect::from_min_size(
-                            eframe::egui::pos2(rect.left() + offset, rect.top()),
-                            eframe::egui::vec2(size, rect.height()),
-                        ),
-                        SplitAxis::Vertical => eframe::egui::Rect::from_min_size(
-                            eframe::egui::pos2(rect.left(), rect.top() + offset),
-                            eframe::egui::vec2(rect.width(), size),
-                        ),
-                    };
-                    Self::render_node(ui, child, child_rect, active_id, render_fn);
-                    offset += size;
-
-                    if i < children.len() - 1 {
-                        let divider_rect = match axis {
-                            SplitAxis::Horizontal => eframe::egui::Rect::from_min_size(
-                                eframe::egui::pos2(rect.left() + offset, rect.top()),
-                                eframe::egui::vec2(divider_width, rect.height()),
-                            ),
-                            SplitAxis::Vertical => eframe::egui::Rect::from_min_size(
-                                eframe::egui::pos2(rect.left(), rect.top() + offset),
-                                eframe::egui::vec2(rect.width(), divider_width),
-                            ),
-                        };
-                        ui.painter().rect_filled(
-                            divider_rect,
-                            eframe::egui::CornerRadius::ZERO,
-                            eframe::egui::Color32::from_rgb(60, 60, 80),
-                        );
-                        offset += divider_width;
+                for (flex, child) in children {
+                    let size = available * flex / total_flex;
+                    let mut child_rect = rect;
+                    match axis {
+                        SplitAxis::Horizontal => {
+                            child_rect.min.x += offset;
+                            child_rect.max.x = child_rect.min.x + size;
+                        }
+                        SplitAxis::Vertical => {
+                            child_rect.min.y += offset;
+                            child_rect.max.y = child_rect.min.y + size;
+                        }
                     }
+                    Self::layout_node(child, child_rect, panes);
+                    offset += size + 2.0;
                 }
             }
         }
@@ -283,7 +232,7 @@ impl PaneTree {
                     if let Some(np) = new_pane.take() {
                         let old_node = std::mem::replace(
                             node,
-                            PaneNode::Leaf(Box::new(Pane::new("temp".to_string(), None))),
+                            PaneNode::Leaf(Box::new(Pane::new("temp".to_string(), String::new()))),
                         );
                         *node = PaneNode::Branch {
                             axis,
@@ -383,7 +332,7 @@ mod tests {
     use super::*;
 
     fn make_pane(id: &str) -> Pane {
-        Pane::new(id.to_string(), None)
+        Pane::new(id.to_string(), String::new())
     }
 
     #[test]
@@ -396,7 +345,7 @@ mod tests {
     #[test]
     fn test_split() {
         let mut tree = PaneTree::new(make_pane("root"));
-        let new_id = tree.split("root", SplitAxis::Horizontal, None);
+        let new_id = tree.split("root", SplitAxis::Horizontal, String::new());
         assert!(new_id.is_some());
         assert_eq!(tree.pane_count(), 2);
     }
@@ -404,7 +353,9 @@ mod tests {
     #[test]
     fn test_close() {
         let mut tree = PaneTree::new(make_pane("root"));
-        let new_id = tree.split("root", SplitAxis::Horizontal, None).unwrap();
+        let new_id = tree
+            .split("root", SplitAxis::Horizontal, String::new())
+            .unwrap();
         assert!(tree.close(&new_id));
         assert_eq!(tree.pane_count(), 1);
     }
@@ -418,7 +369,7 @@ mod tests {
     #[test]
     fn test_navigate() {
         let mut tree = PaneTree::new(make_pane("root"));
-        tree.split("root", SplitAxis::Horizontal, None);
+        tree.split("root", SplitAxis::Horizontal, String::new());
         let ids = tree.all_pane_ids();
         tree.set_active(&ids[0]);
         tree.navigate(Direction::Right);
