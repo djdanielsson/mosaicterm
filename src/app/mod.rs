@@ -3759,19 +3759,22 @@ mod tests {
         poll_until(app, |app| app.pane.pending_block.is_none());
     }
 
-    /// macOS bash announces that zsh is the default shell every time it starts.
+    /// Output lines the shell printed for `command`, ignoring the echoed command and the
+    /// "default interactive shell is now zsh" notice macOS bash prints on startup.
     #[cfg(unix)]
-    fn without_shell_banner(lines: &[mosaicterm::models::OutputLine]) -> Vec<String> {
-        const BANNER: [&str; 3] = [
+    fn command_output(lines: &[mosaicterm::models::OutputLine], command: &str) -> Vec<String> {
+        const BANNER: [&str; 2] = [
             "The default interactive shell is now zsh",
             "To update your account to use zsh",
-            "For more details, please see https",
         ];
         lines
             .iter()
             .map(|line| line.text.trim().to_string())
             .filter(|text| {
-                !text.is_empty() && !BANNER.iter().any(|banner| text.starts_with(banner))
+                !text.is_empty()
+                    && text != command
+                    && !text.contains("support.apple.com/kb/HT208050")
+                    && !BANNER.iter().any(|banner| text.starts_with(banner))
             })
             .collect()
     }
@@ -3798,7 +3801,7 @@ mod tests {
         run_command(&mut app, "echo 'a b' | wc -w");
         let block = app.state_manager.get_command_history().last().unwrap();
         assert_eq!(block.exit_code, Some(0));
-        assert_eq!(without_shell_banner(&block.output), ["2"]);
+        assert_eq!(command_output(&block.output, "echo 'a b' | wc -w"), ["2"]);
         run_command(&mut app, "cd 'name with space'");
         assert_eq!(
             app.pane
@@ -3875,12 +3878,13 @@ mod tests {
         );
         assert!(app.state_manager.get_command_history().is_empty());
         run_command(&mut app, "printf '%s' \"$LOCAL_VALUE\"");
-        let independent = without_shell_banner(
+        let independent = command_output(
             &app.state_manager
                 .get_command_history()
                 .last()
                 .unwrap()
                 .output,
+            "printf '%s' \"$LOCAL_VALUE\"",
         );
         assert!(independent.is_empty(), "unexpected output: {independent:?}");
         poll_until(&mut app, |app| {
