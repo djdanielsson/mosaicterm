@@ -3777,7 +3777,15 @@ mod tests {
         run_command(&mut app, "echo 'a b' | wc -w");
         let block = app.state_manager.get_command_history().last().unwrap();
         assert_eq!(block.exit_code, Some(0));
-        assert_eq!(block.output[0].text.trim(), "2");
+        // macOS bash prints a "default interactive shell is now zsh" banner on startup,
+        // so the command's own output is the last non-empty line rather than the first.
+        let last_output = block
+            .output
+            .iter()
+            .rev()
+            .map(|line| line.text.trim())
+            .find(|text| !text.is_empty());
+        assert_eq!(last_output, Some("2"));
         run_command(&mut app, "cd 'name with space'");
         assert_eq!(
             app.pane.terminal.as_ref().unwrap().get_working_directory(),

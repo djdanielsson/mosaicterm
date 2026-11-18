@@ -281,6 +281,12 @@ impl ShellIntegration {
         }
 
         let directory = tempfile::Builder::new().prefix("mosaicterm-").tempdir()?;
+        // Shell state carries exported environment, so keep the session directory private.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+        }
         let marker = format!("\x1b]777;{};", uuid::Uuid::new_v4());
         let integration = Self {
             directory,
