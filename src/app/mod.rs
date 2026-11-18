@@ -73,9 +73,13 @@ use mosaicterm::config::{prompt::PromptFormatter, RuntimeConfig, TerminalConfig}
 use mosaicterm::context::ContextDetector;
 use mosaicterm::error::Result;
 use mosaicterm::models::{CommandBlock, ExecutionStatus};
-use mosaicterm::pty::{shell_state::ShellEvent, PtyHandle, PtyManager};
+use mosaicterm::pty::{PtyHandle, PtyManager};
 use mosaicterm::state_manager::StateManager;
-use mosaicterm::terminal::{Terminal, TerminalFactory};
+use mosaicterm::terminal::{
+    osc::{ShellMark, ShellMarkKind, TerminalEvent, TerminalEventParser},
+    program_status::{ProgramEvent, ProgramStatuses, FEATURE_REPLY},
+    Terminal, TerminalFactory,
+};
 use mosaicterm::ui::{
     CommandBlocks, CompletionPopup, InputPrompt, MetricsPanel, ScrollableHistory,
 };
@@ -146,6 +150,11 @@ struct PaneSession {
     interrupted: bool,
     clear_pending_block: bool,
     shell_had_children: bool,
+    shell_markers_ready: bool,
+    reported_cwd: Option<PathBuf>,
+    terminal_events: TerminalEventParser,
+    program_statuses: ProgramStatuses,
+    pty_size: Option<(u16, u16)>,
     tui_overlay: mosaicterm::ui::TuiOverlay,
     ssh_prompt_overlay: mosaicterm::ui::SshPromptOverlay,
     ssh_prompt_buffer: String,
@@ -917,6 +926,24 @@ impl MosaicTermApp {
         self.pane.terminal.is_some() && !self.pane.initializing && self.pane.pending_block.is_none()
     }
 
+    async fn send_shell_line(&self, handle: &PtyHandle, input: &str) -> Result<()> {
+        let enter = if cfg!(windows) { "\r" } else { "\n" };
+        self.pty_manager
+            .send_input(handle, format!("{input}{enter}").as_bytes())
+            .await
+    }
+
+    /// Send an interactive response without adding it to command history.
+    async fn send_plain_input(&self, input: &str) -> Result<()> {
+        let handle = self
+            .pane
+            .terminal
+            .as_ref()
+            .and_then(|terminal| terminal.pty_handle())
+            .ok_or(mosaicterm::error::Error::NoPtyHandleAvailable)?;
+        self.send_shell_line(handle, input).await
+    }
+
     /// Submit the original command to the shell that owns this pane.
     pub async fn handle_command_input(&mut self, command: String) -> Result<()> {
         if command.trim().is_empty() || !self.can_submit_command() {
@@ -1032,9 +1059,11 @@ impl MosaicTermApp {
         let snapshot = terminal
             .shell_integration()
             .and_then(|integration| integration.read_state());
-        let cwd = snapshot
-            .as_ref()
-            .map(|(cwd, _)| cwd.clone())
+        let cwd = self
+            .pane
+            .reported_cwd
+            .take()
+            .or_else(|| snapshot.as_ref().map(|(cwd, _)| cwd.clone()))
             .or_else(|| pid.and_then(mosaicterm::pty::shell_state::read_cwd));
 
         if let Some(cwd) = cwd {
@@ -1905,18 +1934,8 @@ impl eframe::App for MosaicTermApp {
                 }
             }
 
-            // Apply pending PTY resize if the overlay detected a size change
-            if let Some((rows, cols)) = self.pane.tui_overlay.take_pending_resize() {
-                if let Some(terminal) = &self.pane.terminal {
-                    if let Some(pty_handle) = terminal.pty_handle() {
-                        let pty_manager = &*self.pty_manager;
-                        if let Err(e) = executor::block_on(async {
-                            pty_manager.resize_pty(pty_handle, rows, cols).await
-                        }) {
-                            warn!("Failed to resize PTY for TUI overlay: {}", e);
-                        }
-                    }
-                }
+            if let Some(size) = self.pane.tui_overlay.take_pending_resize() {
+                Self::resize_session(&self.pty_manager, &mut self.pane, size);
             }
 
             // Render overlay UI (takes the full root ui)
@@ -2287,6 +2306,7 @@ impl MosaicTermApp {
 
                         ui.add(
                             egui::TextEdit::singleline(&mut current_input)
+                                .return_key(None)
                                 .font(egui::FontId::monospace(font_size))
                                 .desired_width(f32::INFINITY)
                                 .frame(egui::Frame::NONE)
@@ -2450,10 +2470,20 @@ impl MosaicTermApp {
                         }
                     }
 
-                    // Handle Enter key to submit command
-                    if input_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        // Check if completion popup is visible
-                        if self.completion_popup.is_visible() {
+                    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let plain_input = ui.input(|i| i.modifiers.alt);
+                    if input_response.has_focus() && enter {
+                        if plain_input && self.pane.pending_block.is_some() {
+                            match executor::block_on(self.send_plain_input(&current_input)) {
+                                Ok(()) => {
+                                    self.pane.input_prompt.clear_input();
+                                    self.ghost_completion = None;
+                                }
+                                Err(error) => {
+                                    self.set_status_message(Some(self.user_friendly_error(&error)))
+                                }
+                            }
+                        } else if self.completion_popup.is_visible() {
                             // Select completion
                             let selected_text = self
                                 .completion_popup
@@ -2875,6 +2905,39 @@ impl MosaicTermApp {
             .context_menu_block = None;
     }
 
+    fn resize_session(pty_manager: &PtyManager, session: &mut PaneSession, size: (u16, u16)) {
+        if session.pty_size == Some(size) {
+            return;
+        }
+        let Some(terminal) = session.terminal.as_mut() else {
+            return;
+        };
+        let Some(handle) = terminal.pty_handle() else {
+            return;
+        };
+        let (rows, cols) = size;
+        match executor::block_on(pty_manager.resize_pty(handle, rows, cols)) {
+            Ok(()) => {
+                session.pty_size = Some(size);
+                terminal.resize(usize::from(rows), usize::from(cols));
+            }
+            Err(error) => warn!("Failed to resize PTY: {error}"),
+        }
+    }
+
+    fn resize_pane(&mut self, pane_id: &str, size: (u16, u16)) {
+        let session = if self.pane_tree.active_id() == pane_id {
+            &mut self.pane
+        } else if let Some(pane) = self.pane_tree.find_pane_mut(pane_id) {
+            &mut pane.session
+        } else {
+            return;
+        };
+        if !session.tui_overlay.is_active() {
+            Self::resize_session(&self.pty_manager, session, size);
+        }
+    }
+
     fn render_panes(&mut self, ui: &mut egui::Ui) {
         let panes = self.pane_tree.layout(ui.available_rect_before_wrap());
         if let Some(position) = ui.input(|i| {
@@ -2888,7 +2951,17 @@ impl MosaicTermApp {
             }
         }
 
+        const INPUT_HEIGHT: f32 = 60.0;
+        const STATUS_HEIGHT: f32 = 20.0;
+        let font = egui::FontId::monospace(self.runtime_config.config().ui.font_size as f32);
+        let (cell_width, cell_height) =
+            ui.fonts_mut(|fonts| (fonts.glyph_width(&font, 'M'), fonts.row_height(&font)));
         for (id, rect) in panes {
+            let rows = ((rect.height() - INPUT_HEIGHT - STATUS_HEIGHT) / cell_height)
+                .floor()
+                .max(1.0) as u16;
+            let cols = (rect.width() / cell_width).floor().max(1.0) as u16;
+            self.resize_pane(&id, (rows, cols));
             let active = id == self.pane_tree.active_id();
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
@@ -2910,9 +2983,8 @@ impl MosaicTermApp {
                     egui::StrokeKind::Inside,
                 );
             }
-            let input_height: f32 = 60.0;
             child.allocate_ui_with_layout(
-                egui::vec2(rect.width(), input_height.min(rect.height())),
+                egui::vec2(rect.width(), INPUT_HEIGHT.min(rect.height())),
                 egui::Layout::left_to_right(egui::Align::LEFT),
                 |ui| {
                     if active {
@@ -2927,7 +2999,7 @@ impl MosaicTermApp {
                 },
             );
             child.allocate_ui_with_layout(
-                egui::vec2(rect.width(), (rect.height() - input_height).max(0.0)),
+                egui::vec2(rect.width(), (rect.height() - INPUT_HEIGHT).max(0.0)),
                 egui::Layout::top_down(egui::Align::LEFT),
                 |ui| self.render_command_history_area(ui, &id, active),
             );
@@ -2964,11 +3036,27 @@ impl MosaicTermApp {
                         }
                         None => ("Ready", colors.status_bar.text),
                     };
-                    ui.label(
+                    let response = ui.label(
                         egui::RichText::new(status_text)
                             .font(egui::FontId::monospace(11.0))
                             .color(status_color),
                     );
+
+                    if status.pending_block.is_some() {
+                        response.on_hover_text("Alt+Enter sends input to the running program");
+                    }
+
+                    if let Some((label, message)) = status.program_statuses.display() {
+                        let response = ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(label).monospace().color(colors.accent),
+                            )
+                            .truncate(),
+                        );
+                        if let Some(message) = message {
+                            response.on_hover_text(message);
+                        }
+                    }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let history_len = command_history.len();
@@ -3247,6 +3335,11 @@ impl MosaicTermApp {
                                     terminal.pty_handle().map(|handle| handle.id.clone());
                             }
                             session.status_message = None;
+                            session.pty_size = None;
+                            session.shell_markers_ready = false;
+                            session.reported_cwd = None;
+                            session.terminal_events = TerminalEventParser::default();
+                            session.program_statuses.clear();
                             session.terminal.replace(terminal)
                         }
                         Err(error) => {
@@ -3337,6 +3430,7 @@ impl MosaicTermApp {
                     self.flush_pane_output();
                     self.finish_pending_block(exit_code, true);
                     self.end_ssh_session();
+                    self.pane.program_statuses.clear();
                     if self.pane.tui_overlay.is_active() {
                         self.pane.tui_overlay.mark_exited();
                     }
@@ -3374,22 +3468,91 @@ impl MosaicTermApp {
         self.check_command_timeout(&handle);
     }
 
-    fn integrated_shell_ready(&mut self) -> bool {
-        self.pane
+    fn integrated_shell_ready(&self) -> bool {
+        self.pane.shell_markers_ready
+    }
+
+    fn accepts_shell_mark(&self, mark: &ShellMark) -> bool {
+        match self
+            .pane
             .terminal
-            .as_mut()
+            .as_ref()
             .and_then(|terminal| terminal.shell_integration())
-            .is_some_and(|integration| integration.is_ready())
+        {
+            Some(integration) => mark.token.as_deref() == Some(integration.token()),
+            None => self.pane.ssh_session_command.is_none(),
+        }
     }
 
     fn process_pane_output(&mut self, data: Vec<u8>) {
-        let Some(terminal) = self.pane.terminal.as_mut() else {
+        let marks = self.pane.terminal_events.observe(&data);
+        if marks.is_empty() {
+            self.process_pane_output_chunk(data, false);
             return;
-        };
-        let event = terminal
-            .shell_integration()
-            .and_then(|integration| integration.observe_output(&data));
-        let completed = matches!(event, Some(ShellEvent::Completed(_)));
+        }
+
+        let mut start = 0;
+        for (end, event) in marks {
+            let completes_command = matches!(&event, TerminalEvent::Shell(mark)
+                if matches!(mark.kind, ShellMarkKind::Finished(_)) && self.accepts_shell_mark(mark));
+            self.process_pane_output_chunk(data[start..end].to_vec(), completes_command);
+            self.apply_terminal_event(event);
+            start = end;
+        }
+        if start < data.len() {
+            self.process_pane_output_chunk(data[start..].to_vec(), false);
+        }
+    }
+
+    fn apply_terminal_event(&mut self, event: TerminalEvent) {
+        match event {
+            TerminalEvent::Reset => self.pane.program_statuses.clear(),
+            TerminalEvent::Program(ProgramEvent::Query) => {
+                if let Some(handle) = self
+                    .pane
+                    .terminal
+                    .as_ref()
+                    .and_then(|terminal| terminal.pty_handle())
+                {
+                    let _ = executor::block_on(self.pty_manager.send_input(handle, FEATURE_REPLY));
+                }
+            }
+            TerminalEvent::Program(event) => self.pane.program_statuses.apply(event),
+            TerminalEvent::Directory(path) => {
+                if self.pane.ssh_session_command.is_none() {
+                    self.pane.reported_cwd = Some(path);
+                    if self.pane.pending_block.is_none() {
+                        self.sync_shell_state();
+                    }
+                }
+            }
+            TerminalEvent::Shell(mark) => {
+                if matches!(mark.kind, ShellMarkKind::Prompt) {
+                    self.pane.program_statuses.prompt_started();
+                }
+                if !self.accepts_shell_mark(&mark) {
+                    return;
+                }
+                let first_marker = !self.pane.shell_markers_ready;
+                self.pane.shell_markers_ready = true;
+                match mark.kind {
+                    ShellMarkKind::Finished(code) => {
+                        self.finish_pending_block(code, false);
+                        self.end_ssh_session();
+                        self.pane.ssh_session_command = None;
+                        self.sync_shell_state();
+                    }
+                    ShellMarkKind::Prompt if first_marker => self.sync_shell_state(),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn process_pane_output_chunk(&mut self, data: Vec<u8>, completed: bool) {
+        if self.pane.terminal.is_none() {
+            return;
+        }
 
         if self.pane.tui_overlay.is_active() {
             self.pane.tui_overlay.add_raw_output(&data);
@@ -3475,17 +3638,6 @@ impl MosaicTermApp {
                 self.finish_pending_block(exit_code, false);
                 self.sync_shell_state();
             }
-        }
-
-        match event {
-            Some(ShellEvent::Ready) => self.sync_shell_state(),
-            Some(ShellEvent::Completed(code)) => {
-                self.finish_pending_block(Some(code), false);
-                self.end_ssh_session();
-                self.pane.ssh_session_command = None;
-                self.sync_shell_state();
-            }
-            None => {}
         }
     }
 
@@ -3839,7 +3991,13 @@ mod tests {
             .unwrap()
             .id
             .clone();
-        executor::block_on(app.handle_command_input("sleep 0.15; printf original".into())).unwrap();
+        executor::block_on(app.handle_command_input(
+            "printf '\\033]7501;state=working:app=build\\a'; read -r reply; printf original".into(),
+        ))
+        .unwrap();
+        poll_until(&mut app, |app| {
+            app.pane.program_statuses.display().is_some()
+        });
         app.handle_split_right();
         poll_until(&mut app, |app| app.can_submit_command());
         assert_ne!(
@@ -3855,6 +4013,51 @@ mod tests {
             .unwrap()
             .output
             .is_empty());
+        let second_pane = app.pane_tree.active_id().to_owned();
+        app.resize_pane(&first_pane, (23, 68));
+        app.resize_pane(&second_pane, (37, 106));
+        run_command(&mut app, "stty size");
+        assert_eq!(
+            app.state_manager
+                .get_command_history()
+                .last()
+                .unwrap()
+                .output[0]
+                .text,
+            "37 106"
+        );
+
+        run_command(
+            &mut app,
+            "printf '\\033]133;D;77\\a\\033]7501;state=error:app=task\\a'; true",
+        );
+        assert_eq!(
+            app.state_manager
+                .get_command_history()
+                .last()
+                .unwrap()
+                .exit_code,
+            Some(0)
+        );
+        assert_eq!(
+            app.pane.program_statuses.display().unwrap().0,
+            "task · Failed"
+        );
+        assert_eq!(
+            app.pane_tree
+                .find_pane(&first_pane)
+                .unwrap()
+                .session
+                .program_statuses
+                .display()
+                .unwrap()
+                .0,
+            "build · Working"
+        );
+
+        app.activate_pane(&first_pane);
+        executor::block_on(app.send_plain_input("continue")).unwrap();
+        app.activate_pane(&second_pane);
         poll_until(&mut app, |app| {
             app.state_manager
                 .get_session(&first_session)
@@ -3872,12 +4075,30 @@ mod tests {
             .command_history
             .last()
             .unwrap();
-        assert_eq!(background.output[0].text, "original");
+        assert!(background.output.iter().any(|line| line.text == "original"));
+        assert!(app
+            .pane_tree
+            .find_pane(&first_pane)
+            .unwrap()
+            .session
+            .program_statuses
+            .display()
+            .is_none());
         app.handle_close_pane();
         assert_eq!(app.pane_tree.active_id(), first_pane);
         assert_eq!(
             app.pane.terminal.as_ref().unwrap().pty_handle().unwrap().id,
             first_handle
+        );
+        run_command(&mut app, "stty size");
+        assert_eq!(
+            app.state_manager
+                .get_command_history()
+                .last()
+                .unwrap()
+                .output[0]
+                .text,
+            "23 68"
         );
         poll_until(&mut app, |app| {
             executor::block_on(app.pty_manager.active_count()) == 1
