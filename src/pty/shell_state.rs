@@ -271,6 +271,7 @@ impl ShellIntegration {
             _ => return Ok(None),
         }
 
+        // Shell state carries exported environment, so keep the session directory private.
         let mut directory = tempfile::Builder::new();
         directory.prefix("mosaicterm-");
         #[cfg(unix)]
