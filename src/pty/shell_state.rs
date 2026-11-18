@@ -535,7 +535,9 @@ mod tests {
             .expect("shell integration marker")
         }
 
-        let cwd = user_config.path().to_path_buf();
+        // A runner's temporary directory can be a symlink to the shell's reported path.
+        let cwd = user_config.path().canonicalize().unwrap();
+        let subdir = subdir.canonicalize().unwrap();
         let token = Some(integration.token().to_owned());
         for (command, expected) in [
             (
