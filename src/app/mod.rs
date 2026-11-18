@@ -175,6 +175,7 @@ struct PaneSession {
     clear_pending_block: bool,
     shell_had_children: bool,
     shell_markers_ready: bool,
+    shell_startup_deadline: Option<std::time::Instant>,
     reported_cwd: Option<PathBuf>,
     terminal_events: TerminalEventParser,
     program_statuses: ProgramStatuses,
@@ -185,6 +186,13 @@ struct PaneSession {
     ssh_session_active: bool,
     ssh_session_command: Option<String>,
     ssh_remote_prompt: Option<String>,
+}
+
+impl PaneSession {
+    fn awaiting_shell_prompt(&self) -> bool {
+        self.shell_startup_deadline
+            .is_some_and(|deadline| std::time::Instant::now() < deadline)
+    }
 }
 
 /// Main MosaicTerm application
@@ -941,7 +949,10 @@ impl MosaicTermApp {
     }
 
     fn can_submit_command(&self) -> bool {
-        self.pane.terminal.is_some() && !self.pane.initializing && self.pane.pending_block.is_none()
+        self.pane.terminal.is_some()
+            && !self.pane.initializing
+            && !self.pane.awaiting_shell_prompt()
+            && self.pane.pending_block.is_none()
     }
 
     async fn send_shell_line(&self, handle: &PtyHandle, input: &str) -> Result<()> {
@@ -3004,7 +3015,9 @@ impl MosaicTermApp {
                 ui.horizontal(|ui| {
                     let (status_text, status_color) = match status.status_message.as_deref() {
                         Some(msg) => (msg, colors.status_bar.ssh_indicator),
-                        None if status.initializing => ("Starting shell…", colors.status_bar.text),
+                        None if status.initializing || status.awaiting_shell_prompt() => {
+                            ("Starting shell…", colors.status_bar.text)
+                        }
                         None if status.terminal.is_none() => {
                             ("Shell closed", colors.status_bar.text)
                         }
@@ -3317,6 +3330,12 @@ impl MosaicTermApp {
                             session.status_message = None;
                             session.pty_size = None;
                             session.shell_markers_ready = false;
+                            // Wait for the first real prompt before recording command output.
+                            // A shell that bypasses its startup hook can still use prompt detection.
+                            session.shell_startup_deadline =
+                                terminal.shell_integration().map(|_| {
+                                    std::time::Instant::now() + std::time::Duration::from_secs(5)
+                                });
                             session.reported_cwd = None;
                             session.terminal_events = TerminalEventParser::default();
                             session.program_statuses.clear();
@@ -3530,6 +3549,7 @@ impl MosaicTermApp {
                 }
                 let first_marker = !self.pane.shell_markers_ready;
                 self.pane.shell_markers_ready = true;
+                self.pane.shell_startup_deadline = None;
                 match mark.kind {
                     ShellMarkKind::Finished(code) => {
                         self.finish_pending_block(code, false);
@@ -3930,7 +3950,24 @@ mod tests {
         config.shell_path = PathBuf::from("bash");
         config.shell_args = vec!["--noprofile".into(), "--noediting".into()];
         app.request_shell(dir.path().to_path_buf());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.pane.terminal.is_none() {
+            app.poll_async_results();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{:?}",
+                app.pane.status_message
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        app.process_pane_output(b"startup output ending with a prompt-like $ ".to_vec());
+        assert!(
+            !app.can_submit_command(),
+            "the shell has not sent its first prompt marker"
+        );
         poll_until(&mut app, |app| app.can_submit_command());
+        assert!(app.pane.shell_markers_ready);
 
         run_command(&mut app, "echo 'a b' | wc -w");
         let block = app.state_manager.get_command_history().last().unwrap();

@@ -271,7 +271,14 @@ impl ShellIntegration {
             _ => return Ok(None),
         }
 
-        let directory = tempfile::Builder::new().prefix("mosaicterm-").tempdir()?;
+        let mut directory = tempfile::Builder::new();
+        directory.prefix("mosaicterm-");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            directory.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        let directory = directory.tempdir()?;
         let integration = Self {
             directory,
             token: uuid::Uuid::new_v4().to_string(),
@@ -469,10 +476,9 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                directory.metadata().unwrap().permissions().mode() & 0o077,
-                0
-            );
+            for path in [&directory, second.directory.path()] {
+                assert_eq!(path.metadata().unwrap().permissions().mode() & 0o077, 0);
+            }
         }
         drop(first);
         assert!(!directory.exists());
