@@ -3803,16 +3803,8 @@ mod tests {
         assert_eq!(block.exit_code, Some(0));
         assert_eq!(command_output(&block.output, "echo 'a b' | wc -w"), ["2"]);
         run_command(&mut app, "cd 'name with space'");
-        assert_eq!(
-            app.pane
-                .terminal
-                .as_ref()
-                .unwrap()
-                .get_working_directory()
-                .canonicalize()
-                .unwrap(),
-            subdir.canonicalize().unwrap()
-        );
+        let cwd = app.pane.terminal.as_ref().unwrap().get_working_directory();
+        assert_eq!(cwd.canonicalize().unwrap(), subdir.canonicalize().unwrap());
         run_command(&mut app, "false");
         assert_eq!(
             app.state_manager
@@ -3878,15 +3870,13 @@ mod tests {
         );
         assert!(app.state_manager.get_command_history().is_empty());
         run_command(&mut app, "printf '%s' \"$LOCAL_VALUE\"");
-        let independent = command_output(
-            &app.state_manager
-                .get_command_history()
-                .last()
-                .unwrap()
-                .output,
-            "printf '%s' \"$LOCAL_VALUE\"",
-        );
-        assert!(independent.is_empty(), "unexpected output: {independent:?}");
+        let output = &app
+            .state_manager
+            .get_command_history()
+            .last()
+            .unwrap()
+            .output;
+        assert!(command_output(output, "printf '%s' \"$LOCAL_VALUE\"").is_empty());
         poll_until(&mut app, |app| {
             app.state_manager
                 .get_session(&first_session)
