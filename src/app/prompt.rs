@@ -3,11 +3,74 @@
 //! Handles the construction and updating of the terminal prompt display,
 //! including environment contexts, git information, and SSH session state.
 
+use eframe::egui;
 use mosaicterm::config::prompt::{EnvPromptContext, PromptFormatter, PromptSegment};
 use mosaicterm::models::config::PromptStyle;
 use mosaicterm::state_manager::StateManager;
 use mosaicterm::terminal::Terminal;
+use mosaicterm::ui::UiColors;
 use tracing::debug;
+
+/// Leave room for command entry even when the prompt contains a long path.
+pub(super) fn render_bounded_prompt(
+    ui: &mut egui::Ui,
+    segments: &[PromptSegment],
+    fallback: &str,
+    font_size: f32,
+    colors: &UiColors,
+) {
+    let font = egui::FontId::monospace(font_size);
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = ui.available_width() * 0.55;
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+
+    if segments.is_empty() {
+        job.append(
+            fallback,
+            0.0,
+            egui::TextFormat::simple(font.clone(), colors.foreground),
+        );
+    }
+
+    for (index, segment) in segments.iter().enumerate() {
+        let mut text = egui::RichText::new(&segment.text)
+            .font(font.clone())
+            .color(segment.fg);
+        if segment.bold {
+            text = text.strong();
+        }
+        if let Some(background) = segment.bg {
+            text = text.background_color(background);
+        }
+        text.append_to(
+            &mut job,
+            ui.style(),
+            egui::FontSelection::Default,
+            egui::Align::Center,
+        );
+
+        if let (Some(background), Some(separator)) = (segment.bg, segment.separator) {
+            let next_background = segments
+                .get(index + 1)
+                .and_then(|segment| segment.bg)
+                .unwrap_or(colors.background);
+            job.append(
+                &separator.to_string(),
+                0.0,
+                egui::TextFormat {
+                    font_id: font.clone(),
+                    color: background,
+                    background: next_background,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    ui.add(egui::Label::new(galley).selectable(false));
+}
 
 /// Build the rendered prompt as styled segments.
 /// Falls back to a single-segment string for Classic/Minimal styles.
@@ -19,8 +82,6 @@ pub fn build_prompt_segments(
     ssh_remote_prompt: Option<&str>,
     ssh_session_command: Option<&str>,
 ) -> Vec<PromptSegment> {
-    use eframe::egui;
-
     if ssh_session_active {
         if let Some(remote_prompt) = ssh_remote_prompt {
             debug!("Using remote SSH prompt: '{}'", remote_prompt);

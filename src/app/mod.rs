@@ -66,7 +66,6 @@ mod persistent;
 mod prompt;
 mod ssh;
 
-use arboard::Clipboard;
 use eframe::egui;
 use futures::executor;
 use mosaicterm::completion::CompletionProvider;
@@ -82,9 +81,7 @@ use mosaicterm::terminal::{
     program_status::{ProgramEvent, ProgramStatuses, FEATURE_REPLY},
     Terminal, TerminalFactory,
 };
-use mosaicterm::ui::{
-    CommandBlocks, CompletionPopup, InputPrompt, MetricsPanel, ScrollableHistory,
-};
+use mosaicterm::ui::{CompletionPopup, InputPrompt, MetricsPanel, ScrollableHistory};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -195,6 +192,22 @@ impl PaneSession {
     }
 }
 
+struct BlockMenu {
+    block_id: String,
+    position: egui::Pos2,
+    layer: egui::LayerId,
+    selected_output: Option<String>,
+}
+
+enum BlockAction {
+    CopySelection,
+    CopyCommand,
+    CopyOutput,
+    CopyBoth,
+    Rerun,
+    Interrupt,
+}
+
 /// Main MosaicTerm application
 pub struct MosaicTermApp {
     /// Centralized state manager - single source of truth
@@ -205,7 +218,7 @@ pub struct MosaicTermApp {
     /// PTY manager for process management (with per-terminal locking)
     pty_manager: Arc<PtyManager>,
     /// UI components
-    command_blocks: CommandBlocks,
+    block_menu: Option<BlockMenu>,
     scrollable_history: ScrollableHistory,
     completion_popup: CompletionPopup,
     metrics_panel: MetricsPanel,
@@ -712,7 +725,6 @@ impl MosaicTermApp {
         let terminal_factory = TerminalFactory::new(pty_manager.clone());
 
         // Create UI components
-        let command_blocks = CommandBlocks::new();
         let scrollable_history = ScrollableHistory::new();
         let completion_popup = CompletionPopup::new();
         let metrics_panel = MetricsPanel::new();
@@ -780,9 +792,7 @@ impl MosaicTermApp {
             .await;
         });
 
-        // Initialize StateManager and add demo commands directly
-        let mut state_manager = StateManager::new();
-        Self::add_demo_commands(&mut state_manager);
+        let state_manager = StateManager::new();
         let session_id = state_manager
             .active_session()
             .expect("default session")
@@ -822,7 +832,7 @@ impl MosaicTermApp {
             pane_tree,
             pane_focus_requested: true,
             pty_manager,
-            command_blocks,
+            block_menu: None,
             scrollable_history,
             completion_popup,
             metrics_panel,
@@ -862,40 +872,6 @@ impl MosaicTermApp {
         app.ui_colors = mosaicterm::ui::UiColors::from_theme(&runtime_config.config().ui.theme);
         app.runtime_config = runtime_config;
         app
-    }
-
-    /// Add demo commands to state manager for initial UI display
-    fn add_demo_commands(state_manager: &mut StateManager) {
-        let demo_commands = vec![
-            ("pwd", "Current working directory"),
-            ("ls -la", "List all files with details"),
-            ("echo 'Hello from MosaicTerm!'", "Print a greeting message"),
-        ];
-
-        let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
-
-        for (cmd, _description) in demo_commands {
-            let mut block =
-                mosaicterm::models::CommandBlock::new(cmd.to_string(), working_dir.clone());
-
-            // Simulate some output for demo
-            if cmd == "pwd" {
-                block.add_output_line(mosaicterm::models::OutputLine::new(
-                    working_dir.to_string_lossy(),
-                ));
-                block.mark_completed(std::time::Duration::from_millis(50));
-            } else if cmd == "echo 'Hello from MosaicTerm!'" {
-                block.add_output_line(mosaicterm::models::OutputLine::new(
-                    "Hello from MosaicTerm!",
-                ));
-                block.mark_completed(std::time::Duration::from_millis(25));
-            } else {
-                block.mark_running();
-            }
-
-            // Add directly to state manager (single source of truth)
-            state_manager.add_command_block(block);
-        }
     }
 
     fn initial_working_dir(config: &TerminalConfig) -> PathBuf {
@@ -1556,125 +1532,110 @@ impl MosaicTermApp {
         self.show_dev_panel = open;
     }
 
-    /// Render context menu for command blocks
     fn render_context_menu(&mut self, ctx: &egui::Context) {
-        // Check if we have an active context menu
-        if let Some(block_id) = &self
-            .command_blocks
-            .interaction_state()
-            .context_menu_block
-            .clone()
-        {
-            if let Some(menu_pos) = self.command_blocks.interaction_state().context_menu_pos {
-                // Find the command block and extract all data before borrowing self mutably
-                let block_data = {
-                    let command_history = self.state_manager.get_command_history();
-                    command_history
-                        .iter()
-                        .find(|b| &b.id == block_id)
-                        .map(|block| {
-                            (
-                                block.command.clone(),
-                                block.status,
-                                block
-                                    .output
-                                    .iter()
-                                    .map(|line| line.text.clone())
-                                    .collect::<Vec<_>>(),
-                            )
-                        })
-                };
-                if let Some((command, status, output_lines)) = block_data {
-                    // Create context menu
-                    let mut menu_open = true;
-                    egui::Window::new("Context Menu")
-                        .fixed_pos(menu_pos)
-                        .resizable(false)
-                        .collapsible(false)
-                        .title_bar(false)
-                        .show(ctx, |ui| {
-                            ui.set_min_width(150.0);
+        let Some(menu) = self.block_menu.take() else {
+            return;
+        };
+        let Some(block) = self
+            .state_manager
+            .get_command_history()
+            .iter()
+            .find(|block| block.id == menu.block_id)
+        else {
+            return;
+        };
 
-                            if ui
-                                .add_enabled(
-                                    self.can_submit_command(),
-                                    egui::Button::new("🔄 Rerun Command"),
-                                )
-                                .clicked()
-                            {
-                                match executor::block_on(self.handle_command_input(command.clone()))
-                                {
-                                    Ok(()) => {
-                                        self.pane.input_prompt.add_to_history(command.clone())
-                                    }
-                                    Err(error) => self.set_status_message(Some(error.to_string())),
-                                }
-                                menu_open = false;
-                            }
+        let has_output = !block.output.is_empty();
+        let is_running = self.pane.pending_block.as_ref() == Some(&block.id);
+        let mut open = true;
+        let reopened = ctx.input(|input| {
+            input.pointer.secondary_clicked() && input.pointer.interact_pos() == Some(menu.position)
+        });
+        let close_behavior = if reopened {
+            egui::PopupCloseBehavior::IgnoreClicks
+        } else {
+            egui::PopupCloseBehavior::CloseOnClickOutside
+        };
+        let action = egui::Popup::new(
+            egui::Id::unique(("command-block-menu", &block.id)),
+            ctx.clone(),
+            menu.position,
+            menu.layer,
+        )
+        .kind(egui::PopupKind::Menu)
+        .open_bool(&mut open)
+        .close_behavior(close_behavior)
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .style(|style: &mut egui::Style| {
+            egui::menu::menu_style(style);
+            style.spacing.button_padding = egui::vec2(8.0, 4.0);
+        })
+        .width(190.0)
+        .show(|ui| {
+            ui.set_min_width(190.0);
+            if menu.selected_output.is_some() && ui.button("Copy selection").clicked() {
+                return Some(BlockAction::CopySelection);
+            }
+            if ui.button("Copy command").clicked() {
+                return Some(BlockAction::CopyCommand);
+            }
+            if ui
+                .add_enabled(has_output, egui::Button::new("Copy output"))
+                .clicked()
+            {
+                return Some(BlockAction::CopyOutput);
+            }
+            if ui
+                .add_enabled(has_output, egui::Button::new("Copy command and output"))
+                .clicked()
+            {
+                return Some(BlockAction::CopyBoth);
+            }
+            ui.separator();
+            if ui
+                .add_enabled(self.can_submit_command(), egui::Button::new("Run again"))
+                .clicked()
+            {
+                return Some(BlockAction::Rerun);
+            }
+            if is_running && ui.button("Interrupt command").clicked() {
+                return Some(BlockAction::Interrupt);
+            }
+            None
+        })
+        .and_then(|response| response.inner);
 
-                            // Kill running command (only if still running)
-                            if status == ExecutionStatus::Running
-                                && ui.button("❌ Kill Command").clicked()
-                            {
-                                self.handle_interrupt_specific_command(block_id.clone());
-                                menu_open = false;
-                            }
-
-                            ui.separator();
-
-                            // Copy command
-                            if ui.button("📋 Copy Command").clicked() {
-                                if let Ok(mut clipboard) = Clipboard::new() {
-                                    let _ = clipboard.set_text(&command);
-                                }
-                                menu_open = false;
-                            }
-
-                            // Copy output
-                            if ui.button("📄 Copy Output").clicked() {
-                                let output_text = output_lines.join("\n");
-                                if let Ok(mut clipboard) = Clipboard::new() {
-                                    let _ = clipboard.set_text(&output_text);
-                                }
-                                menu_open = false;
-                            }
-
-                            // Copy both
-                            if ui.button("📋📄 Copy Both").clicked() {
-                                let output_text = output_lines.join("\n");
-                                let both_text = format!("{}\n{}", command, output_text);
-                                if let Ok(mut clipboard) = Clipboard::new() {
-                                    let _ = clipboard.set_text(&both_text);
-                                }
-                                menu_open = false;
-                            }
-                        });
-
-                    // Close menu if clicked outside or if an action was taken
-                    if !menu_open {
-                        self.command_blocks
-                            .interaction_state_mut()
-                            .context_menu_block = None;
-                        self.command_blocks.interaction_state_mut().context_menu_pos = None;
-                    }
-
-                    // Close menu on any click outside
-                    if ctx.input(|i| i.pointer.any_click()) {
-                        if let Some(mouse_pos) = ctx.input(|i| i.pointer.hover_pos()) {
-                            // Use a generous rect that covers the menu including padding/shadow.
-                            // The menu has 5-6 buttons with separators; 220x250 is a safe upper bound.
-                            let menu_rect =
-                                egui::Rect::from_min_size(menu_pos, egui::vec2(220.0, 250.0));
-                            if !menu_rect.contains(mouse_pos) {
-                                self.command_blocks
-                                    .interaction_state_mut()
-                                    .context_menu_block = None;
-                                self.command_blocks.interaction_state_mut().context_menu_pos = None;
-                            }
-                        }
-                    }
+        match action {
+            Some(BlockAction::CopySelection) => {
+                if let Some(selection) = menu.selected_output {
+                    ctx.copy_text(selection);
                 }
             }
+            Some(BlockAction::CopyCommand) => ctx.copy_text(block.command.clone()),
+            Some(action @ (BlockAction::CopyOutput | BlockAction::CopyBoth)) => {
+                let output = block
+                    .output
+                    .iter()
+                    .map(|line| line.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let text = if matches!(action, BlockAction::CopyBoth) {
+                    format!("{}\n{output}", block.command)
+                } else {
+                    output
+                };
+                ctx.copy_text(text);
+            }
+            Some(BlockAction::Rerun) => {
+                let command = block.command.clone();
+                match executor::block_on(self.handle_command_input(command.clone())) {
+                    Ok(()) => self.pane.input_prompt.add_to_history(command),
+                    Err(error) => self.set_status_message(Some(self.user_friendly_error(&error))),
+                }
+            }
+            Some(BlockAction::Interrupt) => self.handle_interrupt_specific_command(menu.block_id),
+            None if open => self.block_menu = Some(menu),
+            None => {}
         }
     }
 }
@@ -2219,45 +2180,15 @@ impl MosaicTermApp {
 
         let frame_response = input_frame.show(ui, |ui| {
             ui.horizontal(|ui| {
-                // Render prompt segments with Powerline arrow separators
-                ui.spacing_mut().item_spacing.x = 0.0;
-                let font_size = self.runtime_config.config().ui.font_size as f32;
-                let segments = self.pane.prompt_segments.clone();
-                let bg_color = self.ui_colors.background;
-                for (i, seg) in segments.iter().enumerate() {
-                    if let Some(seg_bg) = seg.bg {
-                        let mut text = egui::RichText::new(&seg.text)
-                            .font(egui::FontId::monospace(font_size))
-                            .color(seg.fg)
-                            .background_color(seg_bg);
-                        if seg.bold {
-                            text = text.strong();
-                        }
-                        ui.label(text);
-
-                        // Draw Powerline arrow separator between segments
-                        if let Some(sep) = seg.separator {
-                            let next_bg =
-                                segments.get(i + 1).and_then(|s| s.bg).unwrap_or(bg_color);
-                            let sep_text = egui::RichText::new(sep.to_string())
-                                .font(egui::FontId::monospace(font_size))
-                                .color(seg_bg)
-                                .background_color(next_bg);
-                            ui.label(sep_text);
-                        }
-                    } else {
-                        // Non-background segment: paint text directly via painter
-                        // to guarantee color isn't overridden by widget styling.
-                        let font = egui::FontId::monospace(font_size);
-                        let galley =
-                            ui.painter()
-                                .layout_no_wrap(seg.text.clone(), font.clone(), seg.fg);
-                        let (rect, _response) =
-                            ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-                        ui.painter().galley(rect.min, galley, egui::Color32::WHITE);
-                    }
-                }
                 ui.spacing_mut().item_spacing.x = 4.0;
+                let font_size = self.runtime_config.config().ui.font_size as f32;
+                prompt::render_bounded_prompt(
+                    ui,
+                    &self.pane.prompt_segments,
+                    self.pane.input_prompt.prompt_text(),
+                    font_size,
+                    &self.ui_colors,
+                );
 
                 let old_input = self.pane.input_prompt.current_input().to_string();
                 let mut current_input = old_input.clone();
@@ -2311,7 +2242,7 @@ impl MosaicTermApp {
                             input_rect.left() + 2.0 + input_text_width,
                             input_rect.top() + 3.0,
                         );
-                        ui.painter().text(
+                        ui.painter().with_clip_rect(input_rect).text(
                             ghost_pos,
                             egui::Align2::LEFT_TOP,
                             ghost_suffix,
@@ -2888,9 +2819,7 @@ impl MosaicTermApp {
         self.ghost_completion = None;
         self.completion_popup.hide();
         self.history_search_active = false;
-        self.command_blocks
-            .interaction_state_mut()
-            .context_menu_block = None;
+        self.block_menu = None;
     }
 
     fn resize_session(pty_manager: &PtyManager, session: &mut PaneSession, size: (u16, u16)) {
@@ -2928,13 +2857,11 @@ impl MosaicTermApp {
 
     fn render_panes(&mut self, ui: &mut egui::Ui) {
         let panes = self.pane_tree.layout(ui.available_rect_before_wrap());
-        if let Some(position) = ui.input(|i| {
-            i.pointer
-                .any_pressed()
-                .then(|| i.pointer.interact_pos())
-                .flatten()
-        }) {
-            if let Some((id, _)) = panes.iter().find(|(_, rect)| rect.contains(position)) {
+        if ui.input(|i| i.pointer.any_pressed()) {
+            if let Some((id, _)) = panes
+                .iter()
+                .find(|(_, rect)| ui.rect_contains_pointer(*rect))
+            {
                 self.activate_pane(id);
             }
         }
@@ -2978,10 +2905,17 @@ impl MosaicTermApp {
                     if active {
                         self.render_fixed_input_area(ui);
                     } else if let Some(pane) = self.pane_tree.find_pane(&id) {
-                        ui.label(pane.session.input_prompt.prompt_text());
+                        let font_size = self.runtime_config.config().ui.font_size as f32;
+                        prompt::render_bounded_prompt(
+                            ui,
+                            &pane.session.prompt_segments,
+                            pane.session.input_prompt.prompt_text(),
+                            font_size,
+                            &self.ui_colors,
+                        );
                         let draft = pane.session.input_prompt.current_input();
                         if !draft.is_empty() {
-                            ui.label(draft);
+                            ui.add(egui::Label::new(draft).truncate());
                         }
                     }
                 },
@@ -3072,18 +3006,13 @@ impl MosaicTermApp {
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         // Commands appear in execution order: oldest at top, newest at bottom
-                        for (i, block) in command_history.iter().enumerate() {
-                            if let Some((block_id, pos)) =
-                                Self::render_single_command_block_static(ui, block, i, &colors)
+                        for block in command_history {
+                            if let Some(menu) =
+                                Self::render_single_command_block_static(ui, block, &colors)
                             {
-                                if !active {
-                                    continue;
+                                if active {
+                                    self.block_menu = Some(menu);
                                 }
-                                self.command_blocks
-                                    .interaction_state_mut()
-                                    .context_menu_block = Some(block_id);
-                                self.command_blocks.interaction_state_mut().context_menu_pos =
-                                    Some(pos);
                             }
                         }
 
@@ -3128,9 +3057,16 @@ impl MosaicTermApp {
     fn render_single_command_block_static(
         ui: &mut egui::Ui,
         block: &CommandBlock,
-        _index: usize,
         colors: &mosaicterm::ui::UiColors,
-    ) -> Option<(String, egui::Pos2)> {
+    ) -> Option<BlockMenu> {
+        let right_click = ui.input(|input| {
+            input
+                .pointer
+                .button_pressed(egui::PointerButton::Secondary)
+                .then(|| input.pointer.interact_pos())
+                .flatten()
+        });
+        let mut selected_output = None;
         let accent_color = match block.status {
             ExecutionStatus::Running => colors.blocks.status_running,
             ExecutionStatus::Failed => colors.blocks.status_failed,
@@ -3170,39 +3106,49 @@ impl MosaicTermApp {
 
         let frame_response = block_frame.show(ui, |ui| {
             ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(&block.command)
-                            .font(egui::FontId::monospace(12.5))
-                            .color(colors.blocks.command_text)
-                            .strong(),
-                    );
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let header_size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+                ui.allocate_ui_with_layout(
+                    header_size,
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
                         ui.label(
                             egui::RichText::new(block.timestamp.format("%H:%M:%S").to_string())
                                 .font(egui::FontId::monospace(10.0))
                                 .color(colors.blocks.timestamp),
                         );
 
-                        let (status_text, status_color) = match block.status {
-                            ExecutionStatus::Running => ("running", colors.blocks.status_running),
-                            ExecutionStatus::Completed => ("ok", colors.blocks.status_completed),
-                            ExecutionStatus::Failed => ("fail", colors.blocks.status_failed),
-                            ExecutionStatus::Cancelled => {
-                                ("cancel", colors.blocks.status_cancelled)
-                            }
-                            ExecutionStatus::Pending => ("...", colors.blocks.status_pending),
-                            ExecutionStatus::TuiMode => ("tui", colors.blocks.status_tui),
+                        let status_text = match block.status {
+                            ExecutionStatus::Running => "running",
+                            ExecutionStatus::Completed => "ok",
+                            ExecutionStatus::Failed => "fail",
+                            ExecutionStatus::Cancelled => "cancel",
+                            ExecutionStatus::Pending => "...",
+                            ExecutionStatus::TuiMode => "tui",
                         };
-
+                        let status_color = if block.status == ExecutionStatus::Pending {
+                            colors.blocks.status_pending
+                        } else {
+                            accent_color
+                        };
                         ui.label(
                             egui::RichText::new(status_text)
                                 .font(egui::FontId::monospace(10.0))
                                 .color(status_color),
                         );
-                    });
-                });
+
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&block.command)
+                                        .font(egui::FontId::monospace(12.5))
+                                        .color(colors.blocks.command_text)
+                                        .strong(),
+                                )
+                                .truncate(),
+                            );
+                        });
+                    },
+                );
 
                 if !block.output.is_empty() {
                     ui.add_space(3.0);
@@ -3223,14 +3169,23 @@ impl MosaicTermApp {
                             ui.fonts_mut(|f| f.layout_job(j))
                         };
                     let mut text_ref: &str = &plain_text;
-                    ui.add(
-                        egui::TextEdit::multiline(&mut text_ref)
-                            .id_source(format!("output_{}", block.id))
-                            .font(mono_font)
-                            .desired_width(f32::INFINITY)
-                            .frame(egui::Frame::NONE)
-                            .layouter(&mut layouter),
-                    );
+                    let output_id = ui.make_persistent_id(("output", &block.id));
+                    // The secondary press can move focus and clear the TextEdit selection.
+                    let previous_selection = right_click
+                        .and_then(|_| egui::TextEdit::load_state(ui.ctx(), output_id))
+                        .and_then(|state| state.cursor.char_range());
+                    let output = egui::TextEdit::multiline(&mut text_ref)
+                        .id(output_id)
+                        .font(mono_font)
+                        .desired_width(f32::INFINITY)
+                        .frame(egui::Frame::NONE)
+                        .layouter(&mut layouter)
+                        .show(ui);
+                    if right_click.is_some_and(|pos| output.response.interact_rect.contains(pos)) {
+                        selected_output = previous_selection
+                            .filter(|range| !range.is_empty())
+                            .map(|range| range.slice_str(&plain_text).to_owned());
+                    }
                 }
             });
         });
@@ -3277,14 +3232,15 @@ impl MosaicTermApp {
             );
         }
 
-        // Check if mouse is over this block and right-click was pressed
-        if frame_response.response.hovered() && ui.input(|i| i.pointer.secondary_clicked()) {
-            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-                return Some((block.id.clone(), pos));
-            }
-        }
-
-        None
+        // Check the frame's visible bounds so text widgets cannot mask the click.
+        right_click
+            .filter(|_| ui.rect_contains_pointer(frame_response.response.rect))
+            .map(|position| BlockMenu {
+                block_id: block.id.clone(),
+                position,
+                layer: ui.layer_id(),
+                selected_output,
+            })
     }
 
     fn close_terminal(&self, terminal: Box<Terminal>) {
@@ -3880,6 +3836,7 @@ mod tests {
         let app = MosaicTermApp::new();
         assert!(app.pane.terminal.is_none()); // Terminal starts as None
         assert!(!app.state_manager.is_terminal_ready());
+        assert!(app.state_manager.get_command_history().is_empty());
     }
 
     #[test]

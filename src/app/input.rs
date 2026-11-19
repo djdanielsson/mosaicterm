@@ -37,17 +37,8 @@ impl MosaicTermApp {
         ctx: &egui::Context,
         _frame: &mut eframe::Frame,
     ) {
-        // Ctrl+C works ALWAYS, even when input is focused - kills running command
-        if ctx.input(|i| i.key_pressed(egui::Key::C) && i.modifiers.ctrl && !i.modifiers.shift) {
-            let has_running_command = self.pane.pending_block.is_some();
-
-            if has_running_command {
-                // Ctrl+C to interrupt current command
-                self.handle_interrupt_command();
-                // Consume the event so it doesn't get processed elsewhere
-                ctx.input_mut(|i| i.events.clear());
-            }
-            // If no running command, let the input field handle it normally
+        if self.pane.pending_block.is_some() && ctx.input_mut(consume_interrupt) {
+            self.handle_interrupt_command();
         }
 
         // Ctrl+L works ALWAYS, even when input is focused - clears screen
@@ -333,4 +324,36 @@ impl MosaicTermApp {
             self.switch_pane_session(&previous);
         }
     }
+}
+
+fn consume_interrupt(input: &mut egui::InputState) -> bool {
+    let ctrl_only = |modifiers: &egui::Modifiers| {
+        modifiers.ctrl && !modifiers.shift && !modifiers.alt && !modifiers.mac_cmd
+    };
+
+    // On Linux, egui-winit translates Ctrl+C into Copy and emits only the key release.
+    // The release also identifies the chord if the modifier was released in this frame.
+    let copy_is_interrupt = cfg!(target_os = "linux")
+        && (ctrl_only(&input.modifiers)
+            || input.events.iter().any(|event| {
+                matches!(event, egui::Event::Key {
+                    key: egui::Key::C, pressed: false, modifiers, ..
+                } if ctrl_only(modifiers))
+            }));
+    let mut interrupted = false;
+    input.events.retain(|event| {
+        let is_interrupt = match event {
+            egui::Event::Copy => copy_is_interrupt,
+            egui::Event::Key {
+                key: egui::Key::C,
+                pressed: true,
+                modifiers,
+                ..
+            } => ctrl_only(modifiers),
+            _ => false,
+        };
+        interrupted |= is_interrupt;
+        !is_interrupt
+    });
+    interrupted
 }
