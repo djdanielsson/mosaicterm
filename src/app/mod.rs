@@ -3873,9 +3873,9 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn poll_until(app: &mut MosaicTermApp, done: impl Fn(&MosaicTermApp) -> bool) {
+    fn poll_until(app: &mut MosaicTermApp, mut done: impl FnMut(&mut MosaicTermApp) -> bool) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !done(app) {
+        while !done(&mut *app) {
             app.poll_async_results();
             app.poll_panes();
             assert!(
@@ -3892,6 +3892,26 @@ mod tests {
         assert!(app.can_submit_command());
         executor::block_on(app.handle_command_input(command.to_string())).unwrap();
         poll_until(app, |app| app.pane.pending_block.is_none());
+    }
+
+    /// Output lines the shell printed for `command`, ignoring the echoed command and the
+    /// "default interactive shell is now zsh" notice macOS bash prints on startup.
+    #[cfg(unix)]
+    fn command_output(lines: &[mosaicterm::models::OutputLine], command: &str) -> Vec<String> {
+        const BANNER: [&str; 2] = [
+            "The default interactive shell is now zsh",
+            "To update your account to use zsh",
+        ];
+        lines
+            .iter()
+            .map(|line| line.text.trim().to_string())
+            .filter(|text| {
+                !text.is_empty()
+                    && text != command
+                    && !text.contains("support.apple.com/kb/HT208050")
+                    && !BANNER.iter().any(|banner| text.starts_with(banner))
+            })
+            .collect()
     }
 
     #[cfg(unix)]
@@ -3929,26 +3949,10 @@ mod tests {
         run_command(&mut app, "echo 'a b' | wc -w");
         let block = app.state_manager.get_command_history().last().unwrap();
         assert_eq!(block.exit_code, Some(0));
-        // macOS bash prints a "default interactive shell is now zsh" banner on startup,
-        // so the command's own output is the last non-empty line rather than the first.
-        let last_output = block
-            .output
-            .iter()
-            .rev()
-            .map(|line| line.text.trim())
-            .find(|text| !text.is_empty());
-        assert_eq!(last_output, Some("2"));
+        assert_eq!(command_output(&block.output, "echo 'a b' | wc -w"), ["2"]);
         run_command(&mut app, "cd 'name with space'");
-        assert_eq!(
-            app.pane
-                .terminal
-                .as_ref()
-                .unwrap()
-                .get_working_directory()
-                .canonicalize()
-                .unwrap(),
-            subdir.canonicalize().unwrap()
-        );
+        let cwd = app.pane.terminal.as_ref().unwrap().get_working_directory();
+        assert_eq!(cwd.canonicalize().unwrap(), subdir.canonicalize().unwrap());
         run_command(&mut app, "false");
         assert_eq!(
             app.state_manager
@@ -4020,13 +4024,13 @@ mod tests {
         );
         assert!(app.state_manager.get_command_history().is_empty());
         run_command(&mut app, "printf '%s' \"$LOCAL_VALUE\"");
-        assert!(app
+        let output = &app
             .state_manager
             .get_command_history()
             .last()
             .unwrap()
-            .output
-            .is_empty());
+            .output;
+        assert!(command_output(output, "printf '%s' \"$LOCAL_VALUE\"").is_empty());
         let second_pane = app.pane_tree.active_id().to_owned();
         app.resize_pane(&first_pane, (23, 68));
         app.resize_pane(&second_pane, (37, 106));
