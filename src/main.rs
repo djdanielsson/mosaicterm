@@ -397,6 +397,12 @@ const EMBEDDED_ICON_PNG: &[u8] = include_bytes!("../icon.png");
 /// Load the embedded icon.png, falling back to a generated procedural icon.
 fn load_or_create_window_icon() -> eframe::egui::IconData {
     if let Ok(img) = image::load_from_memory(EMBEDDED_ICON_PNG) {
+        // X11 sends the RGBA icon in a single request. Keep it below the request limit.
+        let img = if cfg!(target_os = "linux") && (img.width() > 128 || img.height() > 128) {
+            img.resize(128, 128, image::imageops::FilterType::Triangle)
+        } else {
+            img
+        };
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();
         info!("Loaded embedded window icon ({}x{})", width, height);

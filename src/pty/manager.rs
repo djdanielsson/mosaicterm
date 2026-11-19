@@ -81,7 +81,7 @@ struct PtyEntry {
     process: PtyProcess,
     streams: PtyStreams,
     /// Wrapped in Mutex because MasterPty is Send but not Sync
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    master: Option<Mutex<Box<dyn MasterPty + Send>>>,
 }
 
 /// Main PTY manager with per-terminal locks for better concurrency
@@ -151,7 +151,7 @@ impl PtyManager {
         let entry = Arc::new(RwLock::new(PtyEntry {
             process,
             streams,
-            master: Mutex::new(master),
+            master: Some(Mutex::new(master)),
         }));
 
         // Store in the global map
@@ -168,12 +168,42 @@ impl PtyManager {
         Ok(handle)
     }
 
+    /// Attach a disposable client to an existing tmux shell.
+    pub async fn attach_persistent(
+        &self,
+        session: crate::session::persistent::PersistentSession,
+        restore_output: bool,
+    ) -> Result<(PtyHandle, crate::session::persistent::SessionSnapshot)> {
+        let attachment = tokio::task::spawn_blocking(move || session.attach(restore_output))
+            .await
+            .map_err(std::io::Error::other)??;
+        let handle = PtyHandle::new();
+        let entry = PtyEntry {
+            process: PtyProcess::with_working_directory(
+                "tmux".into(),
+                Vec::new(),
+                attachment.snapshot.cwd.clone(),
+            ),
+            streams: attachment.streams,
+            master: None,
+        };
+        self.terminals
+            .write()
+            .await
+            .insert(handle.id.clone(), Arc::new(RwLock::new(entry)));
+        self.publish_event(PtyEvent::Created {
+            handle_id: handle.id.clone(),
+            pid: None,
+        });
+        Ok((handle, attachment.snapshot))
+    }
+
     /// Check if a PTY process is still alive
     pub async fn is_alive(&self, handle: &PtyHandle) -> bool {
         let terminals = self.terminals.read().await;
         if let Some(entry_lock) = terminals.get(&handle.id) {
             let entry = entry_lock.read().await;
-            entry.process.is_running() && !entry.streams.output_closed()
+            (entry.master.is_none() || entry.process.is_running()) && !entry.streams.output_closed()
         } else {
             false
         }
@@ -211,7 +241,8 @@ impl PtyManager {
                     .clone()
                     .unwrap_or_else(|| std::path::PathBuf::from(".")),
                 start_time: entry.process.start_time.unwrap_or_else(Utc::now),
-                is_alive: entry.process.is_running() && !entry.streams.output_closed(),
+                is_alive: (entry.master.is_none() || entry.process.is_running())
+                    && !entry.streams.output_closed(),
             })
         } else {
             Err(Error::PtyHandleNotFound {
@@ -239,7 +270,10 @@ impl PtyManager {
         let terminals = self.terminals.read().await;
         if let Some(entry_lock) = terminals.get(&handle.id) {
             let entry = entry_lock.read().await;
-            let master = entry.master.lock().map_err(|e| Error::PtyCreationFailed {
+            let Some(master) = &entry.master else {
+                return entry.streams.resize_control(rows, cols);
+            };
+            let master = master.lock().map_err(|e| Error::PtyCreationFailed {
                 command: "resize".to_string(),
                 reason: format!("mutex poisoned: {}", e),
             })?;

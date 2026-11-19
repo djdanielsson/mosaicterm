@@ -5,7 +5,9 @@
 
 pub mod ansi_parser;
 pub mod input;
+pub mod osc;
 pub mod output;
+pub mod program_status;
 pub mod prompt;
 pub mod state;
 
@@ -207,8 +209,8 @@ impl Terminal {
     }
 
     /// Read or observe shell integration state for this terminal.
-    pub fn shell_integration(&mut self) -> Option<&mut ShellIntegration> {
-        self.shell_integration.as_mut()
+    pub fn shell_integration(&self) -> Option<&ShellIntegration> {
+        self.shell_integration.as_ref()
     }
 
     /// Close the PTY and release its startup and state files.

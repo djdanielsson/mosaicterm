@@ -593,6 +593,8 @@ impl Default for PromptConfig {
 pub struct SessionConfig {
     pub persistence: bool,
     pub auto_restore: bool,
+    /// Optional OpenSSH configuration alias for persistent remote sessions.
+    pub ssh_host: Option<String>,
 }
 
 /// Key bindings configuration

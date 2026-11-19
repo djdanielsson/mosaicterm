@@ -179,8 +179,11 @@ max_history = 100
 # Enable tmux-backed session persistence (requires tmux installed)
 persistence = false
 
-# Automatically restore previous session on startup
+# Automatically restore the previous split layout on startup
 auto_restore = false
+
+# Optional SSH destination or OpenSSH configuration alias for persistent shells
+# ssh_host = "build-host"
 
 # ─── Key Bindings ────────────────────────────────────────────
 

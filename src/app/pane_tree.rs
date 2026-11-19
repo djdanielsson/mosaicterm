@@ -1,7 +1,12 @@
 use super::PaneSession;
 use eframe::egui;
+use mosaicterm::models::ShellType;
+use mosaicterm::session::persistent::PersistentSession;
+use mosaicterm::state_manager::StateManager;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum SplitAxis {
     Horizontal,
     Vertical,
@@ -46,6 +51,128 @@ pub struct PaneTree {
     next_id: u32,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub(super) struct SavedLayout {
+    root: SavedPane,
+    selected: Option<PersistentSession>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+enum SavedPane {
+    Leaf(Option<PersistentSession>),
+    Split(SplitAxis, Vec<(f32, SavedPane)>),
+}
+
+impl SavedLayout {
+    pub(super) fn forget(&mut self, ended: &PersistentSession) -> bool {
+        fn forget_node(node: &mut SavedPane, ended: &PersistentSession) -> bool {
+            match node {
+                SavedPane::Leaf(session) => {
+                    if session.as_ref() == Some(ended) {
+                        *session = None;
+                    }
+                    session.is_some()
+                }
+                SavedPane::Split(_, children) => {
+                    let mut any = false;
+                    for (_, child) in children {
+                        any |= forget_node(child, ended);
+                    }
+                    any
+                }
+            }
+        }
+
+        if self.selected.as_ref() == Some(ended) {
+            self.selected = None;
+        }
+        forget_node(&mut self.root, ended)
+    }
+
+    pub(super) fn restore(
+        &self,
+        states: &mut StateManager,
+        cwd: &Path,
+        shell: ShellType,
+    ) -> Option<PaneTree> {
+        fn validate(node: &SavedPane, count: &mut usize) -> bool {
+            match node {
+                SavedPane::Leaf(_) => {
+                    *count += 1;
+                    *count <= 64
+                }
+                SavedPane::Split(_, children) => {
+                    (2..=64).contains(&children.len())
+                        && children.iter().all(|(flex, child)| {
+                            *flex > 0.0 && flex.is_finite() && validate(child, count)
+                        })
+                }
+            }
+        }
+
+        fn restore_node(
+            node: &SavedPane,
+            states: &mut StateManager,
+            cwd: &Path,
+            shell: ShellType,
+            next_id: &mut u32,
+            selected: Option<&PersistentSession>,
+            active: &mut String,
+        ) -> PaneNode {
+            match node {
+                SavedPane::Leaf(saved) => {
+                    let id = format!("pane-{}", *next_id);
+                    *next_id += 1;
+                    if saved
+                        .as_ref()
+                        .is_some_and(|session| Some(session) == selected)
+                    {
+                        *active = id.clone();
+                    }
+                    let mut pane = Pane::new(id, states.create_session(cwd.to_path_buf(), shell));
+                    pane.session.persistent = saved.clone();
+                    PaneNode::Leaf(Box::new(pane))
+                }
+                SavedPane::Split(axis, children) => PaneNode::Branch {
+                    axis: *axis,
+                    children: children
+                        .iter()
+                        .map(|(flex, child)| {
+                            (
+                                *flex,
+                                restore_node(child, states, cwd, shell, next_id, selected, active),
+                            )
+                        })
+                        .collect(),
+                },
+            }
+        }
+
+        if !validate(&self.root, &mut 0) {
+            return None;
+        }
+        for id in states.session_ids() {
+            states.remove_session(&id);
+        }
+        let mut active = "pane-0".into();
+        let mut next_id = 0;
+        let root = restore_node(
+            &self.root,
+            states,
+            cwd,
+            shell,
+            &mut next_id,
+            self.selected.as_ref(),
+            &mut active,
+        );
+        Some(PaneTree {
+            root,
+            active_id: active,
+            next_id,
+        })
+    }
+}
+
 impl PaneTree {
     pub fn new(initial_pane: Pane) -> Self {
         let id = initial_pane.id.clone();
@@ -54,6 +181,40 @@ impl PaneTree {
             active_id: id,
             next_id: 1,
         }
+    }
+
+    pub(super) fn saved_layout(&self, selected: Option<&PersistentSession>) -> Option<SavedLayout> {
+        fn save(
+            node: &PaneNode,
+            active_id: &str,
+            selected: Option<&PersistentSession>,
+            any: &mut bool,
+        ) -> SavedPane {
+            match node {
+                PaneNode::Leaf(pane) => {
+                    let session = if pane.id == active_id {
+                        selected
+                    } else {
+                        pane.session.persistent.as_ref()
+                    };
+                    *any |= session.is_some();
+                    SavedPane::Leaf(session.cloned())
+                }
+                PaneNode::Branch { axis, children } => SavedPane::Split(
+                    *axis,
+                    children
+                        .iter()
+                        .map(|(flex, child)| (*flex, save(child, active_id, selected, any)))
+                        .collect(),
+                ),
+            }
+        }
+        let mut any = false;
+        let root = save(&self.root, &self.active_id, selected, &mut any);
+        any.then(|| SavedLayout {
+            root,
+            selected: selected.cloned(),
+        })
     }
 
     pub fn active_id(&self) -> &str {

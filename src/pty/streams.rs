@@ -8,12 +8,22 @@ use portable_pty::Child;
 use std::sync::mpsc::Sender as StdSender;
 use tokio::sync::mpsc::Receiver;
 
+pub(crate) enum ControlWrite {
+    Input(Vec<u8>),
+    Resize { rows: u16, cols: u16 },
+}
+
+enum Input {
+    Native(StdSender<Vec<u8>>),
+    Control(StdSender<ControlWrite>),
+}
+
 /// PTY I/O streams wrapper
 pub struct PtyStreams {
     /// Receiver for output bytes from the PTY (stdout/stderr)
     output_rx: Receiver<Vec<u8>>,
     /// Sender for input bytes to the PTY (stdin)
-    input_tx: StdSender<Vec<u8>>,
+    input: Input,
     child: Option<Box<dyn Child + Send + Sync>>,
 }
 
@@ -22,12 +32,32 @@ impl PtyStreams {
     pub fn from_channels(output_rx: Receiver<Vec<u8>>, input_tx: StdSender<Vec<u8>>) -> Self {
         Self {
             output_rx,
-            input_tx,
+            input: Input::Native(input_tx),
             child: None,
         }
     }
 
-    pub(super) fn attach_child(&mut self, child: Box<dyn Child + Send + Sync>) {
+    pub(crate) fn from_control_channels(
+        output_rx: Receiver<Vec<u8>>,
+        input: StdSender<ControlWrite>,
+    ) -> Self {
+        Self {
+            output_rx,
+            input: Input::Control(input),
+            child: None,
+        }
+    }
+
+    pub(super) fn resize_control(&self, rows: u16, cols: u16) -> Result<()> {
+        let Input::Control(sender) = &self.input else {
+            return Err(Error::InvalidPtyHandle);
+        };
+        sender
+            .send(ControlWrite::Resize { rows, cols })
+            .map_err(|_| Error::PtyStreamDisconnected)
+    }
+
+    pub(crate) fn attach_child(&mut self, child: Box<dyn Child + Send + Sync>) {
         self.child = Some(child);
     }
 
@@ -46,12 +76,18 @@ impl PtyStreams {
 
     /// Write data to the PTY stdin
     pub async fn write(&mut self, data: &[u8]) -> Result<()> {
-        self.input_tx
-            .send(data.to_vec())
-            .map_err(|e| Error::PtyInputSendFailed {
-                reason: e.to_string(),
-            })?;
-        Ok(())
+        match &self.input {
+            Input::Native(sender) => {
+                sender
+                    .send(data.to_vec())
+                    .map_err(|error| Error::PtyInputSendFailed {
+                        reason: error.to_string(),
+                    })
+            }
+            Input::Control(sender) => sender
+                .send(ControlWrite::Input(data.to_vec()))
+                .map_err(|_| Error::PtyStreamDisconnected),
+        }
     }
 
     /// Read available data from PTY stdout/stderr.

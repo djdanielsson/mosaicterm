@@ -240,19 +240,10 @@ const ENV_VARS: &[&str] = &[
     "TF_WORKSPACE",
 ];
 
-/// A prompt boundary emitted by this session's shell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShellEvent {
-    Ready,
-    Completed(i32),
-}
-
-/// Owns shell integration files and recognizes this session's PTY markers.
+/// Owns shell startup files and identifies this session's OSC 133 hooks.
 pub struct ShellIntegration {
     directory: tempfile::TempDir,
-    marker: String,
-    marker_tail: Vec<u8>,
-    ready: bool,
+    token: String,
 }
 
 impl ShellIntegration {
@@ -280,19 +271,18 @@ impl ShellIntegration {
             _ => return Ok(None),
         }
 
-        let directory = tempfile::Builder::new().prefix("mosaicterm-").tempdir()?;
         // Shell state carries exported environment, so keep the session directory private.
+        let mut directory = tempfile::Builder::new();
+        directory.prefix("mosaicterm-");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+            directory.permissions(std::fs::Permissions::from_mode(0o700));
         }
-        let marker = format!("\x1b]777;{};", uuid::Uuid::new_v4());
+        let directory = directory.tempdir()?;
         let integration = Self {
             directory,
-            marker,
-            marker_tail: Vec::new(),
-            ready: false,
+            token: uuid::Uuid::new_v4().to_string(),
         };
         let directory = integration.directory.path();
         let hook = integration.hook(shell);
@@ -356,18 +346,63 @@ fi
             .iter()
             .map(|var| format!(" \"{var}=${{{var}-}}\""))
             .collect::<String>();
-        let marker = self
-            .marker
-            .strip_prefix('\x1b')
-            .expect("OSC marker starts with ESC");
-        let return_status = if shell == crate::models::ShellType::Bash {
-            "$__ec"
-        } else {
-            // Zsh skips subsequent precmd hooks when a hook returns nonzero.
-            "0"
-        };
-        format!(
-            r#"
+        let snapshot =
+            format!(r#"builtin printf '%s\0' "$PWD"{state_fields} 2>/dev/null > {state_path}"#);
+        shell_hook(shell, &self.token, &snapshot)
+    }
+
+    /// Token carried by OSC 133 records emitted by this session's own hooks.
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+
+    /// Read the latest directory and environment snapshot.
+    pub fn read_state(&self) -> Option<(PathBuf, String)> {
+        let data = std::fs::read(self.directory.path().join("state")).ok()?;
+        let data = String::from_utf8_lossy(&data);
+        let mut fields = data.split_terminator('\0');
+        Some((
+            PathBuf::from(fields.next()?),
+            fields.collect::<Vec<_>>().join("\n"),
+        ))
+    }
+}
+
+/// Bash startup for a shell that outlives the GUI and can resume through tmux.
+pub fn persistent_bash_rc(token: &str) -> String {
+    let hook = shell_hook(
+        crate::models::ShellType::Bash,
+        token,
+        r#"
+  if [[ -n "${TMUX_PANE-}" ]]; then
+    command tmux set-option -pq -t "$TMUX_PANE" @mosaicterm_exit "$__ec" \; set-option -pq -t "$TMUX_PANE" @mosaicterm_idle 1
+  fi"#,
+    );
+    format!(
+        r#"
+[[ -n "$MOSAICTERM_BOOTSTRAP" ]] && command rm -f -- "$MOSAICTERM_BOOTSTRAP"
+unset MOSAICTERM_BOOTSTRAP
+[[ -f /etc/bash.bashrc ]] && source /etc/bash.bashrc
+[[ -f "$HOME/.bashrc" ]] && source "$HOME/.bashrc"
+{hook}
+if (( BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 1) )); then
+  PROMPT_COMMAND=(__mosaicterm_precmd "${{PROMPT_COMMAND[@]}}")
+else
+  PROMPT_COMMAND="__mosaicterm_precmd${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}"
+fi
+"#
+    )
+}
+
+fn shell_hook(shell: crate::models::ShellType, token: &str, snapshot: &str) -> String {
+    let return_status = if shell == crate::models::ShellType::Bash {
+        "$__ec"
+    } else {
+        // Zsh skips subsequent precmd hooks when a hook returns nonzero.
+        "0"
+    };
+    format!(
+        r#"
 # Provide directory jumping without overriding commands from the user's startup files.
 if command -v zoxide >/dev/null 2>&1; then
   __mosaicterm_zoxide_jump() {{
@@ -386,73 +421,35 @@ if command -v zoxide >/dev/null 2>&1; then
   fi
 fi
 
+__mosaicterm_cwd() {{
+  local LC_ALL=C __path="$PWD" __encoded='' __char __hex __i
+  for ((__i=0; __i<${{#__path}}; __i++)); do
+    __char=${{__path:__i:1}}
+    case "$__char" in
+      [a-zA-Z0-9._~/-]) __encoded="$__encoded$__char" ;;
+      *)
+        builtin printf -v __hex '%%%02X' "'$__char"
+        __encoded="$__encoded$__hex"
+        ;;
+    esac
+  done
+  builtin printf '\033]7;file://%s\033\\' "$__encoded"
+}}
+
 __mosaicterm_precmd() {{
-  local __ec=$? __event
-  if [[ -z "${{__mosaicterm_ready-}}" ]]; then
-    __mosaicterm_ready=1
-    __event=ready
-  else
-    __event=$__ec
-  fi
+  local __ec=$?
   PS1='' PS2='' PS3='' PS4=''
-  builtin printf '%s\0' "$PWD"{state_fields} 2>/dev/null > {state_path}
-  builtin printf '\033{marker}%s\007' "$__event"
+  {snapshot}
+  __mosaicterm_cwd
+  if [[ -n "${{__mosaicterm_ready-}}" ]]; then
+    builtin printf '\033]133;D;%s;mosaicterm={token}\033\\' "$__ec"
+  fi
+  __mosaicterm_ready=1
+  builtin printf '\033]133;A;mosaicterm={token}\033\\'
   return {return_status}
 }}
 "#
-        )
-    }
-
-    /// True once the shell has advertised working integration.
-    pub fn is_ready(&self) -> bool {
-        self.ready
-    }
-
-    /// Read the latest directory and environment snapshot.
-    pub fn read_state(&self) -> Option<(PathBuf, String)> {
-        let data = std::fs::read(self.directory.path().join("state")).ok()?;
-        let data = String::from_utf8_lossy(&data);
-        let mut fields = data.split_terminator('\0');
-        Some((
-            PathBuf::from(fields.next()?),
-            fields.collect::<Vec<_>>().join("\n"),
-        ))
-    }
-
-    /// Look for completion markers even when a PTY read splits the sequence.
-    pub fn observe_output(&mut self, data: &[u8]) -> Option<ShellEvent> {
-        let mut bytes = std::mem::take(&mut self.marker_tail);
-        bytes.extend_from_slice(data);
-        let prefix = self.marker.as_bytes();
-        let mut event = None;
-        let mut remaining = bytes.as_slice();
-        while let Some(start) = remaining.windows(prefix.len()).position(|w| w == prefix) {
-            let value = &remaining[start + prefix.len()..];
-            if let Some(end) = value.iter().position(|&byte| byte == b'\x07') {
-                if let Ok(value) = std::str::from_utf8(&value[..end]) {
-                    if value == "ready" {
-                        self.ready = true;
-                        event = Some(ShellEvent::Ready);
-                    } else if let Ok(code) = value.parse::<i32>() {
-                        event = Some(ShellEvent::Completed(code));
-                    }
-                }
-                remaining = &remaining[start + prefix.len() + end + 1..];
-            } else if value.len() <= 5 {
-                self.marker_tail.extend_from_slice(&remaining[start..]);
-                return event;
-            } else {
-                remaining = value;
-            }
-        }
-        let suffix_len = (1..prefix.len().min(remaining.len() + 1))
-            .rev()
-            .find(|&size| remaining.ends_with(&prefix[..size]))
-            .unwrap_or(0);
-        self.marker_tail
-            .extend_from_slice(&remaining[remaining.len() - suffix_len..]);
-        event
-    }
+    )
 }
 
 fn shell_quote(value: &str) -> String {
@@ -480,36 +477,15 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                directory.metadata().unwrap().permissions().mode() & 0o077,
-                0
-            );
+            for path in [&directory, second.directory.path()] {
+                assert_eq!(path.metadata().unwrap().permissions().mode() & 0o077, 0);
+            }
         }
         drop(first);
         assert!(!directory.exists());
         assert!(second.directory.path().is_dir());
     }
 
-    #[test]
-    fn completion_marker_can_span_pty_reads() {
-        let mut integration =
-            ShellIntegration::install(ShellType::Bash, &mut vec![], &mut HashMap::new())
-                .unwrap()
-                .unwrap();
-        let ready = format!("{}ready\x07", integration.marker);
-        assert_eq!(
-            integration.observe_output(ready.as_bytes()),
-            Some(ShellEvent::Ready)
-        );
-        let completion = format!("output{}42\x07", integration.marker);
-        let split_at = completion.len() - 2;
-        let (first, second) = completion.as_bytes().split_at(split_at);
-        assert_eq!(integration.observe_output(first), None);
-        assert_eq!(
-            integration.observe_output(second),
-            Some(ShellEvent::Completed(42))
-        );
-    }
     #[cfg(unix)]
     #[tokio::test]
     async fn zsh_reports_status_with_an_existing_precmd_hook() {
@@ -520,53 +496,96 @@ mod tests {
         }
         let user_config = tempfile::tempdir().unwrap();
         std::fs::write(user_config.path().join(".zshrc"), "precmd() { true; }\n").unwrap();
+        let subdir = user_config.path().join("with #; ☃");
+        std::fs::create_dir(&subdir).unwrap();
         let mut environment = HashMap::from([(
             "ZDOTDIR".to_string(),
             user_config.path().to_string_lossy().into_owned(),
         )]);
         let mut args = vec!["+Z".to_string(), "--login".to_string()];
-        let mut integration =
-            ShellIntegration::install(ShellType::Zsh, &mut args, &mut environment)
-                .unwrap()
-                .unwrap();
+        let integration = ShellIntegration::install(ShellType::Zsh, &mut args, &mut environment)
+            .unwrap()
+            .unwrap();
         let manager = PtyManager::new();
         let handle = manager
             .create_pty("zsh", &args, &environment, Some(user_config.path()))
             .await
             .unwrap();
 
+        use crate::terminal::osc::{ShellMarkKind, TerminalEvent, TerminalEventParser};
+        let mut parser = TerminalEventParser::default();
+        let mut events = std::collections::VecDeque::new();
+
         async fn next_event(
             manager: &PtyManager,
             handle: &crate::pty::PtyHandle,
-            integration: &mut ShellIntegration,
-        ) -> ShellEvent {
+            parser: &mut TerminalEventParser,
+            events: &mut std::collections::VecDeque<TerminalEvent>,
+        ) -> TerminalEvent {
             tokio::time::timeout(std::time::Duration::from_secs(5), async {
                 loop {
-                    let bytes = manager.read_output(handle, 0).await.unwrap();
-                    if let Some(event) = integration.observe_output(&bytes) {
+                    if let Some(event) = events.pop_front() {
                         return event;
                     }
+                    let bytes = manager.read_output(handle, 0).await.unwrap();
+                    events.extend(parser.observe(&bytes).into_iter().map(|(_, event)| event));
                 }
             })
             .await
             .expect("shell integration marker")
         }
 
-        assert_eq!(
-            next_event(&manager, &handle, &mut integration).await,
-            ShellEvent::Ready
-        );
-        manager.send_input(&handle, b"false\n").await.unwrap();
-        assert_eq!(
-            next_event(&manager, &handle, &mut integration).await,
-            ShellEvent::Completed(1)
-        );
-        manager.send_input(&handle, b"cd /\n").await.unwrap();
-        assert_eq!(
-            next_event(&manager, &handle, &mut integration).await,
-            ShellEvent::Completed(0)
-        );
-        assert_eq!(integration.read_state().unwrap().0, PathBuf::from("/"));
+        // A runner's temporary directory can be a symlink to the shell's reported path.
+        let cwd = user_config.path().canonicalize().unwrap();
+        let subdir = subdir.canonicalize().unwrap();
+        let token = Some(integration.token().to_owned());
+        for (command, expected) in [
+            (
+                None,
+                vec![
+                    TerminalEvent::Directory(cwd.clone()),
+                    TerminalEvent::Shell(crate::terminal::osc::ShellMark {
+                        kind: ShellMarkKind::Prompt,
+                        token: token.clone(),
+                    }),
+                ],
+            ),
+            (
+                Some(b"false\n".as_slice()),
+                vec![
+                    TerminalEvent::Directory(cwd),
+                    TerminalEvent::Shell(crate::terminal::osc::ShellMark {
+                        kind: ShellMarkKind::Finished(Some(1)),
+                        token: token.clone(),
+                    }),
+                    TerminalEvent::Shell(crate::terminal::osc::ShellMark {
+                        kind: ShellMarkKind::Prompt,
+                        token: token.clone(),
+                    }),
+                ],
+            ),
+            (
+                Some("cd 'with #; ☃'\n".as_bytes()),
+                vec![
+                    TerminalEvent::Directory(subdir.clone()),
+                    TerminalEvent::Shell(crate::terminal::osc::ShellMark {
+                        kind: ShellMarkKind::Finished(Some(0)),
+                        token,
+                    }),
+                ],
+            ),
+        ] {
+            if let Some(command) = command {
+                manager.send_input(&handle, command).await.unwrap();
+            }
+            for event in expected {
+                assert_eq!(
+                    next_event(&manager, &handle, &mut parser, &mut events).await,
+                    event
+                );
+            }
+        }
+        assert_eq!(integration.read_state().unwrap().0, subdir);
         manager.terminate_pty(&handle).await.unwrap();
     }
 }

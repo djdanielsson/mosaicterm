@@ -6,6 +6,7 @@
 pub mod blocks;
 pub mod colors;
 pub mod completion_popup;
+mod ghostty_overlay;
 pub mod input;
 pub mod metrics;
 pub mod scroll;

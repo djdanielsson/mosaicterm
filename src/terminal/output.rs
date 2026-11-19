@@ -231,8 +231,8 @@ impl OutputProcessor {
 
                 // ----- OSC sequence: ESC ] ... BEL  or  ESC ] ... ESC \ -----
                 EscapeState::Osc => match ch {
-                    '\x07' => {
-                        // BEL terminates OSC — discard entire sequence
+                    '\x07' | '\x18' | '\x1a' => {
+                        // BEL ends OSC. CAN and SUB cancel it.
                         self.escape_buf.clear();
                         self.escape_state = EscapeState::None;
                     }
@@ -247,15 +247,8 @@ impl OutputProcessor {
                         self.escape_state = EscapeState::None;
                         self.emit_line(timestamp, stream_type)?;
                     }
-                    _ => {
-                        self.escape_buf.push(ch);
-                        // Safety valve: if the OSC sequence is absurdly long,
-                        // discard it to avoid unbounded memory growth.
-                        if self.escape_buf.len() > 4096 {
-                            self.escape_buf.clear();
-                            self.escape_state = EscapeState::None;
-                        }
-                    }
+                    // OSC payload is metadata and never becomes display text.
+                    _ => {}
                 },
 
                 // ----- Inside OSC, saw ESC — check for backslash (ST) -----
@@ -705,6 +698,23 @@ mod tests {
         let lines = processor.process_chunk(chunk).unwrap();
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].text, "actual output");
+    }
+
+    #[test]
+    fn oversized_status_record_does_not_leak_into_display_text() {
+        let mut processor = OutputProcessor::new();
+        let mut data = b"before\x1b]7501;state=working:".to_vec();
+        data.extend(vec![b'x'; 5000]);
+        data.extend(b"\x07after\n");
+        let lines = processor
+            .process_chunk(OutputChunk {
+                data,
+                timestamp: Utc::now(),
+                stream_type: StreamType::Stdout,
+                is_complete: false,
+            })
+            .unwrap();
+        assert_eq!(lines[0].text, "beforeafter");
     }
 
     #[test]
